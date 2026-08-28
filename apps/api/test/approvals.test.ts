@@ -115,6 +115,85 @@ describe("approvals (Gate 2)", () => {
     expect(listRuns(fx.db, { taskId: task.id })).toHaveLength(2);
   });
 
+  // Fix Q2: aprobar por la ruta del MCP admin solo fija el estado (el MCP es otro
+  // proceso sin runtime/despachador). Antes eso dejaba el tool_call sin ejecutar y
+  // la tarjeta BLOCKED para siempre. Ahora el despachador de apps/api drena la
+  // decisión: ejecuta el efecto (email.send simulado) + encola el resume.
+  it("MCP decide (solo estado) → un tick del despachador reconcilia el efecto y desbloquea", async () => {
+    const task = makeReadyTask(fx, fx.sam, { title: "Enviar contrato por email (vía MCP)" });
+
+    // Fase 1: el agente pide email.send → pending_approval → BLOCKED(approval).
+    fx.aiRunner.setBehavior(async (input, ctx) => {
+      const result = (await callTool(input, "email.send", {
+        to: "legal@acme.com",
+        subject: "Contrato",
+        body: "Adjunto el contrato.",
+      })) as { status: string };
+      expect(result.status).toBe("pending_approval");
+      const current = getTask(fx.db, ctx.taskId!)!;
+      await callTool(input, "tasks.move", {
+        task_id: current.id,
+        to: "BLOCKED",
+        expected_version: current.version,
+        blocked_reason: "approval",
+      });
+      return { text: "Espero aprobación humana." };
+    });
+
+    await fx.api.ctx.dispatcher.tick();
+    await waitFor(() => getTask(fx.db, task.id)!.status === "BLOCKED");
+    const firstRunId = listRuns(fx.db, { taskId: task.id })[0]!.id;
+
+    const approval = listPendingApprovals(fx.db).find((a) => a.taskId === task.id)!;
+    expect(approval.kind).toBe("tool_call");
+
+    const executedApproved = () =>
+      queryAudit(fx.db, { entityType: "tool", entityId: "email.send" }).filter(
+        (a) => a.action === "tool.execute_approved",
+      ).length;
+    const executedBefore = executedApproved();
+
+    // Decidir EXACTAMENTE como el MCP admin: solo el estado (engine.decideApproval),
+    // sin ejecutar el efecto ni encolar resume.
+    fx.api.ctx.engine.decideApproval(approval.id, "approved", fx.person.id, "ok por MCP");
+
+    // Sin reconciliar: el efecto NO se ejecutó y la tarjeta sigue BLOCKED (bug Q2).
+    expect(getTask(fx.db, task.id)!.status).toBe("BLOCKED");
+    expect(executedApproved()).toBe(executedBefore);
+
+    // Fase 2: la reanudación cierra la tarea con evidencia.
+    fx.aiRunner.setBehavior(async (input, ctx) => {
+      const current = getTask(fx.db, ctx.taskId!)!;
+      await callTool(input, "tasks.attach_artifact", {
+        task_id: current.id,
+        kind: "email",
+        title: "Email enviado (simulado)",
+        content: "Contrato enviado a legal@acme.com",
+      });
+      const after = getTask(fx.db, current.id)!;
+      await callTool(input, "tasks.move", {
+        task_id: current.id,
+        to: "REVIEW",
+        expected_version: after.version,
+      });
+      return { text: "Enviado; en revisión." };
+    });
+
+    // Un tick del despachador drena la decisión: ejecuta el efecto + encola resume.
+    await fx.api.ctx.dispatcher.tick();
+
+    // El efecto SE EJECUTÓ (stub email.send simulado → nueva fila execute_approved).
+    await waitFor(() => executedApproved() > executedBefore, { label: "email.send ejecutado por el drenado" });
+
+    // La tarea salió de BLOCKED y hay un run de reanudación con resume_of_run_id.
+    const resume = await waitFor(() =>
+      listRuns(fx.db, { taskId: task.id }).find((r) => r.resumeOfRunId === firstRunId),
+    );
+    expect(resume.trigger).toBe("approval_resume");
+    await waitFor(() => getTask(fx.db, task.id)!.status === "REVIEW");
+    expect(listPendingApprovals(fx.db).filter((a) => a.taskId === task.id)).toHaveLength(0);
+  });
+
   it("decidir dos veces la misma aprobación falla explícitamente (conflict)", async () => {
     const decided = await fx.api.app.inject({
       method: "GET",

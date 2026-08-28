@@ -35,6 +35,40 @@ export const SENSITIVE_ACTIVITY_TYPES: readonly string[] = [
   "contrato",
 ];
 
+/**
+ * FUENTE ÚNICA de los entregables que Quinn audita (US-10) y que, por tanto,
+ * exigen gate humano: no pueden ir directo a DONE por un agente (fix Q1).
+ *
+ * Esta constante se usa en DOS sitios que antes estaban desincronizados:
+ *  1. `computeRequiresApproval` (abajo) → fuerza `requires_approval` ⇒ el agente
+ *     debe pasar por REVIEW y el cierre lo hace un humano.
+ *  2. la auto-crítica de Quinn del despachador (`DEFAULT_QUINN_ACTIVITY_TYPES`
+ *     en apps/api) → Quinn se dispara al entrar a REVIEW.
+ *
+ * Regla: todo entregable que Quinn revisa exige REVIEW + aprobación. Cambiar la
+ * lista en un solo lugar mantiene ambos caminos alineados por construcción.
+ * Incluye los entregables de consultoría (org_profile, process_map,
+ * leak_analysis, iso_gap, report, roadmap) y el trabajo técnico que Quinn
+ * critica (code, build, bug, integration, deploy, dev, technical).
+ */
+export const QUINN_REVIEWED_ACTIVITY_TYPES: readonly string[] = [
+  // Trabajo técnico (crítica adversaria de Quinn)
+  "code",
+  "build",
+  "bug",
+  "integration",
+  "deploy",
+  "dev",
+  "technical",
+  // Entregables de consultoría (el caso principal de US-10)
+  "report",
+  "process_map",
+  "roadmap",
+  "iso_gap",
+  "org_profile",
+  "leak_analysis",
+];
+
 export interface RequiresApprovalInput {
   externalEffect?: boolean | null;
   activityType?: string | null;
@@ -45,5 +79,9 @@ export function computeRequiresApproval(task: RequiresApprovalInput): boolean {
   if (task.externalEffect === true) return true;
   const at = task.activityType?.trim().toLowerCase();
   if (!at) return false;
-  return PHASE_DELIVERABLE_ACTIVITY_TYPES.includes(at) || SENSITIVE_ACTIVITY_TYPES.includes(at);
+  return (
+    PHASE_DELIVERABLE_ACTIVITY_TYPES.includes(at) ||
+    SENSITIVE_ACTIVITY_TYPES.includes(at) ||
+    QUINN_REVIEWED_ACTIVITY_TYPES.includes(at)
+  );
 }

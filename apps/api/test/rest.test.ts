@@ -3,7 +3,7 @@
  * dominio con código estable, Gate 1 (gate_not_passed) y board snapshot.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTask, getTask } from "@agentos/db";
+import { createPerson, createTask, getTask, updatePerson } from "@agentos/db";
 import { makeFixture, TEST_PASSWORD, type TestFixture } from "./helpers.js";
 
 let fx: TestFixture;
@@ -171,5 +171,33 @@ describe("REST", () => {
     });
     expect(approve.statusCode).toBe(200);
     expect(getTask(fx.db, task.id)!.status).toBe("DONE");
+  });
+
+  // Fix Q4: la firma + expiración del token no bastan — se revalida en cada
+  // request que la persona siga existiendo y siendo interna.
+  it("token de una persona deprovisionada (ya no interna) deja de valer", async () => {
+    const temp = createPerson(fx.db, {
+      orgId: fx.org.id,
+      fullName: "Temporal QA",
+      isInternal: true,
+      role: "Auxiliar",
+    });
+    const login = await fx.api.app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { password: TEST_PASSWORD, person_id: temp.id },
+    });
+    expect(login.statusCode).toBe(200);
+    const headers = { authorization: `Bearer ${(login.json() as { token: string }).token}` };
+
+    // Con la persona interna, el token vale.
+    const ok = await fx.api.app.inject({ method: "GET", url: "/api/auth/me", headers });
+    expect(ok.statusCode).toBe(200);
+
+    // Se desactiva a la persona: el MISMO token deja de valer (fail-closed).
+    updatePerson(fx.db, temp.id, { isInternal: false });
+    const denied = await fx.api.app.inject({ method: "GET", url: "/api/agents", headers });
+    expect(denied.statusCode).toBe(401);
+    expect((denied.json() as { error: { code: string } }).error.code).toBe("unauthorized");
   });
 });

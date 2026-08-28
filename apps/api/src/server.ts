@@ -6,6 +6,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
+import { getPerson } from "@agentos/db";
 import { createApiContext, type ApiContext, type ApiOptions } from "./context.js";
 import { extractToken, type Session } from "./auth.js";
 import { handleApiError } from "./http-errors.js";
@@ -51,8 +52,15 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
     const token = extractToken(headers);
     const session = ctx.auth.verifyToken(token);
     if (session) {
-      req.session = session;
-      return;
+      // Q4: la firma+exp del token no bastan — un interno deprovisionado (borrado
+      // o desactivado) tras emitirse el token conservaría acceso hasta `exp`.
+      // Revalidamos que la persona siga existiendo y siendo interna en cada request.
+      const person = getPerson(ctx.db, session.personId);
+      if (person?.isInternal) {
+        req.session = session;
+        return;
+      }
+      // Persona inexistente o ya no interna: se cae al 401 (fail-closed).
     }
     // Canal web: un adaptador externo puede autenticarse con el secreto de canal.
     if (path.startsWith("/v1/channels/") && ctx.channelSecret) {
