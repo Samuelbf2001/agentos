@@ -4,7 +4,7 @@
  * agentes (US-11). Rutas de las 8 vistas.
  */
 import { useEffect } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useStore } from "./state/store";
 import { Spinner, Toasts } from "./components/ui";
 import LoginView from "./views/LoginView";
@@ -16,6 +16,7 @@ import RunDetailView from "./views/RunDetailView";
 import WaitingView from "./views/WaitingView";
 import ContextView from "./views/ContextView";
 import AdminView from "./views/AdminView";
+import NewProjectWizard from "./views/NewProjectWizard";
 import { TaskDrawer } from "./views/TaskDrawer";
 
 const NAV = [
@@ -52,6 +53,7 @@ function Shell() {
   const refreshBadges = useStore((s) => s.refreshBadges);
   const logout = useStore((s) => s.logout);
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const t = setInterval(() => void refreshBadges(), 15_000);
@@ -130,6 +132,12 @@ function Shell() {
                 </option>
               ))}
             </select>
+            <button
+              onClick={() => navigate("/new-project")}
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            >
+              ＋ Nuevo proyecto
+            </button>
             <span className="text-[11px] text-slate-400">{location.pathname}</span>
             <div className="ml-auto flex items-center gap-2">
               {!killSwitch ? (
@@ -154,6 +162,7 @@ function Shell() {
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/chat" element={<ChatView />} />
               <Route path="/board" element={<BoardView />} />
+              <Route path="/new-project" element={<NewProjectWizard />} />
               <Route path="/swarm" element={<SwarmView />} />
               <Route path="/runs" element={<RunsView />} />
               <Route path="/runs/:runId" element={<RunDetailView />} />

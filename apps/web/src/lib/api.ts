@@ -9,9 +9,15 @@ import type {
   Approval,
   Artifact,
   KnowledgeDoc,
+  LaunchReceipt,
+  LaunchResponse,
   Message,
   Methodology,
+  ModuleDetail,
+  ModuleSummary,
   Person,
+  PhaseClosureStatus,
+  PreviewResult,
   ProcessEntity,
   Project,
   ProjectSource,
@@ -272,6 +278,28 @@ export const api = {
   methodologies: () => request<{ methodologies: Methodology[] }>("/api/methodologies"),
   methodology: (slug: string) =>
     request<{ methodology: Methodology }>(`/api/methodologies/${slug}`),
+
+  // ── Módulos de Fase (M4 — wizard "Nuevo proyecto") ────────────────────────
+  modules: () => request<{ modules: ModuleSummary[] }>("/api/modules"),
+  module: (slug: string) => request<{ module: ModuleDetail }>(`/api/modules/${slug}`),
+  /** Dry-run CA-M2.1: con inputs incompletos responde 200 {ok:false, missing, issues}. */
+  previewModule: (
+    slug: string,
+    body: { inputs: Record<string, unknown>; toggles?: Record<string, boolean> },
+  ) => request<PreviewResult>(`/api/modules/${slug}/preview`, { method: "POST", body }),
+  launchModule: (
+    slug: string,
+    body: {
+      inputs: Record<string, unknown>;
+      toggles?: Record<string, boolean>;
+      idempotency_key: string;
+      previous_launch_id?: string;
+    },
+  ) => request<LaunchResponse>(`/api/modules/${slug}/launch`, { method: "POST", body }),
+  projectLaunches: (projectId: string) =>
+    request<{ launches: LaunchReceipt[] }>(`/api/projects/${projectId}/launches`),
+  phaseStatus: (projectId: string) =>
+    request<{ status: PhaseClosureStatus }>(`/api/projects/${projectId}/phase-status`),
 
   // ── Fuentes del proyecto (Fase 2) ─────────────────────────────────────────
   projectSources: (projectId: string) =>

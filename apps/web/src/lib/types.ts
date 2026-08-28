@@ -290,6 +290,177 @@ export interface AppConfigRow {
   updatedAt: number;
 }
 
+// ── Módulos de Fase (M4 — wizard "Nuevo proyecto") ──────────────────────────
+// Espejo del contrato REST de apps/api/src/routes/modules.ts (snake_case en
+// los recibos; camelCase en el plan del preview, tal cual lo sirve la API).
+
+export type ModuleInputType =
+  | "text"
+  | "textarea"
+  | "number"
+  | "date"
+  | "multi_select"
+  | "list_text"
+  | "source_refs";
+
+export interface ModuleInputDef {
+  key: string;
+  label: string;
+  type: ModuleInputType;
+  required?: boolean;
+  min?: number;
+  min_items?: number;
+  max_items?: number;
+  max_len?: number;
+  options?: string[];
+  default_from?: string;
+  sensitive?: boolean;
+}
+
+export interface ModuleToggleDef {
+  key: string;
+  label: string;
+  default?: boolean;
+  enables_templates?: string[];
+  enables_deliverables?: string[];
+  methodology_add?: string;
+}
+
+export interface ModuleSummary {
+  slug: string;
+  version: number;
+  name: string;
+  phase: Stage;
+  project_type: string;
+  status: string;
+  methodology: { slug: string; version: number | null };
+  templates_count: number;
+  blueprint_hash: string;
+}
+
+export interface ModuleDetail extends ModuleSummary {
+  inputs: ModuleInputDef[];
+  toggles: ModuleToggleDef[];
+  budget: { phase_usd: number; per_run_usd: number; warning_thresholds_pct?: number[] };
+  project: { name_tpl: string; workspace_tpl: string };
+  body_md: string;
+}
+
+export interface PreviewIssue {
+  code: string;
+  path: string;
+  details?: Record<string, unknown>;
+}
+
+export interface PreviewTask {
+  key: string;
+  templateKey: string;
+  fanOutValue: string | null;
+  title: string;
+  description: string | null;
+  definitionOfDone: string | null;
+  stage: string;
+  activityType: string;
+  priority: string;
+  role: string;
+  assigneeAgentSlug: string;
+  assigneeAgentId: string;
+  dependsOn: string[];
+  produces: string[];
+  gate: string | null;
+  requiresApproval: boolean;
+  status: "READY" | "BACKLOG";
+  dueAt: number | null;
+}
+
+export interface PreviewPlan {
+  projectName: string;
+  workspacePath: string;
+  tasks: PreviewTask[];
+  gates: {
+    name: string;
+    when: "phase_close" | "deliverable";
+    fedBy: string[];
+    blocksNextStage: Stage | null;
+  }[];
+  deliverables: {
+    kind: string;
+    source: "knowledge_doc" | "process" | "artifact";
+    min: number;
+    producedBy: string | null;
+  }[];
+  methodology: { slug: string; version: number | null; adds: string[] };
+  budget: { phaseUsd: number; perRunUsd: number; warningThresholdsPct: number[] };
+  toggles: Record<string, boolean>;
+  /** Plantillas de cadencia EXCLUIDAS del plan v1 (consent-first, M6). */
+  cadenceExcluded: string[];
+}
+
+/** Respuesta de POST /api/modules/:slug/preview — {ok:false} NO es error HTTP. */
+export interface PreviewResult {
+  ok: boolean;
+  module: {
+    id: string;
+    slug: string;
+    version: number;
+    name: string;
+    phase: string;
+    projectType: string;
+    status: string;
+  };
+  missing: string[];
+  issues: PreviewIssue[];
+  plan: PreviewPlan | null;
+}
+
+/** Recibo de un launch (GET /api/projects/:id/launches — CA-M2.4). */
+export interface LaunchReceipt {
+  id: string;
+  module_slug: string;
+  module_version: number;
+  module_name: string;
+  phase: Stage;
+  org_id: string;
+  project_id: string;
+  /** Inputs literales YA redactados en el servidor (§13.1). */
+  inputs: Record<string, unknown>;
+  toggles: Record<string, boolean>;
+  task_count: number;
+  budget_phase_usd: number;
+  budget_per_run_usd: number;
+  previous_launch_id: string | null;
+  actor: string;
+  actor_name: string | null;
+  label: string;
+  created_at: number;
+}
+
+/** Respuesta de POST /api/modules/:slug/launch. */
+export interface LaunchResponse {
+  launch: { id: string; projectId: string } & Record<string, unknown>;
+  project: Project;
+  organization: { id: string; name: string } & Record<string, unknown>;
+  tasks_count: number;
+  idempotent: boolean;
+}
+
+/** GET /api/projects/:id/phase-status (CA-M3.1). */
+export interface PhaseClosureItem {
+  kind: string;
+  source: "knowledge_doc" | "process" | "artifact";
+  required: number;
+  found: number;
+  /** Texto legible es-ES; null cuando el mínimo está cubierto. */
+  missing: string | null;
+}
+
+export interface PhaseClosureStatus {
+  launchId: string | null;
+  complete: boolean;
+  items: PhaseClosureItem[];
+  reason?: "no_launch";
+}
+
 /** Evento tal como llega por el WS: sobre {topic, seq, event}. */
 export interface TopicEvent {
   topic: string;

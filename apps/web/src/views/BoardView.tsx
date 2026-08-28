@@ -9,6 +9,7 @@ import { useStore } from "../state/store";
 import type { Stage, Task, TaskStatus } from "../lib/types";
 import { STAGES, TASK_STATUSES } from "../lib/types";
 import { AgentAvatar, EmptyState, ErrorBox, PriorityDot, Spinner, timeAgo } from "../components/ui";
+import { ProjectPhaseHeader } from "./PhasePanel";
 
 const STAGE_LABEL: Record<Stage, string> = {
   ENTENDER: "Entender",
@@ -162,6 +163,9 @@ export default function BoardView() {
           <span className="ml-auto">{Object.keys(board.tasks).length} tarjetas</span>
         </div>
       ) : null}
+
+      {/* Recibo del launch (CA-M2.4) + cierre de fase (CA-M3.1/M3.2). */}
+      <ProjectPhaseHeader projectId={activeProjectId} />
 
       {Object.keys(board.tasks).length === 0 ? (
         <EmptyState
