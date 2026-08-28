@@ -13,6 +13,7 @@ import { handleApiError } from "./http-errors.js";
 import { registerAuthAndHealth } from "./routes/auth-health.js";
 import { registerBoardRoutes } from "./routes/board.js";
 import { registerOpsRoutes } from "./routes/ops.js";
+import { registerSourcesRoutes } from "./routes/sources.js";
 import { registerWebChannel } from "./routes/channel-web.js";
 import { registerWs } from "./ws.js";
 
@@ -75,6 +76,7 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   registerAuthAndHealth(app, ctx);
   registerBoardRoutes(app, ctx);
   registerOpsRoutes(app, ctx);
+  registerSourcesRoutes(app, ctx);
   registerWebChannel(app, ctx);
   registerWs(app, ctx);
 

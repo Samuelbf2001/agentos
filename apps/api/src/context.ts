@@ -3,7 +3,7 @@
  * de eventos, del despachador, del RunnerPool y del WebSocket (ARCHITECTURE §1).
  * Todo se construye aquí, una vez, y las rutas lo reciben inyectado.
  */
-import { nowMs, type AgentRuntime } from "@agentos/shared";
+import { nowMs, type AgentRuntime, type WhatsAppHubConnector } from "@agentos/shared";
 import {
   closeDb,
   countDomainTables,
@@ -21,6 +21,7 @@ import {
   RunnerPool,
   type AgentRunner,
 } from "@agentos/runners";
+import { createWhatsAppHubConnector } from "./connectors/whatsapphub.js";
 import { busSink, createBus } from "./bus-bridge.js";
 import { createAuthService, type AuthService } from "./auth.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
@@ -44,6 +45,8 @@ export interface ApiOptions {
   runners?: Partial<Record<AgentRuntime, AgentRunner>>;
   /** Arranca los bucles (despachador + reaper) automáticamente (default true). */
   autoStartLoops?: boolean;
+  /** Conector WhatsAppHub inyectable (tests: SIEMPRE mock; jamás red real en tests). */
+  whatsappHub?: WhatsAppHubConnector;
   dispatchIntervalMs?: number;
   reaperIntervalMs?: number;
   leaseMs?: number;
@@ -58,6 +61,8 @@ export interface ApiContext {
   sink: EventSink;
   engine: BoardEngine;
   toolRuntime: ToolRuntime;
+  /** Conector 2brain/WhatsAppHub (Fuentes del proyecto). */
+  whatsappHub: WhatsAppHubConnector;
   pool: RunnerPool;
   dispatcher: Dispatcher;
   auth: AuthService;
@@ -89,8 +94,11 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
   const sink = busSink(bus);
 
   // 3) Motor del tablero + gateway de tools (comparten sink y engine).
+  // El conector WhatsAppHub (Fuentes del proyecto) se inyecta al gateway para
+  // que la tool sources.ingest use el MISMO cliente que las rutas REST.
+  const whatsappHub = options.whatsappHub ?? createWhatsAppHubConnector();
   const engine = createBoardEngine({ db, sink, ...(options.leaseMs ? { leaseMs: options.leaseMs } : {}) });
-  const toolRuntime = createToolRuntime({ db, sink, engine });
+  const toolRuntime = createToolRuntime({ db, sink, engine, whatsappHub });
 
   // 4) Recuperación al arrancar (NFR-4) ANTES de despachar nada.
   const recovery = recoverOnBoot(db, engine);
@@ -139,6 +147,7 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
     sink,
     engine,
     toolRuntime,
+    whatsappHub,
     pool,
     dispatcher,
     auth,
