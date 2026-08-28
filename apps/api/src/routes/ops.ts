@@ -3,6 +3,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AgentStatus, AgentAutonomy, KnowledgeKind, RunStatus, errors } from "@agentos/shared";
+import { computeOrgChainHealth, orgForCompany } from "@agentos/core";
 import {
   appendAudit,
   getAgent,
@@ -77,6 +78,21 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
   // ── Agents ────────────────────────────────────────────────────────────────
 
   app.get("/api/agents", async () => ({ agents: listAgents(db) }));
+
+  /**
+   * Organigrama (Fase 2): árbol agrupado por manager + salud de la cadena de mando
+   * de cada agente. Ruta estática: Fastify la prioriza sobre `/api/agents/:ref`.
+   */
+  app.get("/api/agents/org", async () => ({
+    tree: orgForCompany(db),
+    health: listAgents(db).map((a) => ({
+      id: a.id,
+      slug: a.slug,
+      status: a.status,
+      reports_to: a.reportsTo,
+      chain: computeOrgChainHealth(db, a.id),
+    })),
+  }));
 
   app.get("/api/agents/:ref", async (req) => {
     const { ref } = req.params as { ref: string };

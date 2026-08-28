@@ -6,6 +6,7 @@ runtime: claude_code
 provider_profile: claude_subscription
 model: sonnet
 autonomy: supervised
+reports_to: alex
 tools:
   - tasks.claim
   - tasks.get

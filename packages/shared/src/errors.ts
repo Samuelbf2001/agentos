@@ -25,6 +25,8 @@ export const ErrorCodes = {
   KILL_SWITCH_ACTIVE: "kill_switch_active",
   BUDGET_EXCEEDED: "budget_exceeded",
   DELEGATION_LIMIT: "delegation_limit",
+  /** Cadena de mando rota (Fase 2): ancestro terminado, manager faltante o ciclo. */
+  AGENT_NOT_ASSIGNABLE: "agent_not_assignable",
   // Proveedores / runtime
   PROVIDER_ERROR: "provider_error",
   PROVIDER_NOT_CONFIGURED: "provider_not_configured",
@@ -63,4 +65,11 @@ export const errors = {
     ),
   validation: (message: string, details?: unknown) =>
     new AgentosError(ErrorCodes.VALIDATION_ERROR, message, details),
+  /** Cadena de mando rota: la razón (`terminated_ancestor` | `missing_manager` | `cycle`) viaja en details. */
+  notAssignable: (agent: string, reason: string, details?: Record<string, unknown>) =>
+    new AgentosError(
+      ErrorCodes.AGENT_NOT_ASSIGNABLE,
+      `El agente ${agent} no es asignable: cadena de mando rota (${reason})`,
+      { agent, reason, ...details },
+    ),
 };

@@ -6,6 +6,7 @@ runtime: ai_sdk
 provider_profile: minimax
 model: MiniMax-M2
 autonomy: supervised
+reports_to: alex
 tools:
   - tasks.claim
   - tasks.get

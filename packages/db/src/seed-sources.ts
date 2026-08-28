@@ -24,6 +24,12 @@ const AgentFrontmatter = z.object({
   model: z.string().min(1),
   autonomy: AgentAutonomy.default("supervised"),
   tools: z.array(z.string()).default([]),
+  /**
+   * Manager en el organigrama (Fase 2): slug de otro agente, o `null`/omitido = raíz.
+   * El seed lo resuelve a `agents.reports_to` en una segunda pasada (el id del
+   * manager puede no existir aún al crear la fila).
+   */
+  reports_to: z.string().min(1).nullable().default(null),
 });
 export type AgentFrontmatter = z.infer<typeof AgentFrontmatter>;
 

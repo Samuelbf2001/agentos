@@ -6,6 +6,7 @@ runtime: claude_code
 provider_profile: claude_subscription
 model: sonnet
 autonomy: auto
+reports_to: null
 tools:
   - tasks.create
   - tasks.get

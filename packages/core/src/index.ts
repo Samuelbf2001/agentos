@@ -2,4 +2,5 @@
 // gates G1/G2, delegación, kill switch) y ensamblado del prompt en 3 capas.
 export * from "./events.js";
 export * from "./board/index.js";
+export * from "./org.js";
 export * from "./prompt/index.js";

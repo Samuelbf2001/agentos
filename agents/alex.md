@@ -6,6 +6,7 @@ runtime: ai_sdk
 provider_profile: anthropic_api
 model: claude-sonnet-4-5
 autonomy: supervised
+reports_to: null
 tools:
   - tasks.create
   - tasks.list

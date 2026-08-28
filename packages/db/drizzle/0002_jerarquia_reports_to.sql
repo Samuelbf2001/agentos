@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `reports_to` text REFERENCES agents(id);

@@ -16,6 +16,8 @@ import { loadAgentSeeds, loadMethodologySeeds, sha256 } from "./seed-sources.js"
 import {
   createPromptVersion,
   getActivePrompt,
+  getAgent,
+  updateAgent,
   upsertAgentFromSeed,
 } from "./repositories/agents.js";
 import { ConfigKeys, getConfig, setConfig } from "./repositories/config.js";
@@ -380,6 +382,29 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
           : `Seed inicial desde ${seedDef.file}`,
         createdBy: "system:seed",
       });
+    }
+  }
+
+  // 4b) Jerarquía de mando (Fase 2): segunda pasada que resuelve reports_to por
+  // slug → id. Va aparte porque el manager puede crearse DESPUÉS del report en
+  // la primera pasada. Idempotente: solo escribe si el valor difiere (no bombea
+  // versiones ni crea prompts). Un slug de manager inexistente se deja en null y
+  // se avisa por stderr (fail-soft: el seed no se cae por un .md mal referenciado).
+  for (const seedDef of loadAgentSeeds()) {
+    const agentId = agentIdBySlug.get(seedDef.meta.slug);
+    if (!agentId) continue;
+    let desired: string | null = null;
+    if (seedDef.meta.reports_to) {
+      desired = agentIdBySlug.get(seedDef.meta.reports_to) ?? null;
+      if (!desired) {
+        process.stderr.write(
+          `[seed] ${seedDef.meta.slug}.reports_to="${seedDef.meta.reports_to}" no existe en el roster; se deja como raíz.\n`,
+        );
+      }
+    }
+    const current = getAgent(db, agentId);
+    if (current && current.reportsTo !== desired) {
+      updateAgent(db, current.id, { reportsTo: desired }, current.version);
     }
   }
 

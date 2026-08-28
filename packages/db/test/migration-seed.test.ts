@@ -171,6 +171,29 @@ describe("seeds", () => {
     expect(dump).toContain("OPENAI_API_KEY");
   });
 
+  it("jerarquía de mando: Alex y Quinn raíces; el resto reporta a Alex", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const alex = getAgentBySlug(db, "alex")!;
+    const quinn = getAgentBySlug(db, "quinn")!;
+    // Alex = raíz operacional; Quinn = raíz meta/QA (independencia del auditor).
+    expect(alex.reportsTo).toBeNull();
+    expect(quinn.reportsTo).toBeNull();
+    // Los especialistas reportan a Alex.
+    for (const slug of ["sam", "debbie", "vinnie", "sally", "clara"]) {
+      expect(getAgentBySlug(db, slug)!.reportsTo, slug).toBe(alex.id);
+    }
+  });
+
+  it("jerarquía: re-seed es idempotente (no re-escribe reports_to ya correcto)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const samV1 = getAgentBySlug(db, "sam")!.version;
+    seed(db, { env: {} });
+    // reports_to ya correcto → la segunda pasada no bombea la versión del agente.
+    expect(getAgentBySlug(db, "sam")!.version).toBe(samV1);
+  });
+
   it("config base: seguro por defecto (kill switch activo) y presupuestos definidos", () => {
     const db = freshDb();
     seed(db, { env: {} });

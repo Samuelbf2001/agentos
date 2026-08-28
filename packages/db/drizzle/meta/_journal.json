@@ -15,6 +15,13 @@
       "when": 1787897610471,
       "tag": "0001_vengeful_spirit",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787925337568,
+      "tag": "0002_jerarquia_reports_to",
+      "breakpoints": true
     }
   ]
 }

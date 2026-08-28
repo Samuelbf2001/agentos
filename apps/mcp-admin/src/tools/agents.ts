@@ -30,7 +30,7 @@ import {
   type AgentosDb,
   type PromptVersion,
 } from "@agentos/db";
-import { assemblePrompt } from "@agentos/core";
+import { assemblePrompt, assertNoCycle, computeOrgChainHealth, orgForCompany } from "@agentos/core";
 import { auditMutation, findIdempotentMutation } from "../context.js";
 import { defineAdminTool as def, type AdminToolDefinition } from "../registry.js";
 import { resolveAgentRef, resolveProviderRef } from "../resolve.js";
@@ -55,6 +55,7 @@ function agentAuditFields(agent: Agent): Record<string, unknown> {
     runtime: agent.runtime,
     autonomy: agent.autonomy,
     status: agent.status,
+    reportsTo: agent.reportsTo,
     providerProfileId: agent.providerProfileId,
     toolsAllowlist: agent.toolsAllowlist,
     mcpAllowlist: agent.mcpAllowlist,
@@ -287,6 +288,61 @@ export const agentTools: AdminToolDefinition[] = [
         reason: args.reason,
       });
       return updated;
+    },
+  }),
+
+  def({
+    name: "agentos.agents.set_manager",
+    description:
+      "Fija el manager de un agente en el organigrama (Fase 2): `manager` = slug/id de otro " +
+      "agente, o null para hacerlo raíz. Rechaza ciclos (agent_not_assignable, reason=cycle) y " +
+      "exige expected_version. La salud de la cadena resultante gobierna la asignabilidad.",
+    schema: z.object({
+      agent: z.string().min(1),
+      manager: z.string().min(1).nullable(),
+      expected_version: z.number().int().positive(),
+      reason: Reason,
+    }),
+    readOnly: false,
+    handler(ctx, args) {
+      const agent = resolveAgentRef(ctx.db, args.agent);
+      if (agent.version !== args.expected_version) {
+        throw errors.versionConflict("agent", agent.id, args.expected_version);
+      }
+      const managerId = args.manager === null ? null : resolveAgentRef(ctx.db, args.manager).id;
+      // Anti-ciclo ANTES de escribir (fail-closed): jamás se persiste un organigrama roto.
+      assertNoCycle(ctx.db, agent.id, managerId);
+      const before = { reportsTo: agent.reportsTo, version: agent.version };
+      const updated = updateAgent(ctx.db, agent.id, { reportsTo: managerId }, args.expected_version);
+      auditMutation(ctx, {
+        action: "agents.set_manager",
+        entityType: "agent",
+        entityId: agent.id,
+        before,
+        after: { reportsTo: updated.reportsTo, version: updated.version },
+        reason: args.reason,
+      });
+      return { agent: updated, chain_health: computeOrgChainHealth(ctx.db, updated.id) };
+    },
+  }),
+
+  def({
+    name: "agentos.agents.org",
+    description:
+      "Organigrama de la empresa (Fase 2) como bosque agrupado por manager, más la salud de la " +
+      "cadena de cada agente (healthy | terminated_ancestor | missing_manager | cycle).",
+    schema: z.object({}),
+    readOnly: true,
+    handler(ctx) {
+      return {
+        tree: orgForCompany(ctx.db),
+        health: listAgents(ctx.db).map((a) => ({
+          slug: a.slug,
+          status: a.status,
+          reportsTo: a.reportsTo,
+          chain: computeOrgChainHealth(ctx.db, a.id),
+        })),
+      };
     },
   }),
 

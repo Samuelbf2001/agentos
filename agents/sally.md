@@ -6,6 +6,7 @@ runtime: ai_sdk
 provider_profile: kimi
 model: kimi-k2-0905-preview
 autonomy: supervised
+reports_to: alex
 tools:
   - tasks.claim
   - tasks.get

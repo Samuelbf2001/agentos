@@ -309,8 +309,9 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   function dispatchTask(task: Task): string | null {
     if (!task.assigneeAgentId) return null;
     const agent = getAgent(db, task.assigneeAgentId);
-    // (e) agente pausado/desactivado: su cola espera, no se roba.
-    if (!agent || agent.status !== "active") return null;
+    // (e) agente pausado/desactivado o con cadena de mando rota (ancestro
+    // terminado/faltante, ciclo): su cola espera, no se roba ni se ejecuta.
+    if (!agent || !engine.isAgentAssignable(agent.id)) return null;
 
     const provider = resolveProvider(agent);
     const runId = newId();
@@ -531,7 +532,8 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     const originRun = approval.runId ? getRun(db, approval.runId) : undefined;
     const agentId = originRun?.agentId ?? getTask(db, approval.taskId ?? "")?.assigneeAgentId;
     const agent = agentId ? getAgent(db, agentId) : undefined;
-    if (!agent || agent.status !== "active") return null;
+    // Cadena rota (o agente pausado): la reanudación espera igual que el despacho.
+    if (!agent || !engine.isAgentAssignable(agent.id)) return null;
 
     const provider = resolveProvider(agent);
     const runId = newId();
@@ -667,7 +669,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     const list = getConfig<string[]>(db, QUINN_ACTIVITY_TYPES_KEY) ?? [];
     if (!list.includes(task.activityType)) return;
     const quinn = getAgentBySlug(db, critiqueAgentSlug);
-    if (!quinn || quinn.status !== "active") return;
+    if (!quinn || !engine.isAgentAssignable(quinn.id)) return;
     if (task.assigneeAgentId === quinn.id) return; // Quinn nunca revisa su propio trabajo
     const key = `${task.id}:${task.version}`;
     if (critiqued.has(key)) return;

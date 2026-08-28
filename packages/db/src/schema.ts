@@ -119,6 +119,14 @@ export const agents = sqliteTable("agents", {
   runtime: text("runtime").$type<AgentRuntime>().notNull(),
   providerProfileId: text("provider_profile_id").references(() => providerProfiles.id),
   model: text("model"),
+  /**
+   * Jerarquía de mando (Fase 2, inspirada en Paperclip §modelo de empresa):
+   * self-FK nullable al manager. `null` = raíz (Alex orquestador operacional,
+   * Quinn raíz meta/QA). La SALUD de esta cadena gobierna la asignabilidad
+   * (ver packages/core/org.ts): un agente con ancestro terminado/faltante o en
+   * ciclo no puede recibir ni ejecutar trabajo aunque él mismo esté activo.
+   */
+  reportsTo: text("reports_to").references((): AnySQLiteColumn => agents.id),
   /** Sin FK declarada para evitar el ciclo agents↔prompt_versions; la integridad la garantiza el repositorio. */
   activePromptVersionId: text("active_prompt_version_id"),
   toolsAllowlist: text("tools_allowlist", { mode: "json" }).$type<string[]>().notNull().default([]),

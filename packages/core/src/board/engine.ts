@@ -52,6 +52,7 @@ import {
   type Task,
 } from "@agentos/db";
 import { noopEventSink, type EventSink } from "../events.js";
+import { computeOrgChainHealth, type OrgChainHealth } from "../org.js";
 import { computeRequiresApproval } from "./policy.js";
 import { actorKind, assertTransitionAllowed, type ActorKind } from "./state-machine.js";
 
@@ -202,7 +203,19 @@ export interface BoardEngine {
   isKillSwitchActive(): boolean;
   setKillSwitch(active: boolean, actor: string, reason?: string): void;
   isAgentPaused(agentIdOrSlug: string): boolean;
-  /** Lanza kill_switch_active / policy_denied si el agente no puede correr. */
+  /** Salud de la cadena de mando del agente (Fase 2). Solo mira a sus ancestros. */
+  orgChainHealth(agentIdOrSlug: string): OrgChainHealth;
+  /**
+   * ¿El agente puede tomar trabajo AHORA? true sii está `active` Y su cadena de
+   * mando está sana. NO mira el kill switch (global, se comprueba por tick). Guarda
+   * silenciosa del despachador: una cadena rota espera igual que un agente pausado.
+   */
+  isAgentAssignable(agentIdOrSlug: string): boolean;
+  /**
+   * Lanza kill_switch_active / policy_denied / agent_not_assignable si el agente
+   * no puede correr. La cadena rota (ancestro terminado, manager faltante, ciclo)
+   * bloquea la asignación y la ejecución con reason clara (Fase 2).
+   */
   assertAgentCanRun(agentIdOrSlug: string): void;
 }
 
@@ -281,6 +294,19 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     return agent.status !== "active";
   }
 
+  function orgChainHealth(agentIdOrSlug: string): OrgChainHealth {
+    const agent = resolveAgent(agentIdOrSlug);
+    if (!agent) throw errors.notFound("agent", agentIdOrSlug);
+    return computeOrgChainHealth(db, agent.id);
+  }
+
+  function isAgentAssignable(agentIdOrSlug: string): boolean {
+    const agent = resolveAgent(agentIdOrSlug);
+    if (!agent) throw errors.notFound("agent", agentIdOrSlug);
+    if (agent.status !== "active") return false;
+    return computeOrgChainHealth(db, agent.id).status === "healthy";
+  }
+
   function assertAgentCanRun(agentIdOrSlug: string): void {
     if (isKillSwitchActive()) {
       throw new AgentosError(ErrorCodes.KILL_SWITCH_ACTIVE, "Kill switch activo: no arrancan trabajos nuevos");
@@ -293,6 +319,15 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
         `Agente ${agent.slug} está "${agent.status}" — no puede tomar trabajo`,
         { agentId: agent.id, status: agent.status },
       );
+    }
+    // Fase 2: la salud de la cadena de mando gobierna la asignabilidad. Un agente
+    // activo pero con ancestro terminado/faltante o en ciclo NO es asignable.
+    const health = computeOrgChainHealth(db, agent.id);
+    if (health.status !== "healthy") {
+      throw errors.notAssignable(agent.slug, health.status, {
+        agentId: agent.id,
+        offendingAgentId: health.offendingAgentId ?? null,
+      });
     }
   }
 
@@ -840,6 +875,8 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     isKillSwitchActive,
     setKillSwitch,
     isAgentPaused,
+    orgChainHealth,
+    isAgentAssignable,
     assertAgentCanRun,
   };
 }
