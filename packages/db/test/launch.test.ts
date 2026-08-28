@@ -41,8 +41,8 @@ const NOW = Date.parse("2026-08-28T00:00:00.000Z");
 /**
  * Inputs demo con la forma del §13.6 (areas ×3, procesos_core ×2, fecha
  * objetivo, ISO on ⇒ 12 tareas, 3 READY + 9 BACKLOG). Cliente "Nova" en vez de
- * ACME: el seed aún crea el proyecto demo "Assessment ACME" hardcodeado (lo
- * reemplaza M4) y reutilizarlo contaminaría la aritmética del test.
+ * ACME: el seed YA dispara el launch demo "Assessment ACME" (§13.6) y
+ * reutilizarlo chocaría con phase_already_launched y la aritmética del test.
  */
 const DEMO_INPUTS: Record<string, unknown> = {
   empresa: "Nova Manufactura S.A.",
@@ -261,8 +261,9 @@ describe("launchModule — NM-1 atomicidad (CA-M2.2)", () => {
     expect(deliverables.find((d) => d.kind === "interview")!.min).toBe(3);
     expect(deliverables.find((d) => d.kind === "process_map")!.min).toBe(2);
 
-    // Auditoría (NM-5) con inputs redactados.
-    const audits = queryAudit(db, { action: "modules.launch" });
+    // Auditoría (NM-5) con inputs redactados. El seed ya registra su propio
+    // modules.launch (demo ACME — §13.6): filtramos al recibo de ESTE launch.
+    const audits = queryAudit(db, { action: "modules.launch", entityId: r.launch.id });
     expect(audits).toHaveLength(1);
     expect(audits[0]!.actor).toBe("person:ernesto");
     expect(audits[0]!.entityId).toBe(r.launch.id);
@@ -533,8 +534,9 @@ describe("launchModule — redacción (§13.1 + NM-5)", () => {
       .digest("hex");
     expect(r.launch.inputsDigest).toBe(expectedDigest);
 
-    // La auditoría no contiene el valor sensible por ningún lado.
-    const audit = queryAudit(db, { action: "modules.launch" })[0]!;
+    // La auditoría no contiene el valor sensible por ningún lado (el seed
+    // aporta su propio modules.launch del demo: filtramos al de este launch).
+    const audit = queryAudit(db, { action: "modules.launch", entityId: r.launch.id })[0]!;
     expect(JSON.stringify(audit)).not.toContain("pre-aprobado por gerencia");
     expect((audit.after?.["inputs"] as Record<string, unknown>)["notas_comercial"]).toBe(REDACTED);
   });

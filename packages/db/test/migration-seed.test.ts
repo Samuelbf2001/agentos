@@ -8,6 +8,7 @@ import { getProjectByName } from "../src/repositories/projects.js";
 import { listTasks, listTaskEvents } from "../src/repositories/tasks.js";
 import { getConfig, ConfigKeys } from "../src/repositories/config.js";
 import { getMethodology, listMethodologies } from "../src/repositories/methodologies.js";
+import { listLaunches } from "../src/repositories/modules.js";
 
 function freshDb(): AgentosDb {
   const db = openDb(":memory:");
@@ -128,7 +129,7 @@ describe("seeds", () => {
     expect(getAgentBySlug(db, "sam")!.model).toBe("gpt-5");
   });
 
-  it("es idempotente: re-ejecutar no duplica nada", () => {
+  it("es idempotente: re-ejecutar no duplica nada (ni el launch demo)", () => {
     const db = freshDb();
     seed(db, { env: {} });
     const counts = seed(db, { env: {} });
@@ -136,6 +137,11 @@ describe("seeds", () => {
     expect(counts.tasks).toBe(12);
     expect(counts.people).toBe(5);
     expect(counts.promptVersions).toBe(7);
+    // El launch demo (§13.6) tampoco se re-dispara: mismo proyecto, mismo recibo.
+    expect(counts.projects).toBe(1);
+    expect(
+      (db.$client.prepare(`SELECT count(*) n FROM module_launches`).get() as { n: number }).n,
+    ).toBe(1);
   });
 
   it("re-seed con cambio solo de proveedor no crea versiones de prompt redundantes", () => {
@@ -163,8 +169,56 @@ describe("seeds", () => {
       expect(t.assigneeAgentId, t.title).toBeTruthy();
       expect(listTaskEvents(db, t.id).length).toBeGreaterThan(0);
     }
-    // Entregables de fase requieren aprobación (política determinista)
-    expect(tasks.filter((t) => t.requiresApproval)).toHaveLength(2);
+    // 7 con requires_approval: el demo ahora es un launch real y aplica la
+    // política determinista (computeRequiresApproval, NM-5) — org_profile,
+    // process_map ×2, leak_analysis, iso_gap, report y roadmap. El seed
+    // hardcodeado decía 2 y CONTRADECÍA esa política; §13.6 corrige el demo.
+    expect(tasks.filter((t) => t.requiresApproval)).toHaveLength(7);
+  });
+
+  it("seed demo = launch de consultoria v1: recibo en module_launches (§13.6, CA-M2.4)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const project = getProjectByName(db, "Assessment ACME")!;
+    const launches = listLaunches(db, { projectId: project.id });
+    expect(launches).toHaveLength(1);
+    const launch = launches[0]!;
+    expect(launch.moduleSlug).toBe("consultoria");
+    expect(launch.moduleVersion).toBe(1);
+    expect(launch.actor).toBe("system:seed");
+    expect(launch.idempotencyKey).toBe("seed:demo:consultoria:acme");
+    expect(launch.taskCount).toBe(12);
+    // Las 3 READY del §13.6 con su asignado histórico: kickoff/alex,
+    // perfil_org/sam, inventario_sistemas/clara.
+    const tasks = listTasks(db, { projectId: project.id });
+    const assignee = (activityType: string) => {
+      const t = tasks.find((x) => x.activityType === activityType)!;
+      expect(t.status, activityType).toBe("READY");
+      return t.assigneeAgentId;
+    };
+    expect(assignee("kickoff")).toBe(getAgentBySlug(db, "alex")!.id);
+    expect(assignee("org_profile")).toBe(getAgentBySlug(db, "sam")!.id);
+    expect(assignee("systems_inventory")).toBe(getAgentBySlug(db, "clara")!.id);
+  });
+
+  it("las tareas del demo llevan depends_on coherente (ids reales, CA-M2.3)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const project = getProjectByName(db, "Assessment ACME")!;
+    const tasks = listTasks(db, { projectId: project.id });
+    // Las 3 entrevistas dependen del id del kickoff.
+    const kickoff = tasks.find((t) => t.activityType === "kickoff")!;
+    const entrevistas = tasks.filter((t) => t.activityType === "interview");
+    expect(entrevistas).toHaveLength(3);
+    for (const t of entrevistas) expect(t.dependsOn, t.title).toEqual([kickoff.id]);
+    // El roadmap cierra la cadena: depende del informe.
+    const informe = tasks.find((t) => t.activityType === "report")!;
+    const roadmap = tasks.find((t) => t.activityType === "roadmap")!;
+    expect(roadmap.dependsOn).toEqual([informe.id]);
+    // Las READY nacen sin dependencias (por eso son READY — CA-M2.3).
+    for (const t of tasks.filter((x) => x.status === "READY")) {
+      expect(t.dependsOn, t.title).toEqual([]);
+    }
   });
 
   it("provider_profiles guardan NOMBRE de env var, jamás un valor", () => {

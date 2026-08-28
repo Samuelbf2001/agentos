@@ -1,7 +1,10 @@
 /**
  * Seeds de AgentOS (B1): orgs, personas, proveedores, agentes desde `agents/*.md`,
- * metodología desde `methodologies/*.md`, proyecto demo con 12 tareas y config base.
- * Idempotente: re-ejecutar no duplica nada (upserts por clave natural).
+ * metodología desde `methodologies/*.md`, módulos desde `modules/*.md`, config
+ * base y el proyecto demo ACME como LAUNCH del módulo consultoria v1 (§13.6):
+ * el seed ya no hardcodea tareas — dispara el módulo con inputs demo fijos.
+ * Idempotente: re-ejecutar no duplica nada (upserts por clave natural +
+ * idempotency_key del launch).
  *
  * Regla del fallback de arranque (ARCHITECTURE §3): un agente `ai_sdk` cuyo
  * proveedor no tiene credencial configurada se seedea apuntando a
@@ -9,9 +12,10 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProviderCapabilities, Stage, TaskPriority, TaskStatus } from "@agentos/shared";
+import type { ProviderCapabilities } from "@agentos/shared";
 import { openDb, resolveDbPath, type AgentosDb } from "./client.js";
 import { runMigrations } from "./migrate.js";
+import { launchModule } from "./modules/launch.js";
 import { loadAgentSeeds, loadMethodologySeeds, loadModuleSeeds, sha256 } from "./seed-sources.js";
 import {
   createPromptVersion,
@@ -29,13 +33,13 @@ import {
   getOrganizationByName,
   getPersonByFullName,
 } from "./repositories/organizations-people.js";
-import { createProject, getProjectByName } from "./repositories/projects.js";
+import { getProjectByName } from "./repositories/projects.js";
 import {
   getProviderProfileBySlug,
   isProviderConfigured,
   upsertProviderProfile,
 } from "./repositories/providers.js";
-import { appendTaskEvent, createTask, listTasks } from "./repositories/tasks.js";
+import { listTasks } from "./repositories/tasks.js";
 
 export interface SeedCounts {
   organizations: number;
@@ -135,168 +139,30 @@ const PEOPLE_SEEDS = [
   { fullName: "Ernesto", role: "Operador", email: "ernesto@sixteam.pro" },
 ];
 
-interface TaskSeed {
-  title: string;
-  description: string;
-  definitionOfDone: string;
-  status: TaskStatus;
-  stage: Stage;
-  activityType: string;
-  priority: TaskPriority;
-  assignee: string; // slug de agente
-  orderKey: string;
-  requiresApproval?: boolean;
-}
+/**
+ * Timestamp FIJO del launch demo (§13.6): determinismo de due_at y `{{hoy}}`.
+ * 14 días exactos antes de la fecha objetivo — el "assessment 14d" de manual.
+ */
+const SEED_DEMO_LAUNCH_NOW = Date.parse("2026-09-01T00:00:00.000Z");
 
-/** 12 tareas realistas de assessment (metodología assessment-14d). */
-const TASK_SEEDS: TaskSeed[] = [
-  {
-    title: "Kickoff con sponsor de ACME",
-    description: "Reunión inicial: alcance del assessment, expectativas, accesos y calendario.",
-    definitionOfDone:
-      "Agenda enviada, asistentes confirmados y acta de kickoff registrada en el Context Hub como nota tipada con fecha y participantes.",
-    status: "READY",
-    stage: "ENTENDER",
-    activityType: "kickoff",
-    priority: "high",
-    assignee: "alex",
-    orderKey: "a0",
-  },
-  {
-    title: "Perfil de organización ACME",
-    description: "Levantar el org_profile: estructura, roles, productos y contexto de manufactura.",
-    definitionOfDone:
-      "Documento `org_profile` en el Context Hub con industria, tamaño (40 empleados), estructura y sistemas declarados, citando su fuente.",
-    status: "READY",
-    stage: "ENTENDER",
-    activityType: "org_profile",
-    priority: "high",
-    assignee: "sam",
-    orderKey: "a1",
-  },
-  {
-    title: "Inventario de sistemas y herramientas",
-    description: "Qué usa ACME hoy: ERP, hojas de cálculo, mensajería, control de producción.",
-    definitionOfDone:
-      "Lista de sistemas en uso registrada como documento tipado en el Context Hub, con fuente por sistema y responsable que lo declaró.",
-    status: "READY",
-    stage: "ENTENDER",
-    activityType: "systems_inventory",
-    priority: "normal",
-    assignee: "clara",
-    orderKey: "a2",
-  },
-  {
-    title: "Entrevista: Gerencia General",
-    description: "Entrevista al gerente general: visión, dolores, prioridades e interés en ISO 9001.",
-    definitionOfDone:
-      "Nota `interview` en el Context Hub con hallazgos clave y citas atribuidas a la persona entrevistada.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "interview",
-    priority: "high",
-    assignee: "sam",
-    orderKey: "a3",
-  },
-  {
-    title: "Entrevista: Jefe de Producción",
-    description: "Flujo de planta, planificación, mermas, calidad y registros actuales.",
-    definitionOfDone:
-      "Nota `interview` en el Context Hub con el flujo de producción descrito y dolores citados con fuente.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "interview",
-    priority: "normal",
-    assignee: "sam",
-    orderKey: "a4",
-  },
-  {
-    title: "Entrevista: Ventas y Comercial",
-    description: "Ciclo de venta, cotizaciones, seguimiento de pedidos y postventa.",
-    definitionOfDone:
-      "Nota `interview` en el Context Hub cubriendo el ciclo comercial completo, con citas atribuidas.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "interview",
-    priority: "normal",
-    assignee: "sam",
-    orderKey: "a5",
-  },
-  {
-    title: "Mapa de proceso as-is: Producción",
-    description: "Mapear el proceso de producción actual con base en las entrevistas.",
-    definitionOfDone:
-      "Proceso en `processes` (variant as_is) con pasos SIPOC, sistemas implicados y dolores, enlazado a sus entrevistas fuente.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "process_map",
-    priority: "high",
-    assignee: "sam",
-    orderKey: "a6",
-  },
-  {
-    title: "Mapa de proceso as-is: Ventas → Facturación",
-    description: "Mapear el flujo desde cotización hasta factura y cobro.",
-    definitionOfDone:
-      "Proceso en `processes` (variant as_is) con pasos, responsables y sistemas, enlazado a sus fuentes.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "process_map",
-    priority: "normal",
-    assignee: "sam",
-    orderKey: "a7",
-  },
-  {
-    title: "Análisis de fugas y cuellos de botella",
-    description: "Consolidar retrabajos, esperas y fugas de margen detectadas en entrevistas y mapas.",
-    definitionOfDone:
-      "Un `finding` por fuga con impacto estimado y fuente; toda afirmación sin fuente marcada como no verificada.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "leak_analysis",
-    priority: "high",
-    assignee: "sam",
-    orderKey: "a8",
-  },
-  {
-    title: "Matriz de brechas ISO 9001 (cláusulas 4-10)",
-    description: "Contrastar procesos mapeados contra requisitos ISO 9001 e identificar huecos.",
-    definitionOfDone:
-      "Matriz cláusula↔proceso↔evidencia registrada como documento `iso_clause` con huecos identificados y priorizados.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "iso_gap",
-    priority: "normal",
-    assignee: "sam",
-    orderKey: "a9",
-  },
-  {
-    title: "Informe de assessment (borrador)",
-    description: "Redactar el informe de diagnóstico consolidando perfil, mapas, fugas y brechas.",
-    definitionOfDone:
-      "Informe adjunto como artefacto citando doc ids del Context Hub (provenance); pasa a REVIEW para aprobación humana.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "report",
-    priority: "urgent",
-    assignee: "sam",
-    orderKey: "b0",
-    requiresApproval: true,
-  },
-  {
-    title: "Roadmap de transformación priorizado",
-    description: "Proponer el roadmap Entender → Construir → Operar con prioridades y esfuerzo.",
-    definitionOfDone:
-      "Roadmap adjunto como artefacto, coherente con el informe; su aprobación humana habilita el Gate 1 y cierra ENTENDER.",
-    status: "BACKLOG",
-    stage: "ENTENDER",
-    activityType: "roadmap",
-    priority: "urgent",
-    assignee: "alex",
-    orderKey: "b1",
-    requiresApproval: true,
-  },
-];
+/**
+ * Inputs demo del launch de consultoria v1 (claves y tipos EXACTOS de
+ * `modules/consultoria.md`). Constantes a nivel de módulo: mismo inputs_digest
+ * en cada re-seed ⇒ la idempotencia por key (CA-M2.6) nunca ve un conflicto.
+ * Con ISO on: 12 tareas, 3 READY + 9 BACKLOG — la aritmética histórica del demo.
+ */
+const SEED_DEMO_INPUTS: Record<string, unknown> = {
+  empresa: "ACME S.A.",
+  alias: "ACME",
+  industria: "manufactura",
+  empleados: 40,
+  sponsor: "Gerente General",
+  objetivo: "Diagnosticar la operación y preparar ISO 9001.",
+  areas: ["direccion", "operaciones", "ventas"],
+  procesos_core: ["Producción", "Ventas → Facturación"],
+  fecha_objetivo: "2026-09-15",
+  sistemas_conocidos: "ERP básico, hojas de cálculo, WhatsApp",
+};
 
 export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): SeedCounts {
   const env = opts.env ?? process.env;
@@ -308,8 +174,9 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   const sixteam =
     getOrganizationByName(db, "Sixteam") ??
     createOrganization(db, { name: "Sixteam", kind: "internal" });
-  const acme =
-    getOrganizationByName(db, "ACME S.A.") ??
+  // La org demo se preserva con sus notas; el launch demo (paso 7) la
+  // encuentra por nombre exacto (get-or-create §13.3), no la duplica.
+  if (!getOrganizationByName(db, "ACME S.A.")) {
     createOrganization(db, {
       name: "ACME S.A.",
       kind: "client",
@@ -317,6 +184,7 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
       employeeCount: 40,
       notes: "Organización demo del MVP. Quieren preparación ISO 9001.",
     });
+  }
 
   // 3) Personas internas (nombre completo para asignaciones)
   for (const p of PEOPLE_SEEDS) {
@@ -430,46 +298,11 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
     upsertPhaseModuleFromSeed(db, m);
   }
 
-  // 6) Proyecto demo con 12 tareas de assessment
-  let project = getProjectByName(db, "Assessment ACME");
-  if (!project) {
-    project = createProject(db, {
-      orgId: acme.id,
-      name: "Assessment ACME",
-      type: "assessment",
-      stage: "ENTENDER",
-      gateState: "pending",
-      workspacePath: "workspaces/assessment-acme",
-    });
-    for (const t of TASK_SEEDS) {
-      const task = createTask(db, {
-        projectId: project.id,
-        title: t.title,
-        description: t.description,
-        definitionOfDone: t.definitionOfDone,
-        stage: t.stage,
-        status: t.status,
-        activityType: t.activityType,
-        priority: t.priority,
-        assigneeAgentId: agentIdBySlug.get(t.assignee) ?? null,
-        requiresApproval: t.requiresApproval ?? false,
-        orderKey: t.orderKey,
-      });
-      appendTaskEvent(db, {
-        taskId: task.id,
-        kind: "created",
-        toStatus: t.status,
-        actor: "system:seed",
-        payload: { assignee: t.assignee },
-      });
-    }
-  }
-
-  // 7) Config base (no pisa valores editados a mano)
-  // Seguro por defecto: un arranque en frío queda PAUSADO. El seed deja tareas
-  // en READY y el despachador las arrancaría (gastando suscripción) al boot; con
-  // el kill switch activo, nada corre hasta que un humano haga resume_all cuando
-  // esté listo para observar.
+  // 6) Config base (no pisa valores editados a mano). Va ANTES del launch demo
+  // a propósito: seguro por defecto, un arranque en frío queda PAUSADO. El
+  // launch deja tareas en READY y el despachador las arrancaría (gastando
+  // suscripción) al boot; con el kill switch ya activo cuando nacen, nada corre
+  // hasta que un humano haga resume_all cuando esté listo para observar.
   if (getConfig(db, ConfigKeys.KILL_SWITCH) === undefined) {
     setConfig(db, ConfigKeys.KILL_SWITCH, true);
   }
@@ -478,6 +311,30 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   }
   if (getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD) === undefined) {
     setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD, 10);
+  }
+
+  // 7) Proyecto demo = LAUNCH del módulo consultoria v1 (§13.6): las 12 tareas
+  // salen de las plantillas del módulo, con la política de aprobación real
+  // (NM-5). Motor directo (launchModule, no launchModuleWithEvents): el seed NO
+  // publica eventos AG-UI. Cinturón y tirantes contra el re-seed: guard por
+  // nombre de proyecto + idempotency_key fija (misma key + mismos inputs
+  // devuelve lo ya creado sin duplicar — CA-M2.6).
+  if (!getProjectByName(db, "Assessment ACME")) {
+    launchModule(db, {
+      moduleSlug: "consultoria",
+      actor: "system:seed",
+      idempotencyKey: "seed:demo:consultoria:acme",
+      toggles: { iso9001: true },
+      org: {
+        name: "ACME S.A.",
+        kind: "client",
+        industria: "manufactura",
+        employeeCount: 40,
+        notes: "Organización demo del MVP. Quieren preparación ISO 9001.",
+      },
+      inputs: SEED_DEMO_INPUTS,
+      now: SEED_DEMO_LAUNCH_NOW,
+    });
   }
 
   return collectCounts(db, agentsFallback);
