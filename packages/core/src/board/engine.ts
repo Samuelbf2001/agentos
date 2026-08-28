@@ -173,9 +173,35 @@ export interface ReconcileResult {
   reconciled: boolean;
 }
 
+/** Estado de las dependencias de una tarjeta (§13.4) — para la API/UI y el guard. */
+export interface DependencyState {
+  taskId: string;
+  dependsOn: string[];
+  /** Deps que NO están en DONE. Una dep borrada/inexistente cuenta como insatisfecha (fail-closed). */
+  unsatisfied: string[];
+  satisfied: boolean;
+}
+
+export function dependencyState(db: AgentosDb, taskId: string): DependencyState {
+  const task = getTask(db, taskId);
+  if (!task) throw errors.notFound("task", taskId);
+  const dependsOn = task.dependsOn ?? [];
+  const unsatisfied = dependsOn.filter((id) => getTask(db, id)?.status !== "DONE");
+  return { taskId: task.id, dependsOn, unsatisfied, satisfied: unsatisfied.length === 0 };
+}
+
 export interface BoardEngine {
   createTask(input: CreateTaskInput, opts: { actor: string; runId?: string | null }): Task;
   moveTask(input: MoveTaskInput): Task;
+  /**
+   * CA-M2.3 (§13.4): promueve BACKLOG→READY (actor system, por la MISMA máquina,
+   * con task_events y eventos de board) las tareas del proyecto con depends_on
+   * no vacío y TODAS sus dependencias en DONE. Corre sola al llegar cualquier
+   * tarea del proyecto a DONE vía moveTask; también es invocable directa.
+   * Devuelve los ids promovidos. Fail-soft por tarea: la que no pueda entrar a
+   * READY (DoD vacía, Gate 1 pendiente, carrera) se queda en BACKLOG.
+   */
+  promoteUnblockedTasks(projectId: string, ctx?: { runId?: string | null }): string[];
   claim(input: ClaimInput): { claimed: boolean; task?: Task };
   renewLease(taskId: string, leaseMs?: number): boolean;
   reap(): { requeued: string[]; blocked: string[] };
@@ -392,7 +418,8 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     // 3. Gate 1: salir de BACKLOG (salvo cancelación humana) exige g1 aprobado en CONSTRUIR.
     if (from === "BACKLOG" && to !== "CANCELLED") assertGate1(task);
 
-    // 4. BACKLOG→READY: solo orquestador-o-humano, y exige DoD + asignado.
+    // 4. BACKLOG→READY: solo orquestador-o-humano-o-sistema, y exige DoD + asignado.
+    let dependencyOverride: string[] | null = null;
     if (from === "BACKLOG" && to === "READY") {
       if (kind === "agent") {
         const slug = input.actor.slice("agent:".length);
@@ -403,6 +430,21 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
             { from, to, actor: input.actor },
           );
         }
+      }
+      // 4b. Guard de dependencias (§13.4, fail-closed): con depends_on sin
+      // cerrar, system y agent RECHAZAN; el humano puede forzar (override) y
+      // queda auditado como tal (audit_log, mismo helper que el resto).
+      const deps = dependencyState(db, task.id);
+      if (!deps.satisfied) {
+        if (kind !== "human") {
+          throw new AgentosError(
+            ErrorCodes.DEPENDENCY_NOT_SATISFIED,
+            `BACKLOG→READY rechazada: la tarea ${task.id} tiene dependencias sin cerrar ` +
+              `(${deps.unsatisfied.join(", ")}); solo un humano puede forzarla`,
+            { taskId: task.id, unsatisfied: deps.unsatisfied, actorKind: kind },
+          );
+        }
+        dependencyOverride = deps.unsatisfied;
       }
       if (!task.definitionOfDone?.trim()) {
         throw errors.validation("BACKLOG→READY exige definition_of_done no vacía", { taskId: task.id });
@@ -474,8 +516,23 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       payload: {
         ...(input.note ? { note: input.note } : {}),
         ...(blockedReason ? { blockedReason } : {}),
+        ...(dependencyOverride ? { dependencyOverride: true, unsatisfiedDependsOn: dependencyOverride } : {}),
       },
     });
+    // Override humano del guard de dependencias: queda auditado como tal (§13.4).
+    if (dependencyOverride) {
+      appendAudit(db, {
+        actor: input.actor,
+        source: "ui",
+        action: "task.dependency_override",
+        entityType: "task",
+        entityId: task.id,
+        before: { status: from },
+        after: { status: to, unsatisfiedDependsOn: dependencyOverride },
+        reason: input.note ?? null,
+        runId: input.runId ?? null,
+      });
+    }
     publishBoard(task.projectId, "task.moved", { taskId: task.id, from, to, actor: input.actor }, input.runId);
     // H10: la bandeja "Esperando por ti" incluye entregables en REVIEW; avisar
     // por el topic approvals para que la UI refresque el badge en vivo.
@@ -486,7 +543,47 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
         runId: input.runId ?? null,
       });
     }
+    // Hook de promoción (CA-M2.3, §13.4): esta transición es el ÚNICO camino de
+    // dominio a DONE (REST approve, MCP approve y reconcileDecidedApproval pasan
+    // por aquí) — al cerrar, promover dependientes en el mismo flujo secuencial
+    // inmediato (el motor no abre transacciones; SQL crudo suelto como siempre).
+    if (to === "DONE") {
+      promoteUnblockedTasks(task.projectId, { runId: input.runId ?? null });
+    }
     return getTask(db, task.id)!;
+  }
+
+  /** Ver doc en la interfaz BoardEngine (CA-M2.3). */
+  function promoteUnblockedTasks(projectId: string, ctx?: { runId?: string | null }): string[] {
+    const rows = db.$client
+      .prepare(`SELECT id FROM tasks WHERE project_id = ? AND status = 'BACKLOG' ORDER BY order_key`)
+      .all(projectId) as { id: string }[];
+    const promoted: string[] = [];
+    for (const row of rows) {
+      const task = getTask(db, row.id);
+      if (!task || task.status !== "BACKLOG") continue;
+      const deps = task.dependsOn ?? [];
+      // Sin depends_on no hay auto-promoción: BACKLOG "a secas" es decisión
+      // humana (despriorizada o recién creada) y el sistema no la pisa.
+      if (deps.length === 0) continue;
+      if (deps.some((id) => getTask(db, id)?.status !== "DONE")) continue;
+      try {
+        moveTask({
+          taskId: task.id,
+          to: "READY",
+          expectedVersion: task.version,
+          actor: "system:dependencies",
+          runId: ctx?.runId ?? null,
+          note: "todas las dependencias en DONE: la tarea entra a la cola (CA-M2.3)",
+        });
+        promoted.push(task.id);
+      } catch {
+        // Fail-soft por tarea: DoD vacía, sin asignado, Gate 1 pendiente o
+        // carrera de versión no tumban el DONE que disparó la promoción; la
+        // tarjeta se queda en BACKLOG y la retoma un humano o el siguiente DONE.
+      }
+    }
+    return promoted;
   }
 
   // ── Claim / lease / reaper ────────────────────────────────────────────────
@@ -863,6 +960,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
   return {
     createTask,
     moveTask: (input) => moveTask(input),
+    promoteUnblockedTasks,
     claim,
     renewLease,
     reap,

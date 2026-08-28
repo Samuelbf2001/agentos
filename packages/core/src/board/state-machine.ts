@@ -4,7 +4,7 @@
  *
  * | Transición                    | Agente                              | Humano | Sistema |
  * |-------------------------------|-------------------------------------|--------|---------|
- * | BACKLOG → READY               | solo orquestador, con DoD + dueño   | Sí     | No      |
+ * | BACKLOG → READY               | solo orquestador, con DoD + dueño   | Sí     | Sí (solo con TODAS las depends_on en DONE — §13.4) |
  * | READY → BACKLOG (despriorizar)| No                                  | Sí     | No      |
  * | READY → IN_PROGRESS           | solo vía tasks.claim                | Sí     | Sí (despachador vía claim) |
  * | IN_PROGRESS → BLOCKED         | Sí                                  | Sí     | Sí (reaper 'stuck') |
@@ -65,6 +65,7 @@ const MATRIX: Record<ActorKind, readonly `${TaskStatus}>${TaskStatus}`[]> = {
     "REVIEW>IN_PROGRESS",
   ],
   system: [
+    "BACKLOG>READY", // solo con TODAS las depends_on en DONE (guard extra en el motor — §13.4)
     "READY>IN_PROGRESS", // despachador (vía claim)
     "IN_PROGRESS>BLOCKED", // reaper: attempts >= max → 'stuck'
     "IN_PROGRESS>READY", // reaper: lease vencido / run cancelado

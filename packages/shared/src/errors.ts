@@ -31,6 +31,8 @@ export const ErrorCodes = {
   MODULE_VERSION_IMMUTABLE: "module_version_immutable",
   /** Módulos de fase (§13.5): solo un módulo `active` puede dispararse (NM-4). */
   MODULE_NOT_ACTIVE: "module_not_active",
+  /** Módulos de fase (§13.4): BACKLOG→READY con depends_on sin cerrar (solo humano fuerza). */
+  DEPENDENCY_NOT_SATISFIED: "dependency_not_satisfied",
   // Proveedores / runtime
   PROVIDER_ERROR: "provider_error",
   PROVIDER_NOT_CONFIGURED: "provider_not_configured",

@@ -80,6 +80,18 @@ export function sumRunCostBetween(db: AgentosDb, fromMs: number, toMs: number): 
   return row.total;
 }
 
+/**
+ * M3 (§13.4): gasto acumulado de un proyecto — suma de runs.cost_usd de TODOS
+ * sus runs (cualquier estado). Corte de presupuesto de fase del despachador y
+ * exposición en system.health. NULL no suma — nunca cero inferido (CA-7.2).
+ */
+export function sumRunCostForProject(db: AgentosDb, projectId: string): number {
+  const row = db.$client
+    .prepare(`SELECT coalesce(sum(cost_usd), 0) AS total FROM runs WHERE project_id = ?`)
+    .get(projectId) as { total: number };
+  return row.total;
+}
+
 /** B4 (lectura nueva): listado general de runs con filtros para GET /api/runs. */
 export interface RunListFilter {
   status?: RunStatus;

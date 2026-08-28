@@ -6,7 +6,12 @@
  * (ARCHITECTURE §7, riesgo 5: el MCP admin como superficie de escalada).
  */
 import { z } from "zod";
-import { errors } from "@agentos/shared";
+import {
+  errors,
+  parseProjectBudget,
+  projectIdFromBudgetKey,
+  PROJECT_BUDGET_KEY_PREFIX,
+} from "@agentos/shared";
 import {
   ConfigKeys,
   countDomainTables,
@@ -24,6 +29,7 @@ import {
   listTasks,
   queryAudit,
   setConfig,
+  sumRunCostForProject,
   updateAgent,
   updatePerson,
   updateProject,
@@ -47,6 +53,17 @@ export const ALLOWED_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "semaphore_ai_sdk",
 ]);
 
+/** §13.4: `budget:project:<projectId>` — presupuesto de fase editable por humano vía MCP. */
+export const PROJECT_BUDGET_KEY_RE = /^budget:project:\S+$/;
+
+/** Shape exigido al valor de `budget:project:*` (validación fail-closed en config.set). */
+export const ProjectBudgetValue = z.strictObject({
+  phase_usd: z.number().positive(),
+  per_run_usd: z.number().positive(),
+  warning_thresholds_pct: z.array(z.number().gt(0).max(100)).min(1).optional(),
+  launch_id: z.string().min(1).nullable().optional(),
+});
+
 export const configTools: AdminToolDefinition[] = [
   def({
     name: "agentos.config.get",
@@ -62,32 +79,61 @@ export const configTools: AdminToolDefinition[] = [
   def({
     name: "agentos.config.set",
     description:
-      `Escribe una clave PERMITIDA de app_config (${[...ALLOWED_CONFIG_KEYS].join(", ")}). ` +
+      `Escribe una clave PERMITIDA de app_config (${[...ALLOWED_CONFIG_KEYS].join(", ")}, ` +
+      `${PROJECT_BUDGET_KEY_PREFIX}<projectId>). Las claves budget:project:* exigen ` +
+      "{phase_usd>0, per_run_usd>0, warning_thresholds_pct?, launch_id?}. " +
       "El kill switch se maneja con system.pause_all/resume_all.",
     schema: z.object({
       key: z.string().min(1),
-      value: z.union([z.boolean(), z.number(), z.string(), z.null()]),
+      value: z.union([
+        z.boolean(),
+        z.number(),
+        z.string(),
+        z.null(),
+        z.record(z.string(), z.unknown()),
+      ]),
       reason: Reason,
     }),
     readOnly: false,
     handler(ctx, args) {
-      if (!ALLOWED_CONFIG_KEYS.has(args.key)) {
+      const isBudgetKey = PROJECT_BUDGET_KEY_RE.test(args.key);
+      if (!isBudgetKey && !ALLOWED_CONFIG_KEYS.has(args.key)) {
         throw errors.validation(
-          `Clave de config no permitida: "${args.key}" (permitidas: ${[...ALLOWED_CONFIG_KEYS].join(", ")})`,
+          `Clave de config no permitida: "${args.key}" ` +
+            `(permitidas: ${[...ALLOWED_CONFIG_KEYS].join(", ")}, ${PROJECT_BUDGET_KEY_PREFIX}<projectId>)`,
+          { key: args.key },
+        );
+      }
+      let value: unknown = args.value;
+      if (isBudgetKey) {
+        // §13.4: shape del presupuesto validado fail-closed — un tope corrupto
+        // escrito a mano jamás llega al despachador.
+        const parsed = ProjectBudgetValue.safeParse(args.value);
+        if (!parsed.success) {
+          throw errors.validation(
+            `Valor inválido para "${args.key}": se exige ` +
+              "{phase_usd>0, per_run_usd>0, warning_thresholds_pct? (1..100), launch_id?}",
+            parsed.error.issues,
+          );
+        }
+        value = parsed.data;
+      } else if (typeof args.value === "object" && args.value !== null) {
+        throw errors.validation(
+          `La clave "${args.key}" solo acepta valores escalares (boolean|number|string|null)`,
           { key: args.key },
         );
       }
       const before = { value: getConfig(ctx.db, args.key) ?? null };
-      setConfig(ctx.db, args.key, args.value);
+      setConfig(ctx.db, args.key, value);
       auditMutation(ctx, {
         action: "config.set",
         entityType: "app_config",
         entityId: args.key,
         before,
-        after: { value: args.value },
+        after: { value },
         reason: args.reason,
       });
-      return { key: args.key, value: args.value };
+      return { key: args.key, value };
     },
   }),
 
@@ -116,11 +162,37 @@ export const configTools: AdminToolDefinition[] = [
 
   def({
     name: "agentos.system.health",
-    description: "Salud del sistema: DB ok, conteos básicos, kill switch y perfil activo.",
+    description:
+      "Salud del sistema: DB ok, conteos básicos, kill switch, perfil activo y " +
+      "presupuestos de fase activos por proyecto (budget:project:*, con gasto acumulado).",
     schema: z.object({}),
     readOnly: true,
     handler(ctx) {
       const tables = countDomainTables(ctx.db);
+      // §13.4: presupuestos de proyecto declarados por launches (o editados por
+      // humano). Cálculo de umbrales de aviso aquí — el "lugar natural", sin UI.
+      const projectBudgets = listConfig(ctx.db)
+        .filter((row) => projectIdFromBudgetKey(row.key) !== null)
+        .map((row) => {
+          const projectId = projectIdFromBudgetKey(row.key)!;
+          const budget = parseProjectBudget(row.value);
+          const spent = sumRunCostForProject(ctx.db, projectId);
+          const phaseUsd = budget?.phaseUsd ?? null;
+          const pctUsed = phaseUsd !== null ? Math.round((spent / phaseUsd) * 100) : null;
+          const thresholds = budget?.warningThresholdsPct ?? [];
+          return {
+            project_id: projectId,
+            phase_usd: phaseUsd,
+            per_run_usd: budget?.perRunUsd ?? null,
+            launch_id: budget?.launchId ?? null,
+            spent_usd: spent,
+            pct_used: pctUsed,
+            warning_thresholds_pct: thresholds,
+            warnings_reached:
+              pctUsed !== null ? thresholds.filter((t) => pctUsed >= t) : [],
+            exhausted: phaseUsd !== null && spent >= phaseUsd,
+          };
+        });
       return {
         status: "ok",
         db_ok: tables > 0,
@@ -129,6 +201,7 @@ export const configTools: AdminToolDefinition[] = [
         tasks: listTasks(ctx.db).length,
         pending_approvals: ctx.engine.listPendingApprovals().length,
         kill_switch_active: ctx.engine.isKillSwitchActive(),
+        project_budgets: projectBudgets,
         profile: ctx.profile,
         actor: ctx.actor,
       };
@@ -315,7 +388,7 @@ function applyRevert(
         ctx.engine.setKillSwitch(before.active === true, ctx.actor, "audit.revert");
         return { applied: { active: before.active === true }, ignored: [] };
       }
-      if (!ALLOWED_CONFIG_KEYS.has(entityId)) {
+      if (!ALLOWED_CONFIG_KEYS.has(entityId) && !PROJECT_BUDGET_KEY_RE.test(entityId)) {
         throw errors.validation(`audit.revert: clave de config no permitida: "${entityId}"`);
       }
       setConfig(ctx.db, entityId, before.value ?? null);

@@ -253,6 +253,24 @@ export function findLaunchByIdempotencyKey(
     .get();
 }
 
+/**
+ * Último launch del proyecto (M3, CA-M3.1): el recibo cuyos `deliverables`
+ * efectivos definen el cierre de fase vigente. Desempate por rowid (dos
+ * launches con el mismo `created_at` inyectado en tests).
+ */
+export function getLatestLaunchForProject(
+  db: AgentosDb,
+  projectId: string,
+): ModuleLaunch | undefined {
+  const row = db.$client
+    .prepare(
+      `SELECT id FROM module_launches WHERE project_id = ?
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(projectId) as { id: string } | undefined;
+  return row ? getLaunch(db, row.id) : undefined;
+}
+
 export function listLaunches(
   db: AgentosDb,
   filter: { projectId?: string; moduleSlug?: string } = {},

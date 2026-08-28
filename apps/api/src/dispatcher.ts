@@ -12,7 +12,15 @@
  *     REVIEW (lista configurable en app_config; Quinn real llega en B7);
  * (e) respeta kill switch y agents.status='paused'.
  */
-import { AgentosError, ErrorCodes, newId, nowMs } from "@agentos/shared";
+import {
+  AgentosError,
+  ErrorCodes,
+  newId,
+  nowMs,
+  parseProjectBudget,
+  projectBudgetKey,
+  type ProjectBudget,
+} from "@agentos/shared";
 import {
   ConfigKeys,
   createRun,
@@ -31,6 +39,7 @@ import {
   listReconcilableApprovals,
   appendMessage,
   setConfig,
+  sumRunCostForProject,
   updateRun,
   type Agent,
   type AgentosDb,
@@ -108,11 +117,19 @@ export interface Dispatcher {
   inflight(): ReadonlyMap<string, string>;
 }
 
-function budgetFromLimits(limits: Record<string, unknown> | null | undefined): RunBudget | undefined {
-  if (!limits) return undefined;
+/**
+ * §13.4: combina `agents.limits` con el presupuesto de proyecto que el launch
+ * dejó en `app_config['budget:project:<id>']`. El tope efectivo por run es
+ * `min(max_usd del agente, per_run_usd del proyecto)` — el más estricto manda;
+ * si solo existe uno, aplica ese. Exportada para tests.
+ */
+export function budgetFromLimits(
+  limits: Record<string, unknown> | null | undefined,
+  projectBudget?: ProjectBudget | null,
+): RunBudget | undefined {
   const num = (...keys: string[]): number | undefined => {
     for (const k of keys) {
-      const v = limits[k];
+      const v = limits?.[k];
       if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
     }
     return undefined;
@@ -120,7 +137,12 @@ function budgetFromLimits(limits: Record<string, unknown> | null | undefined): R
   const budget: RunBudget = {};
   const maxSteps = num("max_steps", "maxSteps");
   const maxTokens = num("max_tokens", "maxTokens");
-  const maxUsd = num("max_usd", "maxUsd");
+  const agentMaxUsd = num("max_usd", "maxUsd");
+  const perRunUsd = projectBudget?.perRunUsd;
+  const maxUsd =
+    agentMaxUsd !== undefined && perRunUsd !== undefined
+      ? Math.min(agentMaxUsd, perRunUsd)
+      : (agentMaxUsd ?? perRunUsd);
   const maxMs = num("max_ms", "maxMs");
   if (maxSteps !== undefined) budget.maxSteps = maxSteps;
   if (maxTokens !== undefined) budget.maxTokens = maxTokens;
@@ -204,7 +226,11 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       { role: "user", content: params.userText },
     ];
     const project = params.projectId ? getProject(db, params.projectId) : undefined;
-    const budget = budgetFromLimits(agent.limits);
+    // Único call site (§13.4): límites del agente + presupuesto del proyecto.
+    const projectBudget = params.projectId
+      ? parseProjectBudget(getConfig(db, projectBudgetKey(params.projectId)))
+      : null;
+    const budget = budgetFromLimits(agent.limits, projectBudget);
     return {
       agent: {
         slug: agent.slug,
@@ -384,6 +410,22 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     }
   }
 
+  /**
+   * Corte de presupuesto de fase (§13.4): con `budget:project:<id>.phase_usd`
+   * declarado y el gasto acumulado (suma de runs.cost_usd del proyecto) ≥ tope,
+   * el proyecto NO recibe despachos nuevos. Cache por tick: un cálculo por
+   * proyecto aunque haya varias candidatas.
+   */
+  function isPhaseBudgetExhausted(projectId: string, cache: Map<string, boolean>): boolean {
+    const cached = cache.get(projectId);
+    if (cached !== undefined) return cached;
+    const budget = parseProjectBudget(getConfig(db, projectBudgetKey(projectId)));
+    const exhausted =
+      budget?.phaseUsd !== undefined && sumRunCostForProject(db, projectId) >= budget.phaseUsd;
+    cache.set(projectId, exhausted);
+    return exhausted;
+  }
+
   async function tick(): Promise<TickReport> {
     if (ticking) return { skipped: "reentrant", dispatched: [], errors: [] };
     ticking = true;
@@ -397,8 +439,11 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       await reconcilePendingApprovals();
       const dispatched: string[] = [];
       const tickErrors: string[] = [];
+      const phaseBudgetCache = new Map<string, boolean>();
       for (const task of listDispatchableTasks(db, now(), maxDispatchPerTick)) {
         try {
+          // §13.4: fase sin presupuesto restante → sus tareas esperan (ni claim ni run).
+          if (isPhaseBudgetExhausted(task.projectId, phaseBudgetCache)) continue;
           const runId = dispatchTask(task);
           if (runId) dispatched.push(runId);
         } catch (err) {

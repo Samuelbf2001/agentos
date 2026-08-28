@@ -8,3 +8,4 @@ export * from "./approval-policy.js";
 export * from "./org-health.js";
 export * from "./modules.js";
 export * from "./module-launch.js";
+export * from "./project-budget.js";
