@@ -7,6 +7,19 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start:stdio": "tsx src/stdio.ts",
+    "start:http": "tsx src/http.ts"
+  },
+  "dependencies": {
+    "@agentos/core": "workspace:*",
+    "@agentos/db": "workspace:*",
+    "@agentos/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0"
   }
 }

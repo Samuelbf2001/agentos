@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { newId, nowMs } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { auditLog } from "../schema.js";
@@ -20,12 +20,51 @@ export function appendAudit(
 
 export function queryAudit(
   db: AgentosDb,
-  filter: { entityType?: string; entityId?: string; limit?: number } = {},
+  filter: {
+    entityType?: string;
+    entityId?: string;
+    action?: string;
+    actor?: string;
+    sinceMs?: number;
+    limit?: number;
+  } = {},
 ): AuditEntry[] {
   const conds = [];
   if (filter.entityType) conds.push(eq(auditLog.entityType, filter.entityType));
   if (filter.entityId) conds.push(eq(auditLog.entityId, filter.entityId));
+  if (filter.action) conds.push(eq(auditLog.action, filter.action));
+  if (filter.actor) conds.push(eq(auditLog.actor, filter.actor));
+  if (filter.sinceMs !== undefined) conds.push(gte(auditLog.createdAt, filter.sinceMs));
   const base = db.select().from(auditLog);
   const q = conds.length > 0 ? base.where(and(...conds)) : base;
   return q.orderBy(desc(auditLog.createdAt)).limit(filter.limit ?? 100).all();
+}
+
+export function getAuditEntry(db: AgentosDb, id: string): AuditEntry | undefined {
+  return db.select().from(auditLog).where(eq(auditLog.id, id)).get();
+}
+
+/**
+ * Idempotencia de mutaciones (ARCHITECTURE §7): el llamador registra la clave
+ * dentro del JSON `after` (`idempotency_key`) y ANTES de repetir la mutación
+ * busca aquí. Si hay fila previa con la misma (action, idempotency_key), la
+ * mutación ya ocurrió — se devuelve la entrada para recuperar la entidad.
+ */
+export function findAuditByIdempotencyKey(
+  db: AgentosDb,
+  action: string,
+  idempotencyKey: string,
+): AuditEntry | undefined {
+  return db
+    .select()
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, action),
+        sql`json_extract(${auditLog.after}, '$.idempotency_key') = ${idempotencyKey}`,
+      ),
+    )
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1)
+    .get();
 }

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { newId, nowMs, type OrgKind } from "@agentos/shared";
+import { errors, newId, nowMs, type OrgKind } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { organizations, people } from "../schema.js";
 import type { NewOrganization, NewPerson, Organization, Person } from "../types.js";
@@ -63,6 +63,20 @@ export function getPersonByFullName(db: AgentosDb, fullName: string): Person | u
 export function listPeople(db: AgentosDb, orgId?: string): Person[] {
   if (orgId) return db.select().from(people).where(eq(people.orgId, orgId)).all();
   return db.select().from(people).all();
+}
+
+export function updatePerson(
+  db: AgentosDb,
+  id: string,
+  patch: Partial<Omit<Person, "id" | "createdAt">>,
+): Person {
+  db.update(people)
+    .set({ ...patch, updatedAt: nowMs() })
+    .where(eq(people.id, id))
+    .run();
+  const updated = getPerson(db, id);
+  if (!updated) throw errors.notFound("person", id);
+  return updated;
 }
 
 export function listInternalPeople(db: AgentosDb, orgId: string): Person[] {
