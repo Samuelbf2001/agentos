@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { errors, newId, nowMs, type RunStatus } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { runs, spans } from "../schema.js";
@@ -78,6 +78,26 @@ export function sumRunCostBetween(db: AgentosDb, fromMs: number, toMs: number): 
     )
     .get(fromMs, toMs) as { total: number };
   return row.total;
+}
+
+/** B4 (lectura nueva): listado general de runs con filtros para GET /api/runs. */
+export interface RunListFilter {
+  status?: RunStatus;
+  taskId?: string;
+  projectId?: string;
+  agentId?: string;
+  limit?: number;
+}
+
+export function listRuns(db: AgentosDb, filter: RunListFilter = {}): Run[] {
+  const conds = [];
+  if (filter.status) conds.push(eq(runs.status, filter.status));
+  if (filter.taskId) conds.push(eq(runs.taskId, filter.taskId));
+  if (filter.projectId) conds.push(eq(runs.projectId, filter.projectId));
+  if (filter.agentId) conds.push(eq(runs.agentId, filter.agentId));
+  const base = db.select().from(runs);
+  const q = conds.length > 0 ? base.where(and(...conds)) : base;
+  return q.orderBy(desc(runs.createdAt)).limit(filter.limit ?? 100).all();
 }
 
 // ── Spans ───────────────────────────────────────────────────────────────────

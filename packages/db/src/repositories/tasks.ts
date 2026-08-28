@@ -178,6 +178,31 @@ export function reapExpiredLeases(
   return { requeued, blocked };
 }
 
+/**
+ * B4 (lectura nueva): candidatas del despachador — la ÚNICA cola es READY
+ * (ARCHITECTURE §6) con agente asignado y lease libre, ordenadas por
+ * prioridad y antigüedad. El claim atómico sigue siendo quien decide.
+ */
+export function listDispatchableTasks(db: AgentosDb, at = nowMs(), limit = 20): Task[] {
+  const rows = db.$client
+    .prepare(
+      `SELECT id FROM tasks
+       WHERE status = 'READY'
+         AND assignee_agent_id IS NOT NULL
+         AND (lease_until IS NULL OR lease_until < @at)
+       ORDER BY CASE priority
+                  WHEN 'urgent' THEN 0
+                  WHEN 'high' THEN 1
+                  WHEN 'normal' THEN 2
+                  ELSE 3
+                END,
+                created_at ASC
+       LIMIT @limit`,
+    )
+    .all({ at, limit }) as { id: string }[];
+  return rows.map((r) => getTask(db, r.id)!);
+}
+
 // ── Timeline (task_events, append-only) ─────────────────────────────────────
 
 export function appendTaskEvent(

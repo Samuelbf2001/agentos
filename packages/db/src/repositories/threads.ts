@@ -83,6 +83,27 @@ export function appendMessage(
   return { message: getMessage(db, row.id!)!, inserted: true };
 }
 
+/**
+ * B4 (lectura nueva): dedup del gateway de canales por unique(channel, message_id)
+ * (ARCHITECTURE §9) — ¿existe ya un mensaje con esta idempotency_key en
+ * cualquier thread del canal?
+ */
+export function findChannelMessage(
+  db: AgentosDb,
+  channel: string,
+  idempotencyKey: string,
+): Message | undefined {
+  const row = db.$client
+    .prepare(
+      `SELECT m.id FROM messages m
+       JOIN threads t ON t.id = m.thread_id
+       WHERE t.channel = ? AND m.idempotency_key = ?
+       LIMIT 1`,
+    )
+    .get(channel, idempotencyKey) as { id: string } | undefined;
+  return row ? getMessage(db, row.id) : undefined;
+}
+
 export function getMessage(db: AgentosDb, id: string): Message | undefined {
   return db.select().from(messages).where(eq(messages.id, id)).get();
 }
