@@ -7,6 +7,16 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agentos/db": "workspace:*",
+    "@agentos/shared": "workspace:*",
+    "@ai-sdk/anthropic": "^4.0.44",
+    "@ai-sdk/openai": "^4.0.50",
+    "@ai-sdk/openai-compatible": "^3.0.39",
+    "ai": "^7.0.83",
+    "zod": "^4.1.5"
   }
 }

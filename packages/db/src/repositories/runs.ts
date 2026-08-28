@@ -1,5 +1,5 @@
 import { asc, eq } from "drizzle-orm";
-import { errors, newId, nowMs } from "@agentos/shared";
+import { errors, newId, nowMs, type RunStatus } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { runs, spans } from "../schema.js";
 import type { NewRun, NewSpan, Run, Span } from "../types.js";
@@ -56,6 +56,28 @@ export function listRunsByRoot(db: AgentosDb, rootRunId: string): Run[] {
 
 export function listRunsForTask(db: AgentosDb, taskId: string): Run[] {
   return db.select().from(runs).where(eq(runs.taskId, taskId)).orderBy(asc(runs.createdAt)).all();
+}
+
+// ── Extensiones B2 (RunnerPool / observabilidad §10) ────────────────────────
+
+/** Runs por estado (cola FIFO visible del RunnerPool: status='queued' consultable). */
+export function listRunsByStatus(db: AgentosDb, status: RunStatus): Run[] {
+  return db.select().from(runs).where(eq(runs.status, status)).orderBy(asc(runs.createdAt)).all();
+}
+
+/**
+ * Suma de runs.cost_usd creados en la ventana [fromMs, toMs).
+ * Presupuesto por día del RunnerPool (NFR-5). Los runs con cost_usd NULL
+ * (proveedor sin coste reportado) no suman — nunca cero inferido, y el
+ * presupuesto solo puede vigilar lo que se reporta.
+ */
+export function sumRunCostBetween(db: AgentosDb, fromMs: number, toMs: number): number {
+  const row = db.$client
+    .prepare(
+      `SELECT coalesce(sum(cost_usd), 0) AS total FROM runs WHERE created_at >= ? AND created_at < ?`,
+    )
+    .get(fromMs, toMs) as { total: number };
+  return row.total;
 }
 
 // ── Spans ───────────────────────────────────────────────────────────────────

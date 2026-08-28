@@ -1,2 +1,5 @@
-// @agentos/events — placeholder. Se implementa en bloques posteriores (ver docs/TASKS.md).
-export const WORKSPACE = "@agentos/events" as const;
+// @agentos/events — vocabulario AG-UI, topics, ring buffer y bus pub/sub (ARCHITECTURE §2).
+export * from "./ag-ui.js";
+export * from "./topics.js";
+export * from "./ring-buffer.js";
+export * from "./bus.js";
