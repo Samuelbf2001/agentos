@@ -40,6 +40,7 @@ import {
   createApproval,
   decideApproval,
   digestPayload,
+  getApproval,
   listPendingApprovals,
   verifyApprovalDigest,
 } from "../src/repositories/approvals.js";
@@ -329,6 +330,29 @@ describe("unicidad e idempotencia", () => {
     expect(decided.status).toBe("approved");
     expect(decided.decidedAt).toBeTruthy();
     expect(listPendingApprovals(db)).toHaveLength(0);
+  });
+
+  it("decideApproval es atómico: la segunda decisión falla con conflict (no last-write-wins)", () => {
+    const db = freshDb();
+    const { agent, project } = fixture(db);
+    const run = createRun(db, { agentId: agent.id, projectId: project.id, trigger: "chat", runtime: "ai_sdk" });
+    const org2 = createOrganization(db, { name: "Sixteam A", kind: "internal" });
+    const person = createPerson(db, { orgId: org2.id, fullName: "Ernesto A", isInternal: true });
+    const approval = createApproval(db, {
+      kind: "tool_call",
+      runId: run.id,
+      payload: { tool: "email.send", args: { to: "cliente@acme.com" } },
+      requestedBy: "agent:sally",
+    });
+    const first = decideApproval(db, approval.id, { status: "approved", decidedByPersonId: person.id });
+    expect(first.status).toBe("approved");
+    // Segunda decisión (p. ej. desde el otro proceso escritor) NO pisa la primera:
+    // el UPDATE condicional (status='pending') deja changes=0 → conflict.
+    expect(() =>
+      decideApproval(db, approval.id, { status: "rejected", decidedByPersonId: person.id }),
+    ).toThrow(/ya fue decidida/);
+    // El estado quedó intacto: sigue 'approved', jamás sobrescrito a 'rejected'.
+    expect(getApproval(db, approval.id)!.status).toBe("approved");
   });
 
   it("digestPayload es canónico (orden de claves irrelevante)", () => {

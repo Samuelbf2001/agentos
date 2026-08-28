@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { asc, eq } from "drizzle-orm";
-import { errors, newId, nowMs, type ApprovalStatus } from "@agentos/shared";
+import { and, asc, eq } from "drizzle-orm";
+import { AgentosError, ErrorCodes, errors, newId, nowMs, type ApprovalStatus } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { approvals } from "../schema.js";
 import type { Approval, NewApproval } from "../types.js";
@@ -60,6 +60,12 @@ export function listPendingApprovals(db: AgentosDb): Approval[] {
 /**
  * Decide una aprobación (solo pendientes; decidir dos veces falla explícitamente).
  * La ejecución del efecto y el run de reanudación son de B3 — aquí solo el estado.
+ *
+ * El UPDATE es CONDICIONAL (`status = 'pending'`): la decisión es atómica a nivel
+ * SQL, así que dos decisiones concurrentes (p. ej. la API y el MCP admin, que abren
+ * handles distintos del mismo SQLite) no pueden pisarse — la segunda ve `changes=0`
+ * y falla con `conflict` en vez de un last-write-wins que dejaría el estado mintiendo
+ * (NFR-12: aprobaciones transaccionales e idempotentes).
  */
 export function decideApproval(
   db: AgentosDb,
@@ -78,9 +84,17 @@ export function decideApproval(
       note: decision.note ?? null,
       decidedAt: nowMs(),
     })
-    .where(eq(approvals.id, id))
+    .where(and(eq(approvals.id, id), eq(approvals.status, "pending")))
     .run();
-  if (res.changes === 0) throw errors.notFound("approval", id);
+  if (res.changes === 0) {
+    const current = getApproval(db, id);
+    if (!current) throw errors.notFound("approval", id);
+    throw new AgentosError(
+      ErrorCodes.CONFLICT,
+      `La aprobación ${id} ya fue decidida (${current.status}); no se decide dos veces`,
+      { approvalId: id, status: current.status },
+    );
+  }
   const updated = getApproval(db, id)!;
   return updated;
 }
