@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type GateState } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { projects } from "../schema.js";
@@ -20,6 +20,24 @@ export function getProject(db: AgentosDb, id: string): Project | undefined {
 
 export function getProjectByName(db: AgentosDb, name: string): Project | undefined {
   return db.select().from(projects).where(eq(projects.name, name)).get();
+}
+
+/**
+ * Proyecto por (org, nombre exacto) — el get-or-create del motor de launch
+ * (§13.3): el mismo cliente + mismo `name_tpl` renderizado reutiliza el
+ * proyecto (y ahí `uq(project_id, phase)` impide re-disparar la misma fase;
+ * el redo legítimo es proyecto nuevo).
+ */
+export function getProjectByOrgAndName(
+  db: AgentosDb,
+  orgId: string,
+  name: string,
+): Project | undefined {
+  return db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.orgId, orgId), eq(projects.name, name)))
+    .get();
 }
 
 export function listProjects(db: AgentosDb, orgId?: string): Project[] {

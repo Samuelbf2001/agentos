@@ -24,3 +24,6 @@ export * from "./repositories/processes.js";
 export * from "./repositories/methodologies.js";
 export * from "./repositories/modules.js";
 export * from "./repositories/config.js";
+
+// Motor de launch de Módulos de Fase (§13.3) — orquesta SOLO repositorios.
+export * from "./modules/launch.js";

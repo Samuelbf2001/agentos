@@ -29,6 +29,8 @@ export const ErrorCodes = {
   AGENT_NOT_ASSIGNABLE: "agent_not_assignable",
   /** Módulos de fase (§13): mismo (slug,version) con contenido distinto exige subir versión. */
   MODULE_VERSION_IMMUTABLE: "module_version_immutable",
+  /** Módulos de fase (§13.5): solo un módulo `active` puede dispararse (NM-4). */
+  MODULE_NOT_ACTIVE: "module_not_active",
   // Proveedores / runtime
   PROVIDER_ERROR: "provider_error",
   PROVIDER_NOT_CONFIGURED: "provider_not_configured",

@@ -11,24 +11,23 @@
  *
  * Módulo PURO respecto al reloj y sin efectos: solo lee agentes. La decisión de
  * bloquear se toma en el motor del tablero (`assertAgentCanRun`) y el despachador.
+ *
+ * §13.3: el DIAGNÓSTICO de salud (`computeChainHealthFrom`) se extrajo a
+ * @agentos/shared (mismo patrón que `computeRequiresApproval`) porque el motor
+ * de launch de @agentos/db lo necesita sin crear el ciclo db → core → db. Aquí
+ * queda el wrapper con acceso a DB y el RE-export de tipos: la API no cambia.
  */
-import { errors } from "@agentos/shared";
+import { MAX_CHAIN_DEPTH, computeChainHealthFrom, errors } from "@agentos/shared";
 import { getAgent, getAgentBySlug, listAgents, type Agent, type AgentosDb } from "@agentos/db";
 
-/** Tope anti-ciclo: ninguna cadena legítima del roster se acerca a esto. */
-export const MAX_CHAIN_DEPTH = 64;
-
-export type OrgHealthStatus = "healthy" | "terminated_ancestor" | "missing_manager" | "cycle";
-
-export interface OrgChainHealth {
-  status: OrgHealthStatus;
-  /**
-   * Nodo que rompe la cadena: id del ancestro terminado, del manager faltante
-   * (id que nadie satisface) o del agente donde se cierra el ciclo. `undefined`
-   * cuando `status === "healthy"`.
-   */
-  offendingAgentId?: string;
-}
+export {
+  MAX_CHAIN_DEPTH,
+  computeChainHealthFrom,
+  type ChainAgentRow,
+  type OrgChainHealth,
+  type OrgHealthStatus,
+} from "@agentos/shared";
+import type { OrgChainHealth } from "@agentos/shared";
 
 export interface OrgNode {
   agent: Agent;
@@ -71,20 +70,8 @@ export function getChainOfCommand(db: AgentosDb, agentIdOrSlug: string): Agent[]
  */
 export function computeOrgChainHealth(db: AgentosDb, agentIdOrSlug: string): OrgChainHealth {
   const start = resolve(db, agentIdOrSlug);
-  const seen = new Set<string>([start.id]);
-  let current = start.reportsTo;
-  let depth = 0;
-  while (current) {
-    if (seen.has(current) || ++depth > MAX_CHAIN_DEPTH) {
-      return { status: "cycle", offendingAgentId: current };
-    }
-    const mgr = getAgent(db, current);
-    if (!mgr) return { status: "missing_manager", offendingAgentId: current };
-    if (mgr.status !== "active") return { status: "terminated_ancestor", offendingAgentId: mgr.id };
-    seen.add(mgr.id);
-    current = mgr.reportsTo;
-  }
-  return { status: "healthy" };
+  // El núcleo puro vive en @agentos/shared (§13.3); aquí solo se inyecta la DB.
+  return computeChainHealthFrom(start, (id) => getAgent(db, id));
 }
 
 /**

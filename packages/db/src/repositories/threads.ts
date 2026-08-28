@@ -1,5 +1,5 @@
 import { asc, eq } from "drizzle-orm";
-import { newId, nowMs } from "@agentos/shared";
+import { errors, newId, nowMs } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { messages, threads } from "../schema.js";
 import type { Message, NewMessage, NewThread, Thread } from "../types.js";
@@ -36,6 +36,17 @@ export function getOrCreateThread(
     throw err;
   }
   return getThread(db, row.id!)!;
+}
+
+/**
+ * M2 (fuentes del launch — §13.3): asociar un hilo existente al proyecto
+ * disparado. El launch resuelve la session_key → thread y fija su projectId.
+ */
+export function setThreadProject(db: AgentosDb, threadId: string, projectId: string | null): Thread {
+  const existing = getThread(db, threadId);
+  if (!existing) throw errors.notFound("thread", threadId);
+  db.update(threads).set({ projectId, updatedAt: nowMs() }).where(eq(threads.id, threadId)).run();
+  return getThread(db, threadId)!;
 }
 
 export function listThreads(db: AgentosDb, channel?: string): Thread[] {

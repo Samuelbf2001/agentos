@@ -203,6 +203,22 @@ export function listDispatchableTasks(db: AgentosDb, at = nowMs(), limit = 20): 
   return rows.map((r) => getTask(db, r.id)!);
 }
 
+/**
+ * M2 (lectura nueva): tareas ABIERTAS (ni DONE ni CANCELLED) por agente — la
+ * resolución de asignaciones del launch elige, dentro de una capa, al agente
+ * con menos carga (§13.5; desempate determinista por slug en el motor).
+ */
+export function countOpenTasksByAgent(db: AgentosDb): Map<string, number> {
+  const rows = db.$client
+    .prepare(
+      `SELECT assignee_agent_id AS agentId, count(*) AS n FROM tasks
+       WHERE assignee_agent_id IS NOT NULL AND status NOT IN ('DONE', 'CANCELLED')
+       GROUP BY assignee_agent_id`,
+    )
+    .all() as { agentId: string; n: number }[];
+  return new Map(rows.map((r) => [r.agentId, r.n]));
+}
+
 // ── Timeline (task_events, append-only) ─────────────────────────────────────
 
 export function appendTaskEvent(

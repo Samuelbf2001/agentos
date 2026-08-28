@@ -24,7 +24,7 @@ import {
 } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { moduleLaunches, phaseModules } from "../schema.js";
-import type { ModuleLaunch, NewPhaseModule, PhaseModule } from "../types.js";
+import type { ModuleLaunch, NewModuleLaunch, NewPhaseModule, PhaseModule } from "../types.js";
 import type { ParsedModuleSeed } from "../seed-sources.js";
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
@@ -207,10 +207,39 @@ export function upsertPhaseModuleFromSeed(
   return { module: active, created: true };
 }
 
-// ── Launches (lecturas; el insert vive en el motor de launch — M2) ──────────
+// ── Launches (el motor de launch — src/modules/launch.ts — orquesta; las
+// consultas viven aquí por la regla del paquete: nada consulta fuera de
+// repositories/) ────────────────────────────────────────────────────────────
 
 export function getLaunch(db: AgentosDb, id: string): ModuleLaunch | undefined {
   return db.select().from(moduleLaunches).where(eq(moduleLaunches.id, id)).get();
+}
+
+/**
+ * Insert del recibo INMUTABLE (append-only; no existe update/delete de
+ * launches en ninguna capa). Lo llama SOLO el motor de launch, dentro de su
+ * transacción única (§13.3).
+ */
+export function insertModuleLaunch(db: AgentosDb, row: NewModuleLaunch): ModuleLaunch {
+  db.insert(moduleLaunches).values(row).run();
+  return getLaunch(db, row.id)!;
+}
+
+/**
+ * ¿Ya se disparó esta fase sobre este proyecto? Espejo en lectura del índice
+ * `uq(project_id, phase)`: el motor rechaza con error de dominio ANTES de que
+ * el INSERT reviente el índice ([SÍNTESIS] Codex §13.1).
+ */
+export function findLaunchByProjectAndPhase(
+  db: AgentosDb,
+  projectId: string,
+  phase: Stage,
+): ModuleLaunch | undefined {
+  return db
+    .select()
+    .from(moduleLaunches)
+    .where(and(eq(moduleLaunches.projectId, projectId), eq(moduleLaunches.phase, phase)))
+    .get();
 }
 
 export function findLaunchByIdempotencyKey(

@@ -3,4 +3,5 @@
 export * from "./events.js";
 export * from "./board/index.js";
 export * from "./org.js";
+export * from "./modules.js";
 export * from "./prompt/index.js";
