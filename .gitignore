@@ -1,0 +1,31 @@
+# dependencias
+node_modules/
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+
+# entorno y secretos
+.env
+.env.local
+.env.*.local
+
+# base de datos local
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# workspaces de agentes
+workspaces/
+
+# tests / cobertura
+coverage/
+
+# editor / SO
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
