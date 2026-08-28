@@ -167,7 +167,10 @@ describe("launchModule — NM-1 atomicidad (CA-M2.2)", () => {
     expect(r.project.type).toBe("assessment");
     expect(r.project.stage).toBe("ENTENDER");
     expect(r.project.gateState).toBe("pending");
-    expect(r.project.workspacePath).toBe("workspaces/assessment-Nova");
+    // El workspace es un directorio real: el nombre libre del cliente se saneó
+    // a slug (ver sanitizeWorkspacePath — un nombre con espacios o punto final
+    // rompía el spawn del runner en Windows).
+    expect(r.project.workspacePath).toBe("workspaces/assessment-nova");
 
     // Aritmética del §13.6: 12 tareas, 3 READY + 9 BACKLOG, en orden estable.
     expect(r.tasks).toHaveLength(12);
