@@ -348,6 +348,8 @@ export default function NewProjectWizard() {
 
   const [values, setValues] = useState<FormValues>({});
   const [toggles, setToggles] = useState<Record<string, boolean>>({});
+  /** Claves de plantillas cadence confirmadas por el humano (CA-M3.4 — M6a). */
+  const [confirmedCadences, setConfirmedCadences] = useState<Set<string>>(new Set());
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -390,7 +392,11 @@ export default function NewProjectWizard() {
     [selected, values],
   );
 
-  // Validación en vivo: POST preview con debounce (CA-M2.1).
+  /** Array estable (para dependencias/payload) del set de cadencias confirmadas. */
+  const confirmedCadencesList = useMemo(() => [...confirmedCadences], [confirmedCadences]);
+
+  // Validación en vivo: POST preview con debounce (CA-M2.1). Marcar/desmarcar
+  // una cadencia (paso 3) reusa el mismo debounce/guard anti-stale (CA-M3.4).
   const previewSeq = useRef(0);
   useEffect(() => {
     if (!selected) return;
@@ -401,6 +407,7 @@ export default function NewProjectWizard() {
         const res = await api.previewModule(selected.slug, {
           inputs: inputsPayload,
           toggles,
+          cadences_confirmed: confirmedCadencesList,
         });
         if (previewSeq.current === seq) setPreview(res);
       } catch (err) {
@@ -416,7 +423,7 @@ export default function NewProjectWizard() {
       }
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [selected, inputsPayload, toggles, pushToast]);
+  }, [selected, inputsPayload, toggles, confirmedCadencesList, pushToast]);
 
   const selectModule = useCallback(
     async (summary: ModuleSummary) => {
@@ -438,6 +445,7 @@ export default function NewProjectWizard() {
       const defaults: Record<string, boolean> = {};
       for (const t of detail.toggles) defaults[t.key] = t.default ?? false;
       setToggles(defaults);
+      setConfirmedCadences(new Set());
       setPreview(null);
       setLaunchError(null);
       setStep(2);
@@ -460,6 +468,16 @@ export default function NewProjectWizard() {
 
   const canContinue = preview?.ok === true && !previewLoading;
 
+  /** Marca/desmarca una cadencia propuesta: dispara un nuevo preview (CA-M3.4). */
+  function toggleCadence(key: string, checked: boolean): void {
+    setConfirmedCadences((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+
   function goToSummary(): void {
     // Nuevo intento del wizard ⇒ nueva key (doble click en Disparar reutiliza
     // la MISMA — idempotente CA-M2.6; inputs cambiados ⇒ intento nuevo).
@@ -476,6 +494,7 @@ export default function NewProjectWizard() {
       const res = await api.launchModule(selected.slug, {
         inputs: inputsPayload,
         toggles,
+        cadences_confirmed: confirmedCadencesList,
         idempotency_key: idempotencyKey.current,
       });
       pushToast(
@@ -753,21 +772,29 @@ export default function NewProjectWizard() {
             </p>
           </div>
 
-          {preview.plan.cadenceExcluded.length > 0 ? (
+          {preview.plan.cadenceProposals.length > 0 ? (
             <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
               <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-400">
                 Cadencia (se confirmará al disparar)
               </p>
-              <ul className="space-y-0.5 text-xs text-slate-500">
-                {preview.plan.cadenceExcluded.map((k) => (
-                  <li key={k}>
-                    <code className="rounded bg-slate-100 px-1">{k}</code>
+              <ul className="space-y-1 text-xs text-slate-600">
+                {preview.plan.cadenceProposals.map((c) => (
+                  <li key={c.key}>
+                    <label className="flex cursor-pointer items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={confirmedCadences.has(c.key)}
+                        onChange={(e) => toggleCadence(c.key, e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300"
+                      />
+                      {c.title} — cada {c.periodDays} días
+                    </label>
                   </li>
                 ))}
               </ul>
               <p className="mt-1.5 text-[10px] text-slate-400">
-                Estas plantillas recurrentes no se crean ahora: el módulo las propone y la
-                confirmación llega en el wizard de cadencia (consent-first).
+                El módulo propone estas plantillas recurrentes: solo se crea la primera instancia
+                de las que confirmes (consent-first).
               </p>
             </div>
           ) : null}

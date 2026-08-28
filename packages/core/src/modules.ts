@@ -269,7 +269,7 @@ export function prefillNextPhaseInputs(
           `SELECT a.content AS content FROM artifacts a
            JOIN tasks t ON t.id = a.task_id
            WHERE t.project_id = ? AND a.kind = 'roadmap' AND t.status = 'DONE'
-           ORDER BY a.created_at DESC LIMIT 1`,
+           ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
         )
         .get(projectId) as { content: string | null } | undefined;
       const levers = parseRoadmapLevers(row?.content);

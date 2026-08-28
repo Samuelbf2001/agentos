@@ -10,7 +10,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { useStore } from "../src/state/store";
 import NewProjectWizard from "../src/views/NewProjectWizard";
 import { mockFetch, person, project, type FetchCall } from "./helpers";
-import type { ModuleDetail, ModuleSummary, PreviewResult } from "../src/lib/types";
+import type { CadenceProposal, ModuleDetail, ModuleSummary, PreviewResult } from "../src/lib/types";
 
 const moduleSummary: ModuleSummary = {
   slug: "consultoria",
@@ -60,12 +60,23 @@ const moduleInfo = {
   status: "active",
 };
 
-/** Preview dinámico: refleja lo que el wizard mandó (como el backend real). */
+/** Única cadencia propuesta por el módulo fixture (CA-M3.4 — M6a). */
+const cadenceProposal: CadenceProposal = {
+  key: "reporte_semanal",
+  title: "Reporte semanal a ACME",
+  description: null,
+  activityType: "report",
+  role: "orquestador",
+  periodDays: 7,
+};
+
+/** Preview dinámico: refleja lo que el wizard mandó (como el backend real),
+ *  incluida `cadences_confirmed` (M6a): confirmar la cadencia agrega su
+ *  primera instancia al plan, igual que hace el backend real. */
 function previewFor(body: unknown): PreviewResult {
-  const inputs = ((body as { inputs?: Record<string, unknown> })?.inputs ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const b = body as { inputs?: Record<string, unknown>; cadences_confirmed?: string[] };
+  const inputs = (b?.inputs ?? {}) as Record<string, unknown>;
+  const confirmed = new Set(b?.cadences_confirmed ?? []);
   const missing: string[] = [];
   if (!inputs["empresa"]) missing.push("empresa");
   if (!inputs["empleados"]) missing.push("empleados");
@@ -82,6 +93,7 @@ function previewFor(body: unknown): PreviewResult {
       plan: null,
     };
   }
+  const cadenceConfirmed = confirmed.has("reporte_semanal");
   return {
     ok: true,
     module: moduleInfo,
@@ -131,6 +143,30 @@ function previewFor(body: unknown): PreviewResult {
           status: "BACKLOG",
           dueAt: null,
         },
+        ...(cadenceConfirmed
+          ? [
+              {
+                key: "reporte_semanal#1",
+                templateKey: "reporte_semanal",
+                fanOutValue: null,
+                title: "Reporte semanal a ACME",
+                description: null,
+                definitionOfDone: null,
+                stage: "ENTENDER",
+                activityType: "report",
+                priority: "normal",
+                role: "orquestador",
+                assigneeAgentSlug: "alex",
+                assigneeAgentId: "a-alex",
+                dependsOn: [],
+                produces: [],
+                gate: null,
+                requiresApproval: false,
+                status: "READY" as const,
+                dueAt: Date.parse("2026-09-08T00:00:00Z"),
+              },
+            ]
+          : []),
       ],
       gates: [
         { name: "cierre_entender", when: "phase_close", fedBy: ["informe"], blocksNextStage: "CONSTRUIR" },
@@ -141,7 +177,9 @@ function previewFor(body: unknown): PreviewResult {
       methodology: { slug: "assessment-14d", version: null, adds: [] },
       budget: { phaseUsd: 15, perRunUsd: 2, warningThresholdsPct: [70, 90, 100] },
       toggles: { iso9001: false },
-      cadenceExcluded: ["reporte_semanal"],
+      cadenceExcluded: cadenceConfirmed ? [] : ["reporte_semanal"],
+      cadencesConfirmed: cadenceConfirmed ? ["reporte_semanal"] : [],
+      cadenceProposals: [cadenceProposal],
     },
   };
 }
@@ -304,9 +342,86 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     expect(screen.getByText("resumen_ejecutivo")).toBeTruthy();
     // Presupuesto con thresholds.
     expect(screen.getByText(/70%, 90%, 100%/)).toBeTruthy();
-    // Cadencia propuesta, solo-lectura (la confirmación llega en M6).
+    // Cadencia propuesta: checkbox marcable, sin confirmar por defecto (CA-M3.4).
     expect(screen.getByText("Cadencia (se confirmará al disparar)")).toBeTruthy();
-    expect(screen.getByText("reporte_semanal")).toBeTruthy();
+    const cadenceCheckbox = screen.getByRole("checkbox", {
+      name: /Reporte semanal a ACME — cada 7 días/,
+    }) as HTMLInputElement;
+    expect(cadenceCheckbox.checked).toBe(false);
+  });
+
+  it("marcar un checkbox de cadencia dispara un nuevo preview con cadences_confirmed", async () => {
+    const { calls } = mockFetch(wizardRoutes());
+    ui();
+    await openForm();
+    fillValidForm();
+    await waitFor(
+      () => {
+        expect((screen.getByText("Continuar →") as HTMLButtonElement).disabled).toBe(false);
+      },
+      { timeout: 2000 },
+    );
+    fireEvent.click(screen.getByText("Continuar →"));
+
+    // Antes de confirmar: solo las 2 tareas base del plan.
+    expect(await screen.findByText("Tareas que se crearán (2)")).toBeTruthy();
+
+    const cadenceCheckbox = await screen.findByRole("checkbox", {
+      name: /Reporte semanal a ACME — cada 7 días/,
+    });
+    fireEvent.click(cadenceCheckbox);
+
+    // El nuevo preview (mismo debounce/guard anti-stale) agrega la primera
+    // instancia de la cadencia confirmada al resumen de tareas.
+    await waitFor(
+      () => {
+        expect(screen.getByText("Tareas que se crearán (3)")).toBeTruthy();
+      },
+      { timeout: 2000 },
+    );
+    expect(
+      (screen.getByRole("checkbox", { name: /Reporte semanal a ACME — cada 7 días/ }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+
+    const previewCalls = calls.filter(
+      (c) => c.method === "POST" && c.url.includes("/api/modules/consultoria/preview"),
+    );
+    const last = previewCalls[previewCalls.length - 1]!;
+    expect((last.body as { cadences_confirmed?: string[] }).cadences_confirmed).toEqual([
+      "reporte_semanal",
+    ]);
+  });
+
+  it("sin cadence_proposals no se pinta la sección de cadencia", async () => {
+    const routes = wizardRoutes().map((r) =>
+      typeof r.path === "string" && r.path.endsWith("/preview")
+        ? {
+            ...r,
+            body: ({ body }: { body: unknown }) => {
+              const res = previewFor(body);
+              if (res.plan) {
+                res.plan = { ...res.plan, cadenceExcluded: [], cadencesConfirmed: [], cadenceProposals: [] };
+              }
+              return res;
+            },
+          }
+        : r,
+    );
+    mockFetch(routes as never);
+    ui();
+    await openForm();
+    fillValidForm();
+    await waitFor(
+      () => {
+        expect((screen.getByText("Continuar →") as HTMLButtonElement).disabled).toBe(false);
+      },
+      { timeout: 2000 },
+    );
+    fireEvent.click(screen.getByText("Continuar →"));
+
+    expect(await screen.findByText("Assessment ACME")).toBeTruthy();
+    expect(screen.queryByText("Cadencia (se confirmará al disparar)")).toBeNull();
   });
 
   it("Disparar hace POST con idempotency_key estable (doble click no duplica) y navega al tablero", async () => {
@@ -337,6 +452,7 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     const body = launches[0]!.body as {
       inputs: Record<string, unknown>;
       toggles: Record<string, boolean>;
+      cadences_confirmed?: string[];
       idempotency_key: string;
     };
     expect(typeof body.idempotency_key).toBe("string");
@@ -345,12 +461,49 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     expect(body.inputs["areas"]).toEqual(["direccion", "operaciones"]);
     expect(body.inputs["procesos_core"]).toEqual(["ventas", "facturacion"]);
     expect(body.toggles).toEqual({ iso9001: false });
+    // Sin cadencias confirmadas: se manda vacío (nada de cadencia se dispara).
+    expect(body.cadences_confirmed).toEqual([]);
     // Si el doble click llegó a duplicar el POST, ambas llevan la MISMA key.
     for (const l of launches) {
       expect((l.body as { idempotency_key: string }).idempotency_key).toBe(body.idempotency_key);
     }
     // El proyecto creado quedó activo en el store.
     expect(useStore.getState().activeProjectId).toBe("proj-9");
+  });
+
+  it("Disparar incluye las cadencias confirmadas en el POST launch", async () => {
+    const { calls } = mockFetch(wizardRoutes());
+    ui();
+    await openForm();
+    fillValidForm();
+    await waitFor(
+      () => {
+        expect((screen.getByText("Continuar →") as HTMLButtonElement).disabled).toBe(false);
+      },
+      { timeout: 2000 },
+    );
+    fireEvent.click(screen.getByText("Continuar →"));
+
+    const cadenceCheckbox = await screen.findByRole("checkbox", {
+      name: /Reporte semanal a ACME — cada 7 días/,
+    });
+    fireEvent.click(cadenceCheckbox);
+    await waitFor(
+      () => {
+        expect(screen.getByText("Tareas que se crearán (3)")).toBeTruthy();
+      },
+      { timeout: 2000 },
+    );
+
+    fireEvent.click(await screen.findByText("🚀 Disparar"));
+    expect(await screen.findByText("BOARD_MARKER")).toBeTruthy();
+
+    const launches: FetchCall[] = calls.filter(
+      (c) => c.method === "POST" && c.url.includes("/api/modules/consultoria/launch"),
+    );
+    expect(launches.length).toBeGreaterThan(0);
+    const body = launches[0]!.body as { cadences_confirmed?: string[] };
+    expect(body.cadences_confirmed).toEqual(["reporte_semanal"]);
   });
 
   it("un error de dominio del launch (409 fase ya disparada) se muestra legible", async () => {

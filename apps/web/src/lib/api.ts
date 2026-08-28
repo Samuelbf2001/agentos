@@ -285,13 +285,20 @@ export const api = {
   /** Dry-run CA-M2.1: con inputs incompletos responde 200 {ok:false, missing, issues}. */
   previewModule: (
     slug: string,
-    body: { inputs: Record<string, unknown>; toggles?: Record<string, boolean> },
+    body: {
+      inputs: Record<string, unknown>;
+      toggles?: Record<string, boolean>;
+      /** Cadencias que el humano confirmó en el wizard (CA-M3.4 — M6a). */
+      cadences_confirmed?: string[];
+    },
   ) => request<PreviewResult>(`/api/modules/${slug}/preview`, { method: "POST", body }),
   launchModule: (
     slug: string,
     body: {
       inputs: Record<string, unknown>;
       toggles?: Record<string, boolean>;
+      /** Cadencias que el humano confirmó en el wizard (CA-M3.4 — M6a). */
+      cadences_confirmed?: string[];
       idempotency_key: string;
       previous_launch_id?: string;
     },

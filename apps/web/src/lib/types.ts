@@ -373,6 +373,17 @@ export interface PreviewTask {
   dueAt: number | null;
 }
 
+/** Propuesta de cadencia para el wizard (CA-M3.4, consent-first — M6a). */
+export interface CadenceProposal {
+  key: string;
+  title: string;
+  description: string | null;
+  activityType: string;
+  role: string;
+  /** Días entre instancias; null = sin periodo declarado (inconfirmable). */
+  periodDays: number | null;
+}
+
 export interface PreviewPlan {
   projectName: string;
   workspacePath: string;
@@ -392,8 +403,12 @@ export interface PreviewPlan {
   methodology: { slug: string; version: number | null; adds: string[] };
   budget: { phaseUsd: number; perRunUsd: number; warningThresholdsPct: number[] };
   toggles: Record<string, boolean>;
-  /** Plantillas de cadencia EXCLUIDAS del plan v1 (consent-first, M6). */
+  /** Plantillas de cadencia EXCLUIDAS del plan (activas pero no confirmadas, M6). */
   cadenceExcluded: string[];
+  /** Claves cadence CONFIRMADAS por el humano que SÍ entraron al plan (M6a). */
+  cadencesConfirmed: string[];
+  /** Todas las plantillas cadence activas, para los checkboxes del resumen (M6a). */
+  cadenceProposals: CadenceProposal[];
 }
 
 /** Respuesta de POST /api/modules/:slug/preview — {ok:false} NO es error HTTP. */
