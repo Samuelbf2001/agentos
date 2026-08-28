@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* Sin dark mode (PRD §6.10): la UI fija tema claro. */
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+}
+
+/* Scrollbars discretos para paneles densos */
+* {
+  scrollbar-width: thin;
+}
+
+.shiki {
+  @apply overflow-x-auto rounded-md p-3 text-xs leading-relaxed;
+}
