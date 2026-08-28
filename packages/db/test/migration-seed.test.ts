@@ -206,4 +206,14 @@ describe("metodologías ISO 9001 (F2-3)", () => {
     expect(catalogo.bodyMd).toContain("4.1");
     expect(catalogo.bodyMd).toContain("10.3");
   });
+
+  it("re-seed aplica el prompt ISO 9001 de Sam (versión activa)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const sam = getAgentBySlug(db, "sam")!;
+    const prompt = getActivePrompt(db, sam.id);
+    expect(prompt?.stable).toContain("ISO 9001");
+    expect(prompt?.stable).toContain("iso_gap");
+    expect(prompt?.stable).toContain("iso.gap_matrix_template");
+  });
 });
