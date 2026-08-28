@@ -49,6 +49,7 @@ const baseRoutes = [
     },
   },
   { path: "/api/knowledge", body: { docs: [] } },
+  { path: /^\/api\/projects\/[^/]+\/sources$/, body: { sources: [] } },
   { path: "/api/processes", body: { processes: [] } },
   { path: "/api/methodologies", body: { methodologies: [] } },
   { path: "/api/config", body: { config: [] } },
