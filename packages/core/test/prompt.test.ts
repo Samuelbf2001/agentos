@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createDoc, createPromptVersion, upsertMethodology } from "@agentos/db";
+import {
+  buildSessionKey,
+  createDoc,
+  createPromptVersion,
+  getOrCreateThread,
+  upsertMethodology,
+} from "@agentos/db";
 import { assemblePrompt, PROVENANCE_GUIDANCE } from "../src/index.js";
 import { fixture, seedTask } from "./helpers.js";
 
@@ -59,5 +65,47 @@ describe("assemblePrompt — 3 capas", () => {
     const f = fixture();
     const prompt = assemblePrompt(f.db, { agent: "alex", project: f.project.id });
     expect(prompt.context).toContain("Sin metodología registrada");
+  });
+
+  // Fix H1: un run de chat lleva los UUIDs REALES (thread, proyecto, tareas)
+  // para que el agente jamás invente identificadores tipo "assessment-acme".
+  it("run de chat: volatile incluye thread_id, project_id real e índice de tareas con sus UUIDs", () => {
+    const f = fixture();
+    const thread = getOrCreateThread(f.db, {
+      channel: "web",
+      sessionKey: buildSessionKey("web", "chat-1", "hint-1"),
+      projectId: f.project.id,
+    });
+    const task = seedTask(f, { status: "READY" });
+
+    const prompt = assemblePrompt(f.db, { agent: "alex", project: f.project.id, thread });
+
+    // context: el UUID real del proyecto, marcado como el id a usar.
+    expect(prompt.context).toContain(`project_id REAL`);
+    expect(prompt.context).toContain(f.project.id);
+    // volatile: ids del canal + índice del tablero con UUIDs reales.
+    expect(prompt.volatile).toContain(`thread_id: ${thread.id}`);
+    expect(prompt.volatile).toContain(`Proyecto activo del hilo: ${f.project.id}`);
+    expect(prompt.volatile).toContain(`[task:${task.id}] (READY) Mapear proceso de ventas`);
+    expect(prompt.volatile).toContain("nunca inventes identificadores");
+  });
+
+  it("run de chat sin proyecto activo: lo dice explícitamente en vez de dejar el hueco", () => {
+    const f = fixture();
+    const thread = getOrCreateThread(f.db, {
+      channel: "web",
+      sessionKey: buildSessionKey("web", "chat-2", "hint-2"),
+      projectId: null,
+    });
+    const prompt = assemblePrompt(f.db, { agent: "alex", thread });
+    expect(prompt.volatile).toContain("sin proyecto activo");
+  });
+
+  it("run de tarea (task presente): el índice de tablero no se duplica, la tarea trae su id", () => {
+    const f = fixture();
+    const task = seedTask(f, { status: "IN_PROGRESS" });
+    const prompt = assemblePrompt(f.db, { agent: f.sam, project: f.project.id, task: task.id });
+    expect(prompt.volatile).toContain(`- Id: ${task.id}`);
+    expect(prompt.volatile).not.toContain("Tareas del proyecto (ids REALES");
   });
 });

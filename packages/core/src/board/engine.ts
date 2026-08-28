@@ -404,6 +404,15 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       },
     });
     publishBoard(task.projectId, "task.moved", { taskId: task.id, from, to, actor: input.actor }, input.runId);
+    // H10: la bandeja "Esperando por ti" incluye entregables en REVIEW; avisar
+    // por el topic approvals para que la UI refresque el badge en vivo.
+    if (to === "REVIEW" || from === "REVIEW") {
+      sink.publish("approvals", {
+        type: "review.changed",
+        payload: { taskId: task.id, from, to },
+        runId: input.runId ?? null,
+      });
+    }
     return getTask(db, task.id)!;
   }
 

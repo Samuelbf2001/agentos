@@ -298,7 +298,10 @@ export function reduceEvent(
 
   // ── Topic approvals ───────────────────────────────────────────────────────
   if (ev.topic === "approvals") {
-    if (ev.type.startsWith("approval.")) effects.push({ kind: "refetch_approvals" });
+    // approval.* = aprobaciones; review.changed = entregable entró/salió de REVIEW (H10).
+    if (ev.type.startsWith("approval.") || ev.type === "review.changed") {
+      effects.push({ kind: "refetch_approvals" });
+    }
   }
 
   // ── Topics run:<id> (AG-UI del runner) ────────────────────────────────────

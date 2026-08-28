@@ -46,6 +46,13 @@ describe("matriz de transiciones (pura)", () => {
     expect(isTransitionAllowed("human", "CANCELLED", "READY")).toBe(false);
     expect(isTransitionAllowed("human", "READY", "READY")).toBe(false);
   });
+  // Fix H7: el humano arrastra por la misma máquina (CA-2.4) — despriorizar
+  // READY→BACKLOG es suyo y de nadie más.
+  it("READY→BACKLOG (despriorizar) solo humano", () => {
+    expect(isTransitionAllowed("human", "READY", "BACKLOG")).toBe(true);
+    expect(isTransitionAllowed("agent", "READY", "BACKLOG")).toBe(false);
+    expect(isTransitionAllowed("system", "READY", "BACKLOG")).toBe(false);
+  });
 });
 
 describe("moveTask por actor", () => {
@@ -64,6 +71,22 @@ describe("moveTask por actor", () => {
     expect(move.fromStatus).toBe("BACKLOG");
     expect(move.toStatus).toBe("READY");
     expect(move.actor).toBe(`person:${f.person.id}`);
+  });
+
+  it("humano despriorizar READY→BACKLOG funciona; un agente no puede (H7)", () => {
+    const f = fixture();
+    const t = seedTask(f, { status: "READY" });
+    expect(() =>
+      f.engine.moveTask({ taskId: t.id, to: "BACKLOG", expectedVersion: t.version, actor: "agent:sam" }),
+    ).toThrowError(/no permitida/);
+    const moved = f.engine.moveTask({
+      taskId: t.id,
+      to: "BACKLOG",
+      expectedVersion: t.version,
+      actor: `person:${f.person.id}`,
+      note: "despriorizada para controlar el arranque de la demo",
+    });
+    expect(moved.status).toBe("BACKLOG");
   });
 
   it("agente no-orquestador NO puede BACKLOG→READY; el orquestador sí", () => {

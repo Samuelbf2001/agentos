@@ -8,7 +8,8 @@ import { defineTool as def } from "../catalog.js";
 export const knowledgeTools: ToolDefinition[] = [
   def({
     name: "knowledge.search",
-    description: "Busca en el Context Hub (FTS). Devuelve hits con doc id para citar provenance.",
+    description:
+      "Busca en el Context Hub (FTS). Devuelve hits con doc id y snippet del contenido; usa knowledge.get para leer el doc completo.",
     schema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(50).optional() }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
     handler(ctx, args) {

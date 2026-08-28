@@ -27,6 +27,7 @@ import {
   getThread,
   listDispatchableTasks,
   listMessages,
+  listPendingApprovals,
   appendMessage,
   setConfig,
   updateRun,
@@ -47,6 +48,11 @@ import { domainPayload, publishRaw } from "./bus-bridge.js";
 import { bindDomainTools, claudeCodeAllowlist } from "./domain-tools.js";
 
 export const QUINN_ACTIVITY_TYPES_KEY = "quinn_review_activity_types";
+/**
+ * Tipos que disparan la auto-crítica de Quinn al entrar a REVIEW. Incluye los
+ * entregables de consultoría (report, process_map, roadmap, iso_gap...): en un
+ * engagement de assessment son EL caso principal de US-10 (fix H6).
+ */
 export const DEFAULT_QUINN_ACTIVITY_TYPES = [
   "code",
   "build",
@@ -55,6 +61,12 @@ export const DEFAULT_QUINN_ACTIVITY_TYPES = [
   "deploy",
   "dev",
   "technical",
+  "report",
+  "process_map",
+  "roadmap",
+  "iso_gap",
+  "org_profile",
+  "leak_analysis",
 ];
 
 export interface DispatcherOptions {
@@ -163,6 +175,8 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     provider: ProviderProfile;
     taskId?: string | null;
     projectId?: string | null;
+    /** Hilo que disparó el run (chat): sus ids REALES van al prompt volatile (H1). */
+    thread?: Thread | null;
     userText: string;
     history?: ModelMessage[];
   }
@@ -173,6 +187,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       agent,
       project: params.projectId ?? null,
       task: params.taskId ?? null,
+      thread: params.thread ?? null,
     });
     const toolCtx: ToolCallContext = {
       run_id: null, // se fija por run en bindRunInput
@@ -242,17 +257,28 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     if (task.status !== "IN_PROGRESS") return;
     // Otro run (p. ej. reanudación) la tiene reclamada: no tocar.
     if (otherRunHoldsTask(taskId, run.id)) return;
+    // H9: el agente dejó una aprobación/pregunta pendiente sin mover la tarjeta
+    // → la plataforma la fuerza a BLOCKED(approval). Devolverla a READY haría
+    // que el despachador la re-despache y el agente repita la pregunta (run y
+    // aprobación duplicados). Convención: pregunta pendiente ⇒ BLOCKED.
+    const pendingApproval = listPendingApprovals(db).find((a) => a.taskId === taskId);
     // El run terminó sin moverla → soltar lease; intentos agotados → stuck.
-    const stuck = task.attempts >= maxAttempts;
+    const stuck = !pendingApproval && task.attempts >= maxAttempts;
     try {
       engine.moveTask({
         taskId,
-        to: stuck ? "BLOCKED" : "READY",
+        to: pendingApproval || stuck ? "BLOCKED" : "READY",
         expectedVersion: task.version,
         actor: "system:dispatcher",
         runId: run.id,
-        note: `run ${run.status}${run.error ? `: ${run.error}` : ""} sin mover la tarea`,
-        ...(stuck ? { blockedReason: "stuck" as const } : {}),
+        note: pendingApproval
+          ? `aprobación ${pendingApproval.id} pendiente: la tarjeta espera la respuesta humana`
+          : `run ${run.status}${run.error ? `: ${run.error}` : ""} sin mover la tarea`,
+        ...(pendingApproval
+          ? { blockedReason: "approval" as const }
+          : stuck
+            ? { blockedReason: "stuck" as const }
+            : {}),
       });
     } catch {
       // Carrera con otro actor que ya la movió: su movimiento manda.
@@ -474,6 +500,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       agent,
       provider,
       projectId: thread.projectId,
+      thread,
       userText: params.text,
       history: historyWithoutLast,
     });

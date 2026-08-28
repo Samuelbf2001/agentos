@@ -94,13 +94,19 @@ export interface KnowledgeSearchHit {
   projectId: string | null;
   kind: string;
   title: string;
+  /** Extracto del body_md alrededor del match (H3): contexto útil sin leer el doc entero. */
+  snippet: string;
   rank: number;
 }
 
 export function searchKnowledge(db: AgentosDb, query: string, limit = 20): KnowledgeSearchHit[] {
+  // snippet(): columna 1 = body_md, marcadores « », elipsis, ~24 tokens de contexto.
+  // Equivalente Postgres: ts_headline('spanish', body_md, websearch_to_tsquery('spanish', :q),
+  //   'StartSel=«, StopSel=», MaxWords=24').
   const rows = db.$client
     .prepare(
-      `SELECT k.id, k.org_id AS orgId, k.project_id AS projectId, k.kind, k.title, f.rank
+      `SELECT k.id, k.org_id AS orgId, k.project_id AS projectId, k.kind, k.title,
+              snippet(knowledge_fts, 1, '«', '»', ' … ', 24) AS snippet, f.rank
        FROM knowledge_fts f
        JOIN knowledge_docs k ON k.rowid = f.rowid
        WHERE knowledge_fts MATCH ?

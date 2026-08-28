@@ -45,7 +45,8 @@ function Shell() {
   const setActiveProject = useStore((s) => s.setActiveProject);
   const killSwitch = useStore((s) => s.killSwitch);
   const setKillSwitch = useStore((s) => s.setKillSwitch);
-  const approvalsCount = useStore((s) => s.approvals.length);
+  // Badge de la bandeja: aprobaciones pendientes + entregables en REVIEW (H10).
+  const approvalsCount = useStore((s) => s.approvals.length + s.reviewTasks.length);
   const failedRuns = useStore((s) => s.failedRunsCount);
   const wsStatus = useStore((s) => s.wsStatus);
   const refreshBadges = useStore((s) => s.refreshBadges);

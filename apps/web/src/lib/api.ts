@@ -200,8 +200,13 @@ export const api = {
     request<{ run: Run; spans: Span[]; tree: Run[]; last_seq: number }>(`/api/runs/${id}`),
   cancelRun: (id: string) => request<{ run: Run }>(`/api/runs/${id}/cancel`, { method: "POST" }),
 
-  // ── Approvals ─────────────────────────────────────────────────────────────
+  // ── Approvals / bandeja ───────────────────────────────────────────────────
   approvalsPending: () => request<{ approvals: Approval[] }>("/api/approvals/pending"),
+  /** Bandeja completa (CA-4.2, H10): aprobaciones + entregables en REVIEW con artefactos. */
+  waiting: () =>
+    request<{ approvals: Approval[]; review_tasks: { task: Task; artifacts: Artifact[] }[] }>(
+      "/api/waiting",
+    ),
   decideApproval: (id: string, decision: "approved" | "rejected", note?: string) =>
     request<{ approval: Approval; executed: unknown; resume_run_id: string | null }>(
       `/api/approvals/${id}/decide`,

@@ -18,12 +18,15 @@ import {
   getMethodology,
   getProject,
   getTask,
+  getThread,
   listDocs,
   listTaskEvents,
+  listTasks,
   type Agent,
   type AgentosDb,
   type Project,
   type Task,
+  type Thread,
 } from "@agentos/db";
 import { PLATFORM_CONSTITUTION } from "./constitution.js";
 
@@ -42,12 +45,16 @@ export interface AssemblePromptInput {
   project?: Project | string | null;
   /** Tarea actual (fila o id). */
   task?: Task | string | null;
+  /** Hilo de conversación que disparó el run (chat) — sus ids REALES van al volatile (H1). */
+  thread?: Thread | string | null;
   /** Fuerza una metodología concreta; si no, se deriva del tipo de proyecto. */
   methodologySlug?: string;
   /** Máximo de documentos del Context Hub en el resumen. */
   maxContextDocs?: number;
   /** Máximo de task_events recientes en la capa volatile. */
   maxTaskEvents?: number;
+  /** Máximo de tareas del proyecto en el índice de ids reales del volatile. */
+  maxBoardTasks?: number;
   /** Instante para el timestamp (tests deterministas). */
   now?: number;
 }
@@ -82,10 +89,19 @@ function resolveTask(db: AgentosDb, ref: Task | string | null | undefined): Task
   return task;
 }
 
+function resolveThread(db: AgentosDb, ref: Thread | string | null | undefined): Thread | null {
+  if (ref == null) return null;
+  if (typeof ref !== "string") return ref;
+  const thread = getThread(db, ref);
+  if (!thread) throw errors.notFound("thread", ref);
+  return thread;
+}
+
 export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): AssembledPrompt {
   const agent = resolveAgent(db, input.agent);
   const project = resolveProject(db, input.project);
   const task = resolveTask(db, input.task);
+  const thread = resolveThread(db, input.thread);
   const now = input.now ?? nowMs();
 
   // ── Capa stable ───────────────────────────────────────────────────────────
@@ -101,7 +117,7 @@ export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Assem
 
   if (project) {
     contextParts.push(
-      `## Proyecto\n- Nombre: ${project.name}\n- Tipo: ${project.type}\n- Etapa: ${project.stage}\n- Gate 1 (g1_plan): ${project.gateState}`,
+      `## Proyecto\n- Id (project_id REAL — usa EXACTAMENTE este UUID en tus tools): ${project.id}\n- Nombre: ${project.name}\n- Tipo: ${project.type}\n- Etapa: ${project.stage}\n- Gate 1 (g1_plan): ${project.gateState}`,
     );
 
     const slug = input.methodologySlug ?? METHODOLOGY_BY_PROJECT_TYPE[project.type];
@@ -134,6 +150,25 @@ export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Assem
 
   // ── Capa volatile ─────────────────────────────────────────────────────────
   const volatileParts: string[] = [];
+  if (thread) {
+    // H1: los ids REALES del contexto de chat, para que el agente jamás los invente.
+    volatileParts.push(
+      `## Contexto del canal (ids REALES — nunca inventes identificadores)\n` +
+        `- thread_id: ${thread.id}\n` +
+        `- Proyecto activo del hilo: ${thread.projectId ?? "(sin proyecto activo: pídele el project_id al humano o usa tasks/board SOLO con ids que existan)"}`,
+    );
+  }
+  if (project && !task) {
+    // Runs sin tarea reclamada (chat): índice del tablero con los UUIDs reales
+    // de las tareas, para que tasks.get/tasks.move/delegate usen ids que existen.
+    const boardIndex = listTasks(db, { projectId: project.id }).slice(0, input.maxBoardTasks ?? 30);
+    if (boardIndex.length > 0) {
+      const lines = boardIndex.map((t) => `- [task:${t.id}] (${t.status}) ${t.title}`);
+      volatileParts.push(
+        `## Tareas del proyecto (ids REALES — usa EXACTAMENTE estos UUIDs en tus tools)\n${lines.join("\n")}`,
+      );
+    }
+  }
   if (task) {
     volatileParts.push(
       `## Tarea actual\n- Id: ${task.id}\n- Título: ${task.title}\n- Estado: ${task.status} (etapa ${task.stage}, prioridad ${task.priority})` +

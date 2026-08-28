@@ -11,7 +11,7 @@ import { CodeBlock, Markdown } from "../components/Markdown";
 import { actorLabel, fmtDate, Spinner, StatusPill } from "../components/ui";
 import type { Artifact } from "../lib/types";
 
-function ArtifactBlock({ artifact }: { artifact: Artifact }) {
+export function ArtifactBlock({ artifact }: { artifact: Artifact }) {
   const [open, setOpen] = useState(true);
   const isDiff = artifact.kind === "diff" || /\.(diff|patch)$/.test(artifact.title);
   return (

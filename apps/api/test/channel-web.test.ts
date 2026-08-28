@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getRun, getThread, listMessages, listRuns, listThreads } from "@agentos/db";
-import { makeFixture, waitFor, type TestFixture } from "./helpers.js";
+import { makeFixture, makeReadyTask, waitFor, type TestFixture } from "./helpers.js";
 
 let fx: TestFixture;
 
@@ -86,6 +86,40 @@ describe("canal web", () => {
 
     expect(listRuns(fx.db, {}).length).toBe(runsBefore);
     expect(listThreads(fx.db, "web").length).toBe(threadsBefore);
+  });
+
+  // Fix H1: el system prompt de un run de chat lleva los UUIDs REALES del
+  // contexto (thread, project_id del hilo, tareas del tablero) — sin esto Alex
+  // inventaba slugs ("assessment-acme") y todo tasks.create fallaba not_found.
+  it("run de chat con project_id: el prompt incluye thread_id, project_id real y las tareas del tablero", async () => {
+    const task = makeReadyTask(fx, fx.sam, { title: "Perfil de organización ACME" });
+    fx.aiRunner.setBehavior(() => ({ text: "OK" }));
+
+    const res = await fx.api.app.inject({
+      method: "POST",
+      url: "/v1/channels/web/events",
+      headers: fx.authHeaders,
+      payload: {
+        external_user_id: "u-ernesto",
+        external_chat_id: "chat-h1",
+        message_id: "msg-h1",
+        text: "¿Cómo va el tablero del assessment?",
+        project_id: fx.project.id,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { thread_id: string; run_id: string };
+    expect(body.run_id).toBeTruthy();
+
+    const call = await waitFor(
+      () => fx.aiRunner.calls.find((c) => c.ctx.runId === body.run_id),
+      { label: "run de chat capturado por el runner fake" },
+    );
+    const prompt = call.input.systemPrompt ?? "";
+    expect(prompt).toContain(fx.project.id); // project_id REAL, no inventado
+    expect(prompt).toContain(`thread_id: ${body.thread_id}`);
+    expect(prompt).toContain(`[task:${task.id}]`); // índice del tablero con UUIDs reales
+    expect(prompt).toContain("nunca inventes identificadores");
   });
 
   it("sin sesión ni secreto de canal → 401", async () => {

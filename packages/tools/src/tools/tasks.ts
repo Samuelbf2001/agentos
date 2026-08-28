@@ -6,6 +6,7 @@ import {
   attachArtifact,
   boardTasks,
   getAgentBySlug,
+  getProject,
   getTask,
   listArtifacts,
   listTaskEvents,
@@ -199,6 +200,9 @@ export const taskTools: ToolDefinition[] = [
     schema: z.object({ project_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
     handler(ctx, args) {
+      // H2: un project_id inexistente es not_found, NUNCA un tablero vacío OK
+      // (un tablero vacío falso alimenta la alucinación de ids inventados).
+      if (!getProject(ctx.db, args.project_id)) throw errors.notFound("project", args.project_id);
       const rows = boardTasks(ctx.db, args.project_id);
       const byStatus: Record<string, typeof rows> = {};
       for (const t of rows) (byStatus[t.status] ??= []).push(t);

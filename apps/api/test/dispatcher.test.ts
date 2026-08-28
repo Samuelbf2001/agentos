@@ -5,7 +5,16 @@
  * tarea → suelta el lease (READY).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getTask, listArtifacts, listRuns, listTaskEvents } from "@agentos/db";
+import {
+  attachArtifact,
+  createAgent,
+  getTask,
+  listArtifacts,
+  listPendingApprovals,
+  listRuns,
+  listTaskEvents,
+  listTasks,
+} from "@agentos/db";
 import { callTool, makeFixture, makeReadyTask, waitFor, type TestFixture } from "./helpers.js";
 
 let fx: TestFixture;
@@ -124,5 +133,120 @@ describe("despachador", () => {
       (e) => e.kind === "moved" && e.actor === "system:dispatcher" && e.toStatus === "READY",
     );
     expect(releaseEvent).toBeTruthy();
+  });
+
+  // Fix H9: ask_human sin mover la tarjeta NO vuelve a READY (eso re-despachaba
+  // y duplicaba pregunta y run) → la plataforma la fuerza a BLOCKED(approval);
+  // al decidir la pregunta, la tarjeta vuelve a la cola con la respuesta en su timeline.
+  it("ask_human sin mover la tarjeta → BLOCKED(approval), sin re-despacho; la respuesta la devuelve a READY", async () => {
+    // Limpieza: cancelar tareas READY sobrantes de tests anteriores.
+    for (const leftover of listTasks(fx.db, { status: "READY" })) {
+      fx.api.ctx.engine.moveTask({
+        taskId: leftover.id,
+        to: "CANCELLED",
+        expectedVersion: leftover.version,
+        actor: `person:${fx.person.id}`,
+      });
+    }
+
+    const task = makeReadyTask(fx, fx.sam, { title: "Entrevista sin insumo en el Hub" });
+    fx.aiRunner.setBehavior(async (input, ctx) => {
+      await callTool(input, "ask_human", {
+        kind: "question",
+        title: "Falta el insumo de la entrevista",
+        body: "No hay nota de entrevista en el Hub: ¿la cargas o reasigno?",
+        task_id: ctx.taskId,
+      });
+      // El agente cierra el turno SIN mover la tarjeta (el bug de la demo).
+      return { text: "Pregunté al humano y espero." };
+    });
+
+    const report = await fx.api.ctx.dispatcher.tick();
+    expect(report.dispatched).toHaveLength(1);
+
+    const blocked = await waitFor(() => {
+      const t = getTask(fx.db, task.id)!;
+      return t.status === "BLOCKED" ? t : undefined;
+    });
+    expect(blocked.blockedReason).toBe("approval");
+
+    // Un tick posterior NO re-despacha la tarjeta (antes: pregunta y run duplicados).
+    const again = await fx.api.ctx.dispatcher.tick();
+    expect(again.dispatched).toHaveLength(0);
+    expect(listRuns(fx.db, { taskId: task.id })).toHaveLength(1);
+    const approvals = listPendingApprovals(fx.db).filter((a) => a.taskId === task.id);
+    expect(approvals).toHaveLength(1);
+
+    // El humano responde → la tarjeta vuelve a READY con la respuesta en el timeline.
+    const res = await fx.api.app.inject({
+      method: "POST",
+      url: `/api/approvals/${approvals[0]!.id}/decide`,
+      headers: fx.authHeaders,
+      payload: { decision: "approved", note: "Carga la nota tú: te adjunté el audio en el Hub" },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const ready = getTask(fx.db, task.id)!;
+    expect(ready.status).toBe("READY");
+    const answer = listTaskEvents(fx.db, task.id).find(
+      (e) => e.kind === "comment" && String((e.payload as { body?: string })?.body).includes("te adjunté el audio"),
+    );
+    expect(answer).toBeTruthy();
+
+    // Limpieza: que no contamine otros tests.
+    fx.aiRunner.setBehavior(undefined);
+    fx.api.ctx.engine.moveTask({
+      taskId: task.id,
+      to: "CANCELLED",
+      expectedVersion: ready.version,
+      actor: `person:${fx.person.id}`,
+    });
+  });
+
+  // Fix H6: los entregables de consultoría (report, process_map, ...) también
+  // disparan la auto-crítica de Quinn — con la lista del seed solo lo hacían
+  // los tipos técnicos y US-10 quedaba muerto en el caso de uso principal.
+  it("entregable 'report' en REVIEW dispara la auto-crítica de Quinn (trigger system)", async () => {
+    const quinn = createAgent(fx.db, {
+      slug: "quinn",
+      name: "Quinn",
+      layer: "meta",
+      runtime: "ai_sdk",
+      providerProfileId: fx.provider.id,
+      model: "mock-model",
+      toolsAllowlist: ["tasks.get", "tasks.list", "board.get"],
+    });
+    fx.aiRunner.setBehavior(() => ({ text: "Crítica adversaria del informe." }));
+
+    const task = makeReadyTask(fx, fx.sam, {
+      title: "Informe de assessment para crítica",
+      activityType: "report",
+    });
+    const actor = `person:${fx.person.id}`;
+    const inProgress = fx.api.ctx.engine.moveTask({
+      taskId: task.id,
+      to: "IN_PROGRESS",
+      expectedVersion: task.version,
+      actor,
+    });
+    attachArtifact(fx.db, {
+      taskId: task.id,
+      kind: "document",
+      title: "Informe v1",
+      content: "# Informe",
+      createdBy: "agent:sam",
+    });
+    fx.api.ctx.engine.moveTask({
+      taskId: task.id,
+      to: "REVIEW",
+      expectedVersion: inProgress.version,
+      actor,
+    });
+
+    const critique = await waitFor(
+      () => listRuns(fx.db, { taskId: task.id, agentId: quinn.id }).find((r) => r.trigger === "system"),
+      { label: "run de crítica de Quinn" },
+    );
+    expect(critique.agentId).toBe(quinn.id);
   });
 });

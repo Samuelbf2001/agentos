@@ -39,6 +39,15 @@ const baseRoutes = [
     body: { run: makeRun(), spans: [], tree: [makeRun()], last_seq: 5 },
   },
   { path: "/api/approvals/pending", body: { approvals: [makeApproval()] } },
+  {
+    path: "/api/waiting",
+    body: {
+      approvals: [makeApproval()],
+      review_tasks: [
+        { task: makeTask({ id: "t-review", status: "REVIEW", title: "Informe en revisión" }), artifacts: [] },
+      ],
+    },
+  },
   { path: "/api/knowledge", body: { docs: [] } },
   { path: "/api/processes", body: { processes: [] } },
   { path: "/api/methodologies", body: { methodologies: [] } },
@@ -117,6 +126,14 @@ describe("smoke de vistas", () => {
     ui(<WaitingView />);
     expect(await screen.findByText("email.send")).toBeTruthy();
     expect(screen.getByText("✓ Aprobar")).toBeTruthy();
+  });
+
+  it("WaitingView pinta también los entregables en REVIEW (H10)", async () => {
+    ui(<WaitingView />);
+    // loadApprovals (vía /api/waiting) trae la tarjeta en REVIEW a la bandeja.
+    expect(await screen.findByText("Informe en revisión")).toBeTruthy();
+    expect(screen.getByText("Entregable en REVIEW")).toBeTruthy();
+    expect(screen.getByText("✓ Aprobar → DONE")).toBeTruthy();
   });
 
   it("ContextView pinta pestañas y estado vacío", async () => {

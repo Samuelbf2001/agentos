@@ -14,6 +14,8 @@ tools:
   - tasks.attach_artifact
   - artifacts.write
   - knowledge.search
+  - knowledge.get
+  - knowledge.list
   - ask_human
 ---
 

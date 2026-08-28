@@ -47,6 +47,15 @@ export interface SeedCounts {
   tables: number;
 }
 
+/** Modelo por defecto cuando el fallback de arranque cae a claude_subscription (H5). */
+export const FALLBACK_CLAUDE_MODEL = "sonnet";
+
+/** ¿El modelo lo puede correr el CLI de Claude? (aliases sonnet/opus/haiku o ids claude-*). */
+export function isAnthropicModel(model: string | null | undefined): boolean {
+  if (!model) return false;
+  return /^(sonnet|opus|haiku)\b/i.test(model) || /^claude[-_]/i.test(model);
+}
+
 const caps = (over: Partial<ProviderCapabilities> = {}): ProviderCapabilities => ({
   tool_calling: true,
   streaming: true,
@@ -318,6 +327,7 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   for (const seedDef of loadAgentSeeds()) {
     const desired = getProviderProfileBySlug(db, seedDef.meta.provider_profile);
     let runtime = seedDef.meta.runtime;
+    let model = seedDef.meta.model;
     let profile = desired;
     if (!desired || !isProviderConfigured(desired, env)) {
       // Sin credencial → suscripción Claude (runtime claude_code). La UI lo señalará.
@@ -326,16 +336,20 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
         runtime = "claude_code";
         agentsFallback.push(seedDef.meta.slug);
       }
+      // H5: el CLI de Claude no puede correr modelos no-Anthropic (gpt-5, kimi,
+      // MiniMax...). Si el fallback cambia el proveedor, el modelo cae a un
+      // alias Anthropic válido — modelo y runtime SIEMPRE coherentes.
+      if (!isAnthropicModel(model)) model = FALLBACK_CLAUDE_MODEL;
     }
     // El hash incluye el resultado del fallback: si aparece la credencial, el seed se re-aplica.
-    const effectiveHash = sha256(`${seedDef.hash}|${profile!.slug}|${runtime}`);
+    const effectiveHash = sha256(`${seedDef.hash}|${profile!.slug}|${runtime}|${model}`);
     const { agent, seedChanged } = upsertAgentFromSeed(db, {
       slug: seedDef.meta.slug,
       name: seedDef.meta.name,
       layer: seedDef.meta.layer,
       runtime,
       providerProfileId: profile!.id,
-      model: seedDef.meta.model,
+      model,
       toolsAllowlist: seedDef.meta.tools,
       mcpAllowlist: [],
       autonomy: seedDef.meta.autonomy,

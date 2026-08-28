@@ -16,6 +16,7 @@ import {
   getTask,
   getThread,
   listAgents,
+  listArtifacts,
   listConfig,
   listDocs,
   listMessages,
@@ -24,6 +25,7 @@ import {
   listRuns,
   listRunsByRoot,
   listSpans,
+  listTasks,
   listThreads,
   searchDocs,
   updateAgent,
@@ -198,6 +200,20 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
   app.get("/api/approvals/pending", async () => ({ approvals: engine.listPendingApprovals() }));
 
+  /**
+   * Bandeja "Esperando por ti" (US-4 CA-4.2, fix H10): TODO lo que espera a un
+   * humano en un solo snapshot — aprobaciones pendientes (tools/preguntas/gates)
+   * Y entregables en REVIEW con sus artefactos (REVIEW→DONE solo lo mueve un
+   * humano, así que toda tarjeta en REVIEW espera por ti).
+   */
+  app.get("/api/waiting", async () => ({
+    approvals: engine.listPendingApprovals(),
+    review_tasks: listTasks(db, { status: "REVIEW" }).map((task) => ({
+      task,
+      artifacts: listArtifacts(db, task.id),
+    })),
+  }));
+
   app.get("/api/approvals/:id", async (req) => {
     const { id } = req.params as { id: string };
     const approval = getApproval(db, id);
@@ -212,22 +228,46 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
     const result = engine.decideApproval(id, body.decision, personId, body.note);
     const approval = result.approval;
 
-    if (body.decision === "rejected") {
-      // La nota queda en el timeline de la tarea; el humano decide cómo seguir.
-      if (approval.taskId) {
-        const task = getTask(db, approval.taskId);
-        if (task) {
-          appendTaskEvent(db, {
+    /**
+     * H9 (cierre del ciclo ask_human): una pregunta/entregable decidido deja la
+     * respuesta en el timeline y devuelve la tarjeta BLOCKED(approval) a READY —
+     * el agente retoma con la respuesta visible en sus últimos eventos.
+     * (Las tool_call van por su propio camino: ejecutar + run de reanudación.)
+     */
+    function recordAndUnblock(decisionLabel: string): void {
+      if (!approval.taskId) return;
+      const task = getTask(db, approval.taskId);
+      if (!task) return;
+      appendTaskEvent(db, {
+        taskId: task.id,
+        runId: approval.runId ?? null,
+        kind: "comment",
+        actor: personActor(req),
+        payload: { body: `Aprobación ${id} ${decisionLabel}${body.note ? `: ${body.note}` : ""}` },
+      });
+      if (approval.kind !== "tool_call" && task.status === "BLOCKED" && task.blockedReason === "approval") {
+        try {
+          engine.moveTask({
             taskId: task.id,
-            runId: approval.runId ?? null,
-            kind: "comment",
-            actor: personActor(req),
-            payload: { body: `Aprobación ${id} RECHAZADA${body.note ? `: ${body.note}` : ""}` },
+            to: "READY",
+            expectedVersion: task.version,
+            actor: "system:approvals",
+            note: `aprobación ${id} resuelta (${decisionLabel.toLowerCase()}): la tarjeta vuelve a la cola`,
           });
+        } catch {
+          /* otro actor la movió: su movimiento manda */
         }
       }
+    }
+
+    if (body.decision === "rejected") {
+      // La nota queda en el timeline de la tarea; preguntas/entregables vuelven a la cola.
+      recordAndUnblock("RECHAZADA");
       return { approval, executed: null, resume_run_id: null };
     }
+
+    // Aprobado + pregunta/entregable: respuesta al timeline y tarjeta a la cola.
+    if (approval.kind !== "tool_call") recordAndUnblock("APROBADA");
 
     // Aprobado + tool_call: la PLATAFORMA ejecuta el efecto (executeApproved,
     // digest verificado) y encola el run de reanudación con resume_of_run_id.

@@ -5,6 +5,7 @@
  * | Transición                    | Agente                              | Humano | Sistema |
  * |-------------------------------|-------------------------------------|--------|---------|
  * | BACKLOG → READY               | solo orquestador, con DoD + dueño   | Sí     | No      |
+ * | READY → BACKLOG (despriorizar)| No                                  | Sí     | No      |
  * | READY → IN_PROGRESS           | solo vía tasks.claim                | Sí     | Sí (despachador vía claim) |
  * | IN_PROGRESS → BLOCKED         | Sí                                  | Sí     | Sí (reaper 'stuck') |
  * | BLOCKED → READY               | Sí                                  | Sí     | Sí (aprobación resuelta) |
@@ -54,6 +55,7 @@ const MATRIX: Record<ActorKind, readonly `${TaskStatus}>${TaskStatus}`[]> = {
   ],
   human: [
     "BACKLOG>READY",
+    "READY>BACKLOG", // despriorizar (CA-2.4, fix H7): solo el humano saca de la cola
     "READY>IN_PROGRESS",
     "IN_PROGRESS>BLOCKED",
     "BLOCKED>READY",

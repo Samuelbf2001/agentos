@@ -176,6 +176,7 @@ export const SAM_ALLOWLIST = [
   "artifacts.write",
   "knowledge.upsert_doc",
   "email.send",
+  "ask_human",
 ];
 
 export const ALEX_ALLOWLIST = [

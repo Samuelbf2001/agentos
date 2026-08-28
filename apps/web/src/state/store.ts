@@ -50,6 +50,12 @@ export interface TaskDetail {
   runs: Run[];
 }
 
+/** Entregable en REVIEW esperando decisión humana (bandeja, CA-4.2 / fix H10). */
+export interface ReviewEntry {
+  task: Task;
+  artifacts: Artifact[];
+}
+
 export interface AppStore extends EventState {
   // sesión
   person: Person | null;
@@ -62,6 +68,7 @@ export interface AppStore extends EventState {
   activeProjectId: string | null;
   threads: Thread[];
   approvals: Approval[];
+  reviewTasks: ReviewEntry[];
   agents: Agent[];
   failedRunsCount: number;
   boardLoading: boolean;
@@ -232,6 +239,7 @@ export const useStore = create<AppStore>()((set, get) => {
     activeProjectId: null,
     threads: [],
     approvals: [],
+    reviewTasks: [],
     agents: [],
     failedRunsCount: 0,
     boardLoading: false,
@@ -298,6 +306,7 @@ export const useStore = create<AppStore>()((set, get) => {
         projects: [],
         threads: [],
         approvals: [],
+        reviewTasks: [],
         agents: [],
         taskDetail: null,
         activeProjectId: null,
@@ -428,24 +437,35 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     async approveTaskReview(taskId, note) {
-      const task = get().taskDetail?.task ?? get().board.tasks[taskId];
+      // La tarjeta puede venir del drawer, del tablero o de la bandeja (H10).
+      const openDetail = get().taskDetail?.task.id === taskId ? get().taskDetail!.task : null;
+      const task =
+        openDetail ??
+        get().board.tasks[taskId] ??
+        get().reviewTasks.find((r) => r.task.id === taskId)?.task;
       if (!task) return;
       try {
         await api.approveTask(taskId, task.version, note);
         get().pushToast("ok", "Tarea aprobada → DONE");
-        await get().openTask(taskId);
+        if (openDetail) await get().openTask(taskId);
+        void get().loadApprovals();
       } catch (err) {
         toastError(err, "No se pudo aprobar");
       }
     },
 
     async rejectTaskReview(taskId, note) {
-      const task = get().taskDetail?.task ?? get().board.tasks[taskId];
+      const openDetail = get().taskDetail?.task.id === taskId ? get().taskDetail!.task : null;
+      const task =
+        openDetail ??
+        get().board.tasks[taskId] ??
+        get().reviewTasks.find((r) => r.task.id === taskId)?.task;
       if (!task) return;
       try {
         await api.rejectTask(taskId, task.version, note);
         get().pushToast("ok", "Tarea rechazada: vuelve al agente con tu nota");
-        await get().openTask(taskId);
+        if (openDetail) await get().openTask(taskId);
+        void get().loadApprovals();
       } catch (err) {
         toastError(err, "No se pudo rechazar");
       }
@@ -551,8 +571,9 @@ export const useStore = create<AppStore>()((set, get) => {
 
     async loadApprovals() {
       try {
-        const { approvals } = await api.approvalsPending();
-        set({ approvals });
+        // Bandeja completa (H10): aprobaciones pendientes + entregables en REVIEW.
+        const { approvals, review_tasks } = await api.waiting();
+        set({ approvals, reviewTasks: review_tasks });
       } catch {
         /* badge se refresca en el siguiente ciclo */
       }
@@ -609,6 +630,9 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     async refreshBadges() {
+      // La bandeja (aprobaciones + REVIEW) también se refresca por ciclo: el WS
+      // es optimización, nunca fuente de verdad.
+      void get().loadApprovals();
       try {
         const { runs } = await api.runs({ status: "failed", limit: 100 });
         set({ failedRunsCount: runs.length });

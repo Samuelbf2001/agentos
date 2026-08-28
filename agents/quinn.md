@@ -13,6 +13,8 @@ tools:
   - tasks.comment
   - board.get
   - knowledge.search
+  - knowledge.get
+  - knowledge.list
   - artifacts.write
 ---
 

@@ -31,7 +31,8 @@ export const processTools: ToolDefinition[] = [
   def({
     name: "processes.upsert",
     description:
-      "Crea o actualiza un proceso mapeado como entidad (nombre, dueño, as_is/to_be, pasos, sistemas, pain points, refs ISO).",
+      "Crea o actualiza un proceso mapeado como entidad (nombre, dueño, as_is/to_be, pasos, sistemas, pain points, refs ISO). " +
+      "Incluye source_doc_ids con los doc ids del Context Hub que lo sustentan (provenance, CA-12.5).",
     schema: z.object({
       id: z.string().optional(),
       org_id: z.string().min(1),
@@ -42,11 +43,15 @@ export const processTools: ToolDefinition[] = [
       systems: z.array(z.string()).optional(),
       pain_points: z.array(z.string()).optional(),
       iso_refs: z.array(z.string()).optional(),
+      source_doc_ids: z
+        .array(z.string().min(1))
+        .optional()
+        .describe("doc ids del Context Hub que sustentan el proceso (entrevistas, evidencia)"),
       status: ProcessStatus.optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
     handler(ctx, args) {
-      return upsertProcess(ctx.db, {
+      const process = upsertProcess(ctx.db, {
         id: args.id,
         orgId: args.org_id,
         name: args.name,
@@ -56,8 +61,19 @@ export const processTools: ToolDefinition[] = [
         systems: args.systems ?? null,
         painPoints: args.pain_points ?? null,
         isoRefs: args.iso_refs ?? null,
+        ...(args.source_doc_ids !== undefined ? { sourceDocIds: args.source_doc_ids } : {}),
         status: args.status ?? "draft",
       });
+      // H8: un as_is sin fuentes viola la regla de provenance — se acepta (draft)
+      // pero se devuelve el aviso para que el agente lo corrija con link_source.
+      if ((process.sourceDocIds ?? []).length === 0 && process.variant === "as_is") {
+        return {
+          ...process,
+          warning:
+            "Proceso as_is SIN source_doc_ids: enlaza sus fuentes (processes.link_source o source_doc_ids) antes de darlo por terminado (provenance, CA-12.5)",
+        };
+      }
+      return process;
     },
   }),
 

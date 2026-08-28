@@ -1,7 +1,7 @@
 /** Bandeja: decidir approve dispara el POST correcto y saca el item de la lista. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../src/state/store";
-import { makeApproval, mockFetch } from "./helpers";
+import { makeApproval, makeTask, mockFetch } from "./helpers";
 
 describe("decideApproval", () => {
   beforeEach(() => {
@@ -54,8 +54,8 @@ describe("decideApproval", () => {
       },
       {
         method: "GET",
-        path: "/api/approvals/pending",
-        body: { approvals: [makeApproval(), makeApproval({ id: "ap-2" })] },
+        path: "/api/waiting",
+        body: { approvals: [makeApproval(), makeApproval({ id: "ap-2" })], review_tasks: [] },
       },
     ]);
     await useStore.getState().decideApproval("ap-1", "approved");
@@ -65,5 +65,43 @@ describe("decideApproval", () => {
     expect(
       useStore.getState().toasts.some((t) => t.kind === "error" && t.text.includes("approval_invalidated")),
     ).toBe(true);
+  });
+
+  // Fix H10: la bandeja también carga entregables en REVIEW con su artefacto.
+  it("loadApprovals trae aprobaciones Y tareas en REVIEW (/api/waiting)", async () => {
+    const review = makeTask({ id: "t-review", status: "REVIEW", requiresApproval: true });
+    mockFetch([
+      {
+        method: "GET",
+        path: "/api/waiting",
+        body: {
+          approvals: [makeApproval()],
+          review_tasks: [
+            {
+              task: review,
+              artifacts: [
+                {
+                  id: "art-1",
+                  taskId: "t-review",
+                  runId: null,
+                  kind: "document",
+                  title: "Informe v1",
+                  content: "# Informe",
+                  path: null,
+                  meta: null,
+                  createdBy: "agent:sam",
+                  createdAt: 1000,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    await useStore.getState().loadApprovals();
+    expect(useStore.getState().approvals).toHaveLength(1);
+    expect(useStore.getState().reviewTasks).toHaveLength(1);
+    expect(useStore.getState().reviewTasks[0]!.task.id).toBe("t-review");
+    expect(useStore.getState().reviewTasks[0]!.artifacts[0]!.title).toBe("Informe v1");
   });
 });

@@ -95,13 +95,32 @@ describe("seeds", () => {
     expect(getActivePrompt(db, alex.id)?.stable).toContain("Alex");
   });
 
-  it("respeta la credencial configurada (sam queda en ai_sdk/openai)", () => {
+  it("respeta la credencial configurada (sam queda en ai_sdk/openai con su modelo)", () => {
     const db = freshDb();
     const counts = seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
     expect(counts.agentsFallback).not.toContain("sam");
     const sam = getAgentBySlug(db, "sam")!;
     expect(sam.runtime).toBe("ai_sdk");
+    expect(sam.model).toBe("gpt-5");
     expect(getProviderProfile(db, sam.providerProfileId!)!.slug).toBe("openai");
+  });
+
+  // Fix H5: el fallback de arranque dejaba runtime claude_code con modelos que
+  // el CLI de Claude no puede correr (gpt-5, kimi, MiniMax) → modelo y runtime
+  // caen JUNTOS a la suscripción.
+  it("fallback sin credencial: los modelos no-Anthropic caen a un alias Claude válido", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    for (const slug of ["sam", "sally", "clara"]) {
+      const agent = getAgentBySlug(db, slug)!;
+      expect(agent.runtime).toBe("claude_code");
+      expect(agent.model).toBe("sonnet");
+    }
+    // alex ya venía con modelo Anthropic: se respeta.
+    expect(getAgentBySlug(db, "alex")!.model).toBe("claude-sonnet-4-5");
+    // Aparece la credencial → re-seed restaura el modelo declarado en el .md.
+    seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
+    expect(getAgentBySlug(db, "sam")!.model).toBe("gpt-5");
   });
 
   it("es idempotente: re-ejecutar no duplica nada", () => {

@@ -14,9 +14,13 @@ tools:
   - tasks.attach_artifact
   - artifacts.write
   - knowledge.search
+  - knowledge.get
+  - knowledge.list
   - knowledge.upsert_doc
   - processes.upsert
   - processes.list
+  - processes.get
+  - processes.link_source
   - methodology.get
   - ask_human
 ---
