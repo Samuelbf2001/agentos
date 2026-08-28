@@ -2,10 +2,20 @@
  * Contexto (US-12, spec B5 §8): Context Hub por proyecto — knowledge_docs por
  * tipo con búsqueda (knowledge.search), vista de doc (markdown + fuentes),
  * procesos como tabla con detalle de pasos, y metodologías (lectura + versión).
+ *
+ * Fase 2 — Fuentes del proyecto: sección para asociar reuniones y conversaciones
+ * de WhatsApp de 2brain (WhatsAppHub) e ingerirlas como docs tipados del Hub.
  */
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
-import type { KnowledgeDoc, Methodology, ProcessEntity } from "../lib/types";
+import type {
+  KnowledgeDoc,
+  Methodology,
+  ProcessEntity,
+  ProjectSource,
+  ProjectSourceKind,
+  SourceBrowseItem,
+} from "../lib/types";
 import { useStore } from "../state/store";
 import { Markdown } from "../components/Markdown";
 import { EmptyState, ErrorBox, fmtDate, Spinner } from "../components/ui";
@@ -21,6 +31,274 @@ const KIND_LABELS: Record<string, string> = {
   template: "Plantilla",
   note: "Nota",
 };
+
+// ── Fuentes del proyecto (Fase 2) ───────────────────────────────────────────
+
+const SOURCE_KIND_LABELS: Record<ProjectSourceKind, string> = {
+  meeting: "Reunión",
+  whatsapp_thread: "WhatsApp",
+};
+
+const SOURCE_STATUS_STYLES: Record<string, string> = {
+  linked: "bg-slate-200 text-slate-700",
+  ingested: "bg-emerald-100 text-emerald-700",
+  error: "bg-rose-100 text-rose-700",
+};
+
+const SOURCE_STATUS_LABELS: Record<string, string> = {
+  linked: "asociada",
+  ingested: "ingerida",
+  error: "error",
+};
+
+function errMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
+/**
+ * Modal picker: tabs Reuniones / WhatsApp + buscador sobre GET /api/sources/browse.
+ * Elegir un item = asociar + ingerir en un paso (si la ingesta falla, la fuente
+ * queda asociada con estado error legible y botón Re-ingerir en la lista).
+ */
+function SourcePickerModal({
+  projectId,
+  onClose,
+  onDone,
+}: {
+  projectId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [tab, setTab] = useState<ProjectSourceKind>("meeting");
+  const [q, setQ] = useState("");
+  const [items, setItems] = useState<SourceBrowseItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function load(kind: ProjectSourceKind, query: string) {
+    setItems(null);
+    setError(null);
+    try {
+      const res = await api.browseSources(kind, query);
+      setItems(res.items);
+    } catch (err) {
+      setError(errMessage(err, "No se pudo listar el catálogo de 2brain"));
+    }
+  }
+
+  useEffect(() => {
+    void load(tab, q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  async function pick(item: SourceBrowseItem) {
+    setBusyId(item.id);
+    setError(null);
+    try {
+      const { source } = await api.linkProjectSource(projectId, tab, {
+        system: "whatsapphub",
+        ...(tab === "meeting" ? { meetingId: item.id } : { contactId: item.id }),
+        title: item.title,
+        ...(item.url ? { url: item.url } : {}),
+      });
+      try {
+        await api.ingestSource(source.id);
+      } catch {
+        // Queda asociada con status 'error' legible; se reintenta desde la lista.
+      }
+      onDone();
+      onClose();
+    } catch (err) {
+      setError(errMessage(err, "No se pudo asociar la fuente"));
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-lg border border-slate-200 bg-white p-4 shadow-xl">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold">Asociar fuente de 2brain</h3>
+          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100">
+            ✕ Cerrar
+          </button>
+        </div>
+        <div className="mt-2 flex gap-1">
+          {(["meeting", "whatsapp_thread"] as ProjectSourceKind[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                tab === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              {k === "meeting" ? "Reuniones" : "WhatsApp"}
+            </button>
+          ))}
+        </div>
+        <form
+          className="mt-2 flex gap-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void load(tab, q);
+          }}
+        >
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={tab === "meeting" ? "Buscar reunión (título, cliente)…" : "Buscar contacto…"}
+            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+          />
+          <button className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white">🔍</button>
+        </form>
+        {error ? (
+          <div className="mt-2">
+            <ErrorBox message={error} onRetry={() => void load(tab, q)} />
+          </div>
+        ) : null}
+        {items === null && !error ? <Spinner label="Consultando 2brain…" /> : null}
+        {items !== null && items.length === 0 ? (
+          <div className="mt-2">
+            <EmptyState title="Sin resultados" hint="Prueba otro término de búsqueda." />
+          </div>
+        ) : null}
+        <ul className="mt-2 divide-y divide-slate-100">
+          {(items ?? []).map((item) => (
+            <li key={item.id} className="flex items-center gap-2 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium">{item.title}</p>
+                {item.subtitle ? <p className="truncate text-[10px] text-slate-400">{item.subtitle}</p> : null}
+              </div>
+              <button
+                onClick={() => void pick(item)}
+                disabled={busyId !== null}
+                className="shrink-0 rounded-md bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {busyId === item.id ? "Asociando…" : "Asociar e ingerir"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/** Sección "Fuentes del proyecto": lista con estado + Re-ingerir + Asociar fuente. */
+function SourcesSection({ onIngested }: { onIngested: () => void }) {
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const [sources, setSources] = useState<ProjectSource[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  async function load() {
+    if (!activeProjectId) return;
+    setError(null);
+    try {
+      const res = await api.projectSources(activeProjectId);
+      setSources(res.sources);
+    } catch (err) {
+      setError(errMessage(err, "Error cargando fuentes del proyecto"));
+    }
+  }
+
+  useEffect(() => {
+    setSources(null);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
+  async function reingest(source: ProjectSource) {
+    setBusyId(source.id);
+    setError(null);
+    try {
+      await api.ingestSource(source.id);
+      onIngested();
+    } catch (err) {
+      // El estado 'error' + last_error queda persistido; el mensaje sale en la fila.
+      setError(errMessage(err, "La ingesta falló — reintenta cuando el VPS responda"));
+    } finally {
+      setBusyId(null);
+      void load();
+    }
+  }
+
+  if (!activeProjectId) {
+    return (
+      <div className="mb-3 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-400">
+        Elige un proyecto (en el tablero) para asociar fuentes de 2brain.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          Fuentes del proyecto (2brain)
+        </h3>
+        <button
+          onClick={() => setPickerOpen(true)}
+          className="rounded-md bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-slate-700"
+        >
+          + Asociar fuente
+        </button>
+      </div>
+      {error ? <div className="mt-2"><ErrorBox message={error} onRetry={() => void load()} /></div> : null}
+      {sources === null && !error ? <Spinner label="Cargando fuentes…" /> : null}
+      {sources !== null && sources.length === 0 ? (
+        <p className="mt-2 text-xs text-slate-400">
+          Sin fuentes asociadas. Asocia reuniones o conversaciones de WhatsApp y quedarán como
+          documentos tipados del Context Hub.
+        </p>
+      ) : null}
+      <ul className="mt-2 divide-y divide-slate-100">
+        {(sources ?? []).map((s) => (
+          <li key={s.id} className="flex items-center gap-2 py-1.5">
+            <span className="shrink-0 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-semibold">
+              {SOURCE_KIND_LABELS[s.kind]}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium">{s.externalRef.title}</p>
+              {s.status === "error" && s.lastError ? (
+                <p className="truncate text-[10px] text-rose-600" title={s.lastError}>
+                  {s.lastError}
+                </p>
+              ) : s.lastIngestedAt ? (
+                <p className="text-[10px] text-slate-400">ingerida {fmtDate(s.lastIngestedAt)}</p>
+              ) : null}
+            </div>
+            <span
+              className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                SOURCE_STATUS_STYLES[s.status] ?? "bg-slate-200 text-slate-700"
+              }`}
+            >
+              {SOURCE_STATUS_LABELS[s.status] ?? s.status}
+            </span>
+            <button
+              onClick={() => void reingest(s)}
+              disabled={busyId !== null}
+              className="shrink-0 rounded-md border border-slate-300 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {busyId === s.id ? "Ingiriendo…" : s.status === "linked" ? "Ingerir" : "Re-ingerir"}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {pickerOpen ? (
+        <SourcePickerModal
+          projectId={activeProjectId}
+          onClose={() => setPickerOpen(false)}
+          onDone={() => {
+            void load();
+            onIngested();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 function DocsTab() {
   const activeProjectId = useStore((s) => s.activeProjectId);
@@ -65,7 +343,9 @@ function DocsTab() {
   }
 
   return (
-    <div className="flex gap-4">
+    <div>
+      <SourcesSection onIngested={() => void load()} />
+      <div className="flex gap-4">
       <div className="w-80 shrink-0">
         <form onSubmit={search} className="flex gap-1">
           <input
@@ -141,6 +421,7 @@ function DocsTab() {
         ) : (
           <EmptyState title="Elige un documento" hint="El Context Hub es el activo del engagement." />
         )}
+      </div>
       </div>
     </div>
   );

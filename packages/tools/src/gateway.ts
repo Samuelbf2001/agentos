@@ -39,6 +39,8 @@ export interface ToolRuntimeOptions {
   workspaceRoot?: string;
   /** Tools adicionales a registrar (tests, extensiones). */
   extraTools?: ToolDefinition[];
+  /** Conector WhatsAppHub (Fuentes del proyecto); sin él, sources.ingest falla legible. */
+  whatsappHub?: import("@agentos/shared").WhatsAppHubConnector;
 }
 
 function auditSourceFor(actor: string): AuditSource {
@@ -54,7 +56,7 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
   const catalog = buildCatalog(opts.extraTools ?? []);
 
   function execCtx(ctx: ToolCallContext): ToolExecutionContext {
-    return { ...ctx, db, sink, engine, workspaceRoot };
+    return { ...ctx, db, sink, engine, workspaceRoot, whatsappHub: opts.whatsappHub };
   }
 
   function audit(

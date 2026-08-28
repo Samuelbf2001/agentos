@@ -19,6 +19,7 @@ export * from "./repositories/threads.js";
 export * from "./repositories/approvals.js";
 export * from "./repositories/audit.js";
 export * from "./repositories/knowledge.js";
+export * from "./repositories/project-sources.js";
 export * from "./repositories/processes.js";
 export * from "./repositories/methodologies.js";
 export * from "./repositories/config.js";

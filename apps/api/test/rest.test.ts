@@ -25,7 +25,7 @@ describe("REST", () => {
     expect(health.statusCode).toBe(200);
     const healthBody = health.json() as { ok: boolean; counts: { tables: number } };
     expect(healthBody.ok).toBe(true);
-    expect(healthBody.counts.tables).toBe(20);
+    expect(healthBody.counts.tables).toBe(21);
 
     const people = await fx.api.app.inject({ method: "GET", url: "/api/auth/people" });
     expect(people.statusCode).toBe(200);

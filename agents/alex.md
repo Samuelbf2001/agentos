@@ -20,6 +20,8 @@ tools:
   - knowledge.get
   - knowledge.list
   - methodology.get
+  - sources.list
+  - sources.ingest
   - delegate
   - ask_human
 ---

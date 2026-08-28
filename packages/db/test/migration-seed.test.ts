@@ -36,10 +36,11 @@ const EXPECTED_TABLES = [
   "knowledge_docs",
   "processes",
   "methodologies",
+  "project_sources",
 ];
 
 describe("migración desde cero", () => {
-  it("crea exactamente las 20 tablas de dominio de ARCHITECTURE §5/§8b", () => {
+  it("crea exactamente las 21 tablas de dominio (§5/§8b + project_sources F2)", () => {
     const db = freshDb();
     const names = (
       db.$client
@@ -47,7 +48,7 @@ describe("migración desde cero", () => {
         .all() as { name: string }[]
     ).map((r) => r.name);
     for (const t of EXPECTED_TABLES) expect(names, `falta tabla ${t}`).toContain(t);
-    expect(countDomainTables(db)).toBe(20);
+    expect(countDomainTables(db)).toBe(21);
   });
 
   it("crea las tablas FTS5 espejo (messages_fts, knowledge_fts)", () => {
@@ -71,7 +72,7 @@ describe("migración desde cero", () => {
   it("es idempotente (migrar dos veces no falla)", () => {
     const db = freshDb();
     expect(() => runMigrations(db)).not.toThrow();
-    expect(countDomainTables(db)).toBe(20);
+    expect(countDomainTables(db)).toBe(21);
   });
 });
 
@@ -87,7 +88,7 @@ describe("seeds", () => {
     expect(counts.methodologies).toBe(5); // assessment-14d, transform, ops + iso9001-prep, iso9001-clausulas (F2-3)
     expect(counts.projects).toBe(1);
     expect(counts.tasks).toBe(12);
-    expect(counts.tables).toBe(20);
+    expect(counts.tables).toBe(21);
     // ai_sdk sin credencial → claude_subscription/claude_code (ARCHITECTURE §3)
     expect([...counts.agentsFallback].sort()).toEqual(["alex", "clara", "sally", "sam"]);
     const alex = getAgentBySlug(db, "alex")!;
@@ -193,6 +194,22 @@ describe("seeds", () => {
     seed(db, { env: {} });
     // reports_to ya correcto → la segunda pasada no bombea la versión del agente.
     expect(getAgentBySlug(db, "sam")!.version).toBe(samV1);
+  });
+
+  it("Fuentes del proyecto (F2): el re-seed aplica sources.list/ingest a alex y sam", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    for (const slug of ["alex", "sam"]) {
+      const agent = getAgentBySlug(db, slug)!;
+      expect(agent.toolsAllowlist, slug).toContain("sources.list");
+      expect(agent.toolsAllowlist, slug).toContain("sources.ingest");
+    }
+    // Re-seed idempotente: la allowlist se mantiene sin duplicar ni bombear versión.
+    const samV1 = getAgentBySlug(db, "sam")!.version;
+    seed(db, { env: {} });
+    const sam = getAgentBySlug(db, "sam")!;
+    expect(sam.version).toBe(samV1);
+    expect(sam.toolsAllowlist.filter((t) => t === "sources.ingest")).toHaveLength(1);
   });
 
   it("config base: seguro por defecto (kill switch activo) y presupuestos definidos", () => {

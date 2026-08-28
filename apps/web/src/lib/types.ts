@@ -215,6 +215,41 @@ export interface KnowledgeDoc {
   updatedAt: number;
 }
 
+// ── Fuentes del proyecto (Fase 2) ───────────────────────────────────────────
+
+export type ProjectSourceKind = "meeting" | "whatsapp_thread";
+export type ProjectSourceStatus = "linked" | "ingested" | "error";
+
+export interface ProjectSourceExternalRef {
+  system: "whatsapphub";
+  meetingId?: string;
+  contactId?: string;
+  title: string;
+  url?: string;
+}
+
+export interface ProjectSource {
+  id: string;
+  projectId: string;
+  kind: ProjectSourceKind;
+  externalRef: ProjectSourceExternalRef;
+  status: ProjectSourceStatus;
+  knowledgeDocId: string | null;
+  lastError: string | null;
+  lastIngestedAt: number | null;
+  createdBy: string | null;
+  createdAt: number;
+}
+
+/** Item normalizado de GET /api/sources/browse (picker). */
+export interface SourceBrowseItem {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  url: string | null;
+  is_internal: boolean | null;
+}
+
 export interface ProcessStep {
   step: string;
   responsible?: string;

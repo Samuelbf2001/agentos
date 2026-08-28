@@ -14,6 +14,10 @@ import type {
   Person,
   ProcessEntity,
   Project,
+  ProjectSource,
+  ProjectSourceExternalRef,
+  ProjectSourceKind,
+  SourceBrowseItem,
   Run,
   Span,
   Stage,
@@ -268,6 +272,30 @@ export const api = {
   methodologies: () => request<{ methodologies: Methodology[] }>("/api/methodologies"),
   methodology: (slug: string) =>
     request<{ methodology: Methodology }>(`/api/methodologies/${slug}`),
+
+  // ── Fuentes del proyecto (Fase 2) ─────────────────────────────────────────
+  projectSources: (projectId: string) =>
+    request<{ sources: ProjectSource[] }>(`/api/projects/${projectId}/sources`),
+  linkProjectSource: (projectId: string, kind: ProjectSourceKind, externalRef: ProjectSourceExternalRef) =>
+    request<{ source: ProjectSource; deduped: boolean }>(`/api/projects/${projectId}/sources`, {
+      method: "POST",
+      body: { kind, external_ref: externalRef },
+    }),
+  ingestSource: (sourceId: string) =>
+    request<{ source: ProjectSource; doc: KnowledgeDoc }>(`/api/sources/${sourceId}/ingest`, {
+      method: "POST",
+    }),
+  browseSources: (kind: ProjectSourceKind, q = "", page = 1) => {
+    const params = new URLSearchParams({ kind, page: String(page) });
+    if (q.trim()) params.set("q", q.trim());
+    return request<{
+      items: SourceBrowseItem[];
+      page: number;
+      page_size: number;
+      total: number | null;
+      has_more: boolean;
+    }>(`/api/sources/browse?${params.toString()}`);
+  },
 };
 
 export type Api = typeof api;
