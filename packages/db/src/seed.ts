@@ -329,7 +329,7 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
     }
     // El hash incluye el resultado del fallback: si aparece la credencial, el seed se re-aplica.
     const effectiveHash = sha256(`${seedDef.hash}|${profile!.slug}|${runtime}`);
-    const { agent } = upsertAgentFromSeed(db, {
+    const { agent, seedChanged } = upsertAgentFromSeed(db, {
       slug: seedDef.meta.slug,
       name: seedDef.meta.name,
       layer: seedDef.meta.layer,
@@ -344,13 +344,26 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
       seedHash: effectiveHash,
     });
     agentIdBySlug.set(agent.slug, agent.id);
-    if (!getActivePrompt(db, agent.id)) {
+    // Prompt: versionado, nunca sobrescrito (US-8/CA-8.2). Se crea versión nueva
+    // + active si (a) el agente no tiene prompt, o (b) el seed cambió Y el
+    // contenido difiere del activo. Si el .md no cambió, las ediciones en
+    // caliente por MCP se respetan; un cambio solo de proveedor no crea
+    // versiones redundantes.
+    const active = getActivePrompt(db, agent.id);
+    const promptDiffers =
+      !active ||
+      active.stable !== seedDef.prompt.stable ||
+      (active.context ?? "") !== seedDef.prompt.context ||
+      (active.volatileTpl ?? "") !== seedDef.prompt.volatile;
+    if (!active || (seedChanged && promptDiffers)) {
       createPromptVersion(db, {
         agentId: agent.id,
         stable: seedDef.prompt.stable,
         context: seedDef.prompt.context,
         volatileTpl: seedDef.prompt.volatile,
-        changelog: `Seed inicial desde ${seedDef.file}`,
+        changelog: active
+          ? `Seed re-aplicado desde ${seedDef.file}`
+          : `Seed inicial desde ${seedDef.file}`,
         createdBy: "system:seed",
       });
     }
@@ -362,7 +375,7 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
       slug: m.slug,
       version: m.version,
       bodyMd: m.bodyMd,
-      changelog: "Seed inicial (stub B1)",
+      changelog: `Seed desde ${m.file}`,
       seedFile: m.file,
       seedHash: m.hash,
     });

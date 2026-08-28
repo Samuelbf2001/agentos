@@ -83,7 +83,7 @@ describe("seeds", () => {
     expect(counts.providerProfiles).toBe(6);
     expect(counts.agents).toBe(7);
     expect(counts.promptVersions).toBe(7);
-    expect(counts.methodologies).toBe(1);
+    expect(counts.methodologies).toBe(3); // assessment-14d, transform, ops (B7a)
     expect(counts.projects).toBe(1);
     expect(counts.tasks).toBe(12);
     expect(counts.tables).toBe(20);
@@ -111,6 +111,15 @@ describe("seeds", () => {
     expect(counts.agents).toBe(7);
     expect(counts.tasks).toBe(12);
     expect(counts.people).toBe(5);
+    expect(counts.promptVersions).toBe(7);
+  });
+
+  it("re-seed con cambio solo de proveedor no crea versiones de prompt redundantes", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    // Aparece la credencial de OpenAI: sam cambia de perfil (seed_hash efectivo
+    // cambia) pero su prompt es idéntico → no debe nacer una versión nueva.
+    const counts = seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
     expect(counts.promptVersions).toBe(7);
   });
 
