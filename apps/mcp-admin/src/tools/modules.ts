@@ -45,7 +45,7 @@ import {
   type ModuleLaunch,
   type PhaseModule,
 } from "@agentos/db";
-import { launchModuleWithEvents, phaseClosureStatus } from "@agentos/core";
+import { launchModuleWithEvents, nextPhaseStatus, phaseClosureStatus } from "@agentos/core";
 import { auditMutation, findIdempotentMutation, mustGetPerson } from "../context.js";
 import { defineAdminTool as def, type AdminToolDefinition } from "../registry.js";
 import { unifiedDiff } from "../diff.js";
@@ -228,6 +228,8 @@ export const moduleTools: AdminToolDefinition[] = [
       version: z.number().int().positive().optional(),
       inputs: z.record(z.string(), z.unknown()),
       toggles: z.record(z.string(), z.boolean()).optional(),
+      /** Cadencias confirmadas por el humano (CA-M3.4 — M6a): entran al plan. */
+      cadences_confirmed: z.array(z.string().min(1)).optional(),
     }),
     readOnly: true,
     handler(ctx, args) {
@@ -236,6 +238,7 @@ export const moduleTools: AdminToolDefinition[] = [
         ...(args.version !== undefined ? { moduleVersion: args.version } : {}),
         inputs: args.inputs,
         ...(args.toggles ? { toggles: args.toggles } : {}),
+        ...(args.cadences_confirmed ? { cadencesConfirmed: args.cadences_confirmed } : {}),
       });
     },
   }),
@@ -284,6 +287,22 @@ export const moduleTools: AdminToolDefinition[] = [
     readOnly: true,
     handler(ctx, args) {
       return phaseClosureStatus(ctx.db, args.project_id);
+    },
+  }),
+
+  def({
+    name: "agentos.modules.next_phase",
+    description:
+      "Encadenado US-M3 (CA-M3.2): ¿puede dispararse la SIGUIENTE fase sobre el proyecto? " +
+      "Disponible sii el cierre de fase está completo Y el gate del proyecto está aprobado. " +
+      "Cadena: ENTENDER→implementacion, CONSTRUIR→operacion, OPERAR→null (módulo siguiente = " +
+      "el ACTIVO de esa fase). Con available:true devuelve el módulo siguiente, los inputs " +
+      "pre-llenados desde el Context Hub y el recibo anterior (prefill sin persistir nada) y " +
+      "el previous_launch_id que el launch nuevo debe llevar. Solo lectura.",
+    schema: z.object({ project_id: z.string().min(1) }),
+    readOnly: true,
+    handler(ctx, args) {
+      return nextPhaseStatus(ctx.db, args.project_id);
     },
   }),
 
@@ -612,6 +631,8 @@ export const moduleTools: AdminToolDefinition[] = [
       }),
       inputs: z.record(z.string(), z.unknown()),
       toggles: z.record(z.string(), z.boolean()).optional(),
+      /** Cadencias que el humano confirmó (CA-M3.4 — M6a): solo esas nacen (y renacen). */
+      cadences_confirmed: z.array(z.string().min(1)).optional(),
       idempotency_key: z.string().min(1).max(200),
       previous_launch_id: z.string().optional(),
       reason: Reason,
@@ -644,6 +665,7 @@ export const moduleTools: AdminToolDefinition[] = [
         org,
         inputs: args.inputs,
         ...(args.toggles ? { toggles: args.toggles } : {}),
+        ...(args.cadences_confirmed ? { cadencesConfirmed: args.cadences_confirmed } : {}),
         actor: `person:${person.id}`,
         idempotencyKey: args.idempotency_key,
         ...(args.previous_launch_id ? { previousLaunchId: args.previous_launch_id } : {}),

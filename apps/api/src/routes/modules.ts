@@ -22,19 +22,23 @@ import {
   type ModuleLaunch,
   type PhaseModule,
 } from "@agentos/db";
-import { launchModuleWithEvents, phaseClosureStatus } from "@agentos/core";
+import { launchModuleWithEvents, nextPhaseStatus, phaseClosureStatus } from "@agentos/core";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
 
 const PreviewBody = z.object({
   inputs: z.record(z.string(), z.unknown()).default({}),
   toggles: z.record(z.string(), z.boolean()).optional(),
+  /** Cadencias que el humano confirmó en el wizard (CA-M3.4 — M6a). */
+  cadences_confirmed: z.array(z.string().min(1)).optional(),
   version: z.number().int().positive().optional(),
 });
 
 const LaunchBody = z.object({
   inputs: z.record(z.string(), z.unknown()),
   toggles: z.record(z.string(), z.boolean()).optional(),
+  /** Cadencias que el humano confirmó en el wizard (CA-M3.4 — M6a). */
+  cadences_confirmed: z.array(z.string().min(1)).optional(),
   idempotency_key: z.string().min(1).max(200),
   version: z.number().int().positive().optional(),
   /** Org destino explícita; sin ella se usa el input `empresa` como nombre. */
@@ -44,6 +48,7 @@ const LaunchBody = z.object({
       name: z.string().min(1).optional(),
     })
     .optional(),
+  /** Encadenado US-M3: el launch cae sobre el proyecto de este launch anterior. */
   previous_launch_id: z.string().optional(),
 });
 
@@ -131,6 +136,7 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
       ...(body.version !== undefined ? { moduleVersion: body.version } : {}),
       inputs: body.inputs,
       ...(body.toggles ? { toggles: body.toggles } : {}),
+      ...(body.cadences_confirmed ? { cadencesConfirmed: body.cadences_confirmed } : {}),
     });
   });
 
@@ -161,6 +167,7 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
       org,
       inputs: body.inputs,
       ...(body.toggles ? { toggles: body.toggles } : {}),
+      ...(body.cadences_confirmed ? { cadencesConfirmed: body.cadences_confirmed } : {}),
       actor: `person:${req.session!.personId}`,
       idempotencyKey: body.idempotency_key,
       ...(body.previous_launch_id ? { previousLaunchId: body.previous_launch_id } : {}),
@@ -188,5 +195,18 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
   app.get("/api/projects/:id/phase-status", async (req) => {
     const { id } = req.params as { id: string };
     return { status: phaseClosureStatus(db, id) };
+  });
+
+  /**
+   * Encadenado US-M3 (CA-M3.2): con la fase cerrada (deliverables completos) Y
+   * el gate del proyecto aprobado → {available:true, next_module, prefilled}
+   * (el wizard pinta "Disparar Implementación/Operación" con los inputs
+   * pre-llenados y pasa `previous_launch_id` al launch); si no →
+   * {available:false, reason}. Cadena: ENTENDER→implementacion,
+   * CONSTRUIR→operacion, OPERAR→null (módulo siguiente = el activo de esa fase).
+   */
+  app.get("/api/projects/:id/next-phase", async (req) => {
+    const { id } = req.params as { id: string };
+    return nextPhaseStatus(db, id);
   });
 }

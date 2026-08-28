@@ -50,6 +50,8 @@ import {
   findLaunchByIdempotencyKey,
   findLaunchByProjectAndPhase,
   getActiveModule,
+  getLatestLaunchForProject,
+  getLaunch,
   getModuleVersion,
   insertModuleLaunch,
   listPhaseModules,
@@ -59,7 +61,12 @@ import {
   getOrganization,
   getOrganizationByName,
 } from "../repositories/organizations-people.js";
-import { createProject, getProject, getProjectByOrgAndName } from "../repositories/projects.js";
+import {
+  createProject,
+  getProject,
+  getProjectByOrgAndName,
+  updateProject,
+} from "../repositories/projects.js";
 import {
   appendTaskEvent,
   countOpenTasksByAgent,
@@ -89,11 +96,23 @@ export interface LaunchModuleInput {
   org: LaunchOrgInput;
   inputs: Record<string, unknown>;
   toggles?: Record<string, boolean>;
+  /**
+   * Claves de plantillas `cadence` que el humano CONFIRMÓ en el wizard
+   * (CA-M3.4, consent-first — M6a): las confirmadas SÍ entran al plan (primera
+   * instancia); las no confirmadas quedan fuera, como hasta ahora.
+   */
+  cadencesConfirmed?: string[];
   /** `person:<id>` | `system:seed` — disparar jamás es `agent:*` (PRD §6). */
   actor: string;
   /** OBLIGATORIA (columna NOT NULL) — CA-M2.6. */
   idempotencyKey: string;
-  /** Encadenado de fases (US-M3): launch de la fase anterior. */
+  /**
+   * Encadenado de fases (US-M3): launch de la fase anterior. Si se pasa, el
+   * launch apunta al MISMO proyecto de ese launch (CA-M3.3: mismo Context Hub;
+   * solo cambian stage y backlog activo) — el nombre renderizado del módulo
+   * nuevo NO crea proyecto aparte. Si no se pasa y el proyecto se reutiliza por
+   * (org, nombre), el motor lo auto-completa con el último launch del proyecto.
+   */
   previousLaunchId?: string;
   /** Epoch ms inyectable para determinismo de `{{hoy}}` y due_at. */
   now?: number;
@@ -221,9 +240,41 @@ function resolveMethodology(db: AgentosDb, plan: LaunchPlan): ResolvedMethodolog
   return { main, adds: addRows };
 }
 
-interface ResolvedAssignment {
+export interface ResolvedAssignment {
   agentId: string;
   agentSlug: string;
+}
+
+interface RosterResolutionContext {
+  agents: Agent[];
+  bySlug: Map<string, Agent>;
+  isAssignable: (a: Agent) => boolean;
+  openCounts: Map<string, number>;
+}
+
+function rosterResolutionContext(db: AgentosDb): RosterResolutionContext {
+  const agents = listAgents(db);
+  const byId = new Map(agents.map((a) => [a.id, a] as const));
+  const bySlug = new Map(agents.map((a) => [a.slug, a] as const));
+  const isAssignable = (a: Agent): boolean =>
+    a.status === "active" && computeChainHealthFrom(a, (id) => byId.get(id)).status === "healthy";
+  return { agents, bySlug, isAssignable, openCounts: countOpenTasksByAgent(db) };
+}
+
+/** Preferido por slug si asignable; si no, asignable de la capa con MENOS carga (desempate por slug). */
+function pickAssignableAgent(
+  ctx: RosterResolutionContext,
+  preferredSlug: string,
+  layer: string,
+): Agent | undefined {
+  const preferred = preferredSlug !== "" ? ctx.bySlug.get(preferredSlug) : undefined;
+  if (preferred && ctx.isAssignable(preferred)) return preferred;
+  return ctx.agents
+    .filter((a) => a.layer === layer && ctx.isAssignable(a))
+    .sort((a, b) => {
+      const load = (ctx.openCounts.get(a.id) ?? 0) - (ctx.openCounts.get(b.id) ?? 0);
+      return load !== 0 ? load : a.slug.localeCompare(b.slug);
+    })[0];
 }
 
 /**
@@ -235,27 +286,10 @@ interface ResolvedAssignment {
  * dentro del propio plan, para repartir el fan-out dentro de una capa.
  */
 function resolveAssignments(db: AgentosDb, plan: LaunchPlan): Map<string, ResolvedAssignment> {
-  const agents = listAgents(db);
-  const byId = new Map(agents.map((a) => [a.id, a] as const));
-  const bySlug = new Map(agents.map((a) => [a.slug, a] as const));
-  const isAssignable = (a: Agent): boolean =>
-    a.status === "active" && computeChainHealthFrom(a, (id) => byId.get(id)).status === "healthy";
-  const openCounts = countOpenTasksByAgent(db);
-
+  const ctx = rosterResolutionContext(db);
   const out = new Map<string, ResolvedAssignment>();
   for (const task of plan.tasks) {
-    const preferred = task.agentSlug !== "" ? bySlug.get(task.agentSlug) : undefined;
-    let chosen: Agent | undefined;
-    if (preferred && isAssignable(preferred)) {
-      chosen = preferred;
-    } else {
-      chosen = agents
-        .filter((a) => a.layer === task.layer && isAssignable(a))
-        .sort((a, b) => {
-          const load = (openCounts.get(a.id) ?? 0) - (openCounts.get(b.id) ?? 0);
-          return load !== 0 ? load : a.slug.localeCompare(b.slug);
-        })[0];
-    }
+    const chosen = pickAssignableAgent(ctx, task.agentSlug, task.layer);
     if (!chosen) {
       throw errors.notAssignable(task.agentSlug || task.layer, "roster_exhausted", {
         role: task.role,
@@ -264,10 +298,24 @@ function resolveAssignments(db: AgentosDb, plan: LaunchPlan): Map<string, Resolv
         instance: task.key,
       });
     }
-    openCounts.set(chosen.id, (openCounts.get(chosen.id) ?? 0) + 1);
+    ctx.openCounts.set(chosen.id, (ctx.openCounts.get(chosen.id) ?? 0) + 1);
     out.set(task.key, { agentId: chosen.id, agentSlug: chosen.slug });
   }
   return out;
+}
+
+/**
+ * Resolución de UN rol del roster contra el roster ACTUAL — misma regla del
+ * launch (preferido → capa con menos carga → null). La usa la re-creación de
+ * cadencias (M6a): si el agente cambió desde el launch, se re-resuelve; si
+ * nadie es asignable, devuelve null y el llamador NO crea (fail-soft).
+ */
+export function resolveRoleAgainstRoster(
+  db: AgentosDb,
+  entry: { agentSlug: string; layer: string },
+): ResolvedAssignment | null {
+  const chosen = pickAssignableAgent(rosterResolutionContext(db), entry.agentSlug, entry.layer);
+  return chosen ? { agentId: chosen.id, agentSlug: chosen.slug } : null;
 }
 
 function resolveOrganization(db: AgentosDb, org: LaunchOrgInput): Organization {
@@ -342,13 +390,27 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     );
   }
 
-  // 5) Plan (fan_out, poda, deps, orden, due, aprobación; too_many_tasks NM-2)
-  const plan = planLaunch(bp, inputsResult.values, inputsResult.toggles, now);
+  // 5) Plan (fan_out, poda, deps, orden, due, aprobación; too_many_tasks NM-2;
+  //    cadencias confirmadas — CA-M3.4 M6a)
+  const plan = planLaunch(
+    bp,
+    inputsResult.values,
+    inputsResult.toggles,
+    now,
+    input.cadencesConfirmed ?? [],
+  );
   if (!plan.ok) {
     throw errors.validation(
       `El plan de launch de ${module.slug}@${module.version} tiene issues`,
       plan.issues,
     );
+  }
+
+  // 5b) Encadenado (US-M3): el launch anterior debe existir — y define el
+  //     proyecto destino (CA-M3.3: la nueva fase cae sobre el MISMO proyecto).
+  const previousLaunch = input.previousLaunchId ? getLaunch(db, input.previousLaunchId) : undefined;
+  if (input.previousLaunchId && !previousLaunch) {
+    throw errors.notFound("module_launch", input.previousLaunchId);
   }
 
   // 6) Asignaciones contra el roster real (agent_not_assignable rechaza entero)
@@ -364,7 +426,15 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
   // ── Transacción única (NM-1: cualquier throw revierte TODO) ──────────────
 
   type TxOutcome =
-    | { kind: "created"; launch: ModuleLaunch; project: Project; organization: Organization; tasks: Task[] }
+    | {
+        kind: "created";
+        launch: ModuleLaunch;
+        project: Project;
+        organization: Organization;
+        tasks: Task[];
+        /** stage anterior del proyecto si esta fase lo AVANZÓ (encadenado US-M3). */
+        stageAdvancedFrom: string | null;
+      }
     | { kind: "idempotent"; launch: ModuleLaunch };
 
   const tx = db.$client.transaction((): TxOutcome => {
@@ -382,9 +452,30 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     // Organización: get-or-create (por orgId o por nombre exacto).
     const organization = resolveOrganization(db, input.org);
 
-    // Proyecto: get-or-create por (org, name_tpl renderizado). Una fase solo se
-    // dispara UNA vez por proyecto — uq(project_id, phase), error de dominio.
-    let project = getProjectByOrgAndName(db, organization.id, plan.projectName);
+    // Proyecto destino:
+    // - Encadenado (US-M3): con `previousLaunchId`, el proyecto ES el del launch
+    //   anterior — CA-M3.3: mismo Context Hub, mismos procesos y decisiones;
+    //   solo cambian stage y backlog activo. La org debe coincidir.
+    // - Sin él: get-or-create por (org, name_tpl renderizado), como siempre.
+    // En ambos casos, una fase solo se dispara UNA vez por proyecto —
+    // uq(project_id, phase), error de dominio.
+    let project: Project | undefined;
+    if (previousLaunch) {
+      const prior = getLaunch(db, previousLaunch.id); // re-lee DENTRO de la tx
+      if (!prior) throw errors.notFound("module_launch", previousLaunch.id);
+      project = getProject(db, prior.projectId);
+      if (!project) throw errors.notFound("project", prior.projectId);
+      if (project.orgId !== organization.id) {
+        throw errors.validation(
+          `previous_launch_id ${prior.id} pertenece a otra organización: el encadenado ` +
+            `no cruza clientes (US-M3)`,
+          { previousLaunchId: prior.id, launchOrgId: project.orgId, orgId: organization.id },
+        );
+      }
+    } else {
+      project = getProjectByOrgAndName(db, organization.id, plan.projectName);
+    }
+    let stageAdvancedFrom: string | null = null;
     if (project) {
       const samePhase = findLaunchByProjectAndPhase(db, project.id, module.phase);
       if (samePhase) {
@@ -399,6 +490,33 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
             existingLaunchId: samePhase.id,
           },
         );
+      }
+      // Encadenado CA-M3.3: la fase nueva AVANZA el stage del proyecto y el
+      // gate vuelve a 'pending'. Semántica de gate_state (verificada en el
+      // motor del tablero): es el estado del gate de cierre de la FASE ACTUAL
+      // del proyecto — 'approved' fue lo que habilitó disparar esta fase; al
+      // entrar en ella, el gate vigente pasa a ser el de SU cierre, que nace
+      // pendiente. Todo lo demás del proyecto se conserva (Context Hub,
+      // procesos, decisiones, tareas de fases anteriores).
+      if (project.stage !== module.phase) {
+        stageAdvancedFrom = project.stage;
+        const before = { stage: project.stage, gateState: project.gateState };
+        project = updateProject(
+          db,
+          project.id,
+          { stage: module.phase, gateState: "pending" },
+          project.version,
+        );
+        appendAudit(db, {
+          actor: input.actor,
+          source: input.actor.startsWith("person:") ? "ui" : "system",
+          action: "modules.phase_advanced",
+          entityType: "project",
+          entityId: project.id,
+          before,
+          after: { stage: project.stage, gateState: project.gateState, launchId },
+          reason: `encadenado US-M3: launch de ${module.slug}@${module.version}`,
+        });
       }
     } else {
       project = createProject(db, {
@@ -431,12 +549,20 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
         orderKey: launchOrderKey(i),
       });
       taskByKey.set(pt.key, task);
+      // El payload {launch_id, template_key} es el MAPEO tarea→plantilla que la
+      // re-creación de cadencias (M6a) usa al cerrar la instancia; fan_out_value
+      // viaja para poder re-renderizar instancias fan_out con su valor.
       appendTaskEvent(db, {
         taskId: task.id,
         kind: "created",
         toStatus: pt.status,
         actor: input.actor,
-        payload: { launch_id: launchId, template_key: pt.templateKey, assignee: assignment.agentSlug },
+        payload: {
+          launch_id: launchId,
+          template_key: pt.templateKey,
+          assignee: assignment.agentSlug,
+          ...(pt.fanOutValue !== null ? { fan_out_value: pt.fanOutValue } : {}),
+        },
       });
     });
 
@@ -510,12 +636,18 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
           adds: methodology.adds.map((m) => ({ id: m.id, slug: m.slug, version: m.version })),
         },
         cadence_excluded: plan.cadenceExcluded,
+        // Confirmadas por el humano (CA-M3.4): la re-creación al cerrar una
+        // instancia consulta ESTA lista del recibo — consent-first de punta a punta.
+        cadences_confirmed: plan.cadencesConfirmed,
         linked_threads: linkedThreadIds,
       },
       taskCount: plan.tasks.length,
       budgetPhaseUsd: plan.budget.phaseUsd,
       budgetPerRunUsd: plan.budget.perRunUsd,
-      previousLaunchId: input.previousLaunchId ?? null,
+      // Encadenado US-M3: explícito del llamador, o auto-completado con el
+      // último launch del proyecto reutilizado ("lo pasan automáticamente").
+      previousLaunchId:
+        input.previousLaunchId ?? getLatestLaunchForProject(db, project.id)?.id ?? null,
       idempotencyKey: input.idempotencyKey,
       actor: input.actor,
       durationMs,
@@ -547,6 +679,7 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
       project,
       organization,
       tasks: plan.tasks.map((pt) => taskByKey.get(pt.key)!),
+      stageAdvancedFrom,
     };
   });
 
@@ -567,6 +700,24 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
       runId: null,
     },
   }));
+  // Encadenado US-M3: el avance de fase del proyecto también se anuncia.
+  if (outcome.stageAdvancedFrom !== null) {
+    pendingEvents.push({
+      topic,
+      event: {
+        type: "project.stage_changed",
+        payload: {
+          projectId: outcome.project.id,
+          from: outcome.stageAdvancedFrom,
+          to: outcome.project.stage,
+          gateState: outcome.project.gateState,
+          launchId,
+          actor: input.actor,
+        },
+        runId: null,
+      },
+    });
+  }
   pendingEvents.push({
     topic,
     event: {
@@ -607,6 +758,8 @@ export interface PreviewLaunchInput {
   moduleVersion?: number;
   inputs: Record<string, unknown>;
   toggles?: Record<string, boolean>;
+  /** Cadencias confirmadas por el humano (CA-M3.4): entran al plan del dry-run. */
+  cadencesConfirmed?: string[];
   /** Epoch ms inyectable para determinismo de `{{hoy}}` y due_at. */
   now?: number;
 }
@@ -664,6 +817,9 @@ export interface PreviewLaunchResult {
     budget: LaunchPlan["budget"];
     toggles: Record<string, boolean>;
     cadenceExcluded: string[];
+    cadencesConfirmed: string[];
+    /** Propuestas de cadencia para el resumen del wizard (CA-M3.4 — M6a). */
+    cadenceProposals: LaunchPlan["cadenceProposals"];
   } | null;
 }
 
@@ -718,7 +874,13 @@ export function previewLaunch(db: AgentosDb, input: PreviewLaunchInput): Preview
   const inputsResult = validateLaunchInputs(bp, input.inputs, input.toggles ?? {});
   if (!inputsResult.ok) return fail(inputsResult.missing, inputsResult.issues);
 
-  const plan = planLaunch(bp, inputsResult.values, inputsResult.toggles, now);
+  const plan = planLaunch(
+    bp,
+    inputsResult.values,
+    inputsResult.toggles,
+    now,
+    input.cadencesConfirmed ?? [],
+  );
   if (!plan.ok) return fail([], plan.issues);
 
   // Asignaciones y metodología contra la DB real: los errores de dominio se
@@ -791,6 +953,8 @@ export function previewLaunch(db: AgentosDb, input: PreviewLaunchInput): Preview
       budget: plan.budget,
       toggles: plan.toggles,
       cadenceExcluded: plan.cadenceExcluded,
+      cadencesConfirmed: plan.cadencesConfirmed,
+      cadenceProposals: plan.cadenceProposals,
     },
   };
 }

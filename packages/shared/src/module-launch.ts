@@ -210,6 +210,21 @@ export interface PlannedGate {
   blocksNextStage: Stage | null;
 }
 
+/**
+ * Propuesta de cadencia para el wizard (CA-M3.4, consent-first): plantilla
+ * `cadence` activa (tras poda de toggles) con título renderizado y periodo.
+ * El humano confirma cuáles activar vía `cadences_confirmed`.
+ */
+export interface CadenceProposal {
+  key: string;
+  title: string;
+  description: string | null;
+  activityType: string;
+  role: string;
+  /** Días entre instancias (`cadence_period_days` ?? `due_offset_days`); null = inconfirmable. */
+  periodDays: number | null;
+}
+
 export interface LaunchPlan {
   ok: boolean;
   issues: BlueprintIssue[];
@@ -219,10 +234,29 @@ export interface LaunchPlan {
   methodology: { slug: string; version: number | null; adds: string[] };
   budget: { phaseUsd: number; perRunUsd: number; warningThresholdsPct: number[] };
   toggles: Record<string, boolean>;
-  /** Claves de plantillas `cadence` EXCLUIDAS del plan v1 (consent-first, M6). */
+  /** Claves de plantillas `cadence` fuera del plan (activas pero NO confirmadas — consent-first). */
   cadenceExcluded: string[];
+  /** Claves cadence CONFIRMADAS por el humano que SÍ entraron al plan (M6a). */
+  cadencesConfirmed: string[];
+  /** Todas las plantillas cadence activas, renderizadas para el resumen del wizard. */
+  cadenceProposals: CadenceProposal[];
   projectName: string;
   workspacePath: string;
+}
+
+/**
+ * Periodo efectivo de una plantilla cadence: `cadence_period_days` explícito,
+ * o `due_offset_days` positivo como fallback (el SLA declara el ritmo). null =
+ * sin periodo → la plantilla no puede confirmarse (`cadence_missing_period`).
+ */
+export function cadencePeriodDays(tpl: ModuleTemplate): number | null {
+  if (typeof tpl.cadence_period_days === "number" && tpl.cadence_period_days > 0) {
+    return tpl.cadence_period_days;
+  }
+  if (typeof tpl.due_offset_days === "number" && tpl.due_offset_days > 0) {
+    return tpl.due_offset_days;
+  }
+  return null;
 }
 
 /** Clave estable y legible para instancias fan_out: minúsculas, sin acentos, `_`. */
@@ -255,6 +289,8 @@ export function planLaunch(
   values: Record<string, unknown>,
   toggles: Record<string, boolean>,
   now: number,
+  /** Claves de plantillas `cadence` que el humano CONFIRMÓ en el wizard (M6a). */
+  cadencesConfirmed: string[] = [],
 ): LaunchPlan {
   const issues: BlueprintIssue[] = [];
 
@@ -270,11 +306,64 @@ export function planLaunch(
   vars["hoy"] = new Date(now).toISOString().slice(0, 10);
   // sponsor y fecha_objetivo ya vienen de values si el módulo los declara.
 
-  // 1) Poda: toggles apagados fuera; cadencia fuera del plan v1 (consent-first).
+  // 1) Poda: toggles apagados fuera; cadencia fuera del plan SALVO confirmación
+  //    explícita del humano (consent-first, CA-M3.4 / M6a).
   const active = bp.templates.filter((t) => !t.when_toggle || effectiveToggles[t.when_toggle]);
-  const cadenceExcluded = active.filter((t) => t.cadence === true).map((t) => t.key);
-  const planned = active.filter((t) => t.cadence !== true);
+  const activeKeys = new Set(active.map((t) => t.key));
+
+  // 1b) cadences_confirmed: cada clave debe ser una plantilla cadence ACTIVA con
+  //     periodo declarado — cualquier otra cosa es issue fail-closed.
+  const confirmed = new Set<string>();
+  for (const key of cadencesConfirmed) {
+    const declared = bp.templates.find((t) => t.key === key);
+    if (!declared || declared.cadence !== true) {
+      issues.push({
+        code: "cadence_unknown_key",
+        path: `cadences_confirmed.${key}`,
+        details: { key, reason: !declared ? "unknown_template" : "not_a_cadence_template" },
+      });
+      continue;
+    }
+    if (!activeKeys.has(key)) {
+      issues.push({
+        code: "cadence_unknown_key",
+        path: `cadences_confirmed.${key}`,
+        details: { key, reason: "disabled_by_toggle", toggle: declared.when_toggle ?? null },
+      });
+      continue;
+    }
+    if (cadencePeriodDays(declared) === null) {
+      issues.push({
+        code: "cadence_missing_period",
+        path: `templates.${key}.cadence_period_days`,
+        details: { key },
+      });
+      continue;
+    }
+    confirmed.add(key);
+  }
+
+  const cadenceExcluded = active.filter((t) => t.cadence === true && !confirmed.has(t.key)).map((t) => t.key);
+  const planned = active.filter((t) => t.cadence !== true || confirmed.has(t.key));
   const plannedKeys = new Set(planned.map((t) => t.key));
+
+  // 1c) Propuestas para el resumen del wizard: TODAS las cadence activas, con
+  //     título renderizado y periodo (el humano marca cuáles confirmar).
+  const cadenceProposals: CadenceProposal[] = active
+    .filter((t) => t.cadence === true)
+    .map((t) => {
+      // fan_out en cadencia es teórico (ningún módulo real lo usa): para la
+      // propuesta, la var de fan_out se rinde con la lista completa del input.
+      const localVars = t.fan_out ? { ...vars, [t.fan_out.as]: values[t.fan_out.over] ?? "…" } : vars;
+      return {
+        key: t.key,
+        title: renderTemplate(t.title, localVars),
+        description: t.description !== undefined ? renderTemplate(t.description, localVars) : null,
+        activityType: t.activity_type,
+        role: t.assign.role,
+        periodDays: cadencePeriodDays(t),
+      };
+    });
 
   // 2) Expansión fan_out → instancias con clave única.
   const instances: Instance[] = [];
@@ -354,7 +443,13 @@ export function planLaunch(
     const tpl = inst.tpl;
     const localVars = tpl.fan_out ? { ...vars, [tpl.fan_out.as]: inst.fanOutValue } : vars;
     const roster = rosterByRole.get(tpl.assign.role);
-    const dueAt = computeDueAt(tpl, values, now);
+    // Cadencia confirmada sin due propio: la primera instancia vence a un
+    // periodo de hoy (due_at = now + period — CA-M3.4).
+    let dueAt = computeDueAt(tpl, values, now);
+    if (dueAt === null && tpl.cadence === true) {
+      const period = cadencePeriodDays(tpl);
+      if (period !== null) dueAt = now + period * DAY_MS;
+    }
     // Política que SOLO sube: la determinista, O un gate armado por la plantilla.
     const requiresApproval =
       computeRequiresApproval({ externalEffect: false, activityType: tpl.activity_type }) ||
@@ -420,6 +515,8 @@ export function planLaunch(
     },
     toggles: effectiveToggles,
     cadenceExcluded,
+    cadencesConfirmed: planned.filter((t) => t.cadence === true).map((t) => t.key),
+    cadenceProposals,
     projectName: renderTemplate(bp.project.name_tpl, vars),
     workspacePath: renderTemplate(bp.project.workspace_tpl, vars),
   };

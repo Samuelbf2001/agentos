@@ -133,10 +133,21 @@ export const ModuleTemplate = z
     /** Input tipo date del que sale el due_at (combinable con due_offset_days). */
     due_from_input: z.string().optional(),
     /**
-     * Plantilla de cadencia (US-M4/CA-M3.4): el launch v1 la EXCLUYE del plan;
-     * el wizard consent-first de M6 propone activarlas.
+     * Plantilla de cadencia (US-M4/CA-M3.4): el launch la EXCLUYE del plan
+     * salvo que el humano la CONFIRME en el wizard (`cadences_confirmed`, M6a).
+     * Al cerrar una instancia confirmada, el hook de DONE del tablero crea la
+     * siguiente (re-creación consent-first; sin dispatcher).
      */
     cadence: z.boolean().optional(),
+    /**
+     * Periodo de la cadencia en días (>0). Requerido EN LA PRÁCTICA para
+     * confirmar una plantilla cadence: `planLaunch` rechaza la confirmación con
+     * `cadence_missing_period` si falta (con fallback a `due_offset_days`).
+     * NOTA: no se exige en validateBlueprint — blueprints v1 ya publicados
+     * declaran cadence sin periodo y siguen siendo válidos (solo quedan
+     * inconfirmables hasta declararlo).
+     */
+    cadence_period_days: z.number().positive().optional(),
   })
   .strict();
 export type ModuleTemplate = z.infer<typeof ModuleTemplate>;
@@ -222,6 +233,10 @@ export type BlueprintIssueCode =
   | "gate_without_deliverable"
   | "stage_mismatch"
   | "budget_invalid"
+  // Cadencia (M6a, CA-M3.4): las cadencias son independientes (sin deps) y su
+  // re-render usa los inputs del RECIBO (que redacta sensibles) — fail-closed.
+  | "cadence_with_dependencies"
+  | "cadence_sensitive_variable"
   // De inputs y plan (momento C — launch)
   | "input_required_missing"
   | "input_type_invalid"
@@ -229,6 +244,8 @@ export type BlueprintIssueCode =
   | "input_min_items"
   | "too_many_tasks"
   | "fan_out_key_collision"
+  | "cadence_unknown_key"
+  | "cadence_missing_period"
   // Con DB (§13.5, momentos B y C) — las emiten @agentos/db, no este módulo
   | "unknown_methodology"
   | "unknown_agent_slug"
@@ -299,6 +316,7 @@ export function validateBlueprint(raw: unknown): ValidateBlueprintResult {
   const bp = parsed.data;
 
   const inputByKey = new Map(bp.inputs.map((i) => [i.key, i]));
+  const sensitiveInputKeys = new Set(bp.inputs.filter((i) => i.sensitive === true).map((i) => i.key));
   const toggleKeys = new Set((bp.toggles ?? []).map((t) => t.key));
   const rosterRoles = new Set(bp.roster.map((r) => r.role));
   const gateNames = new Set((bp.gates ?? []).map((g) => g.name));
@@ -377,6 +395,19 @@ export function validateBlueprint(raw: unknown): ValidateBlueprintResult {
         });
       }
     }
+    // Cadencia (M6a, CA-M3.4): independiente por diseño — una plantilla cadence
+    // con depends_on es issue (la re-creación al cerrar instancia no re-evalúa
+    // grafos); y NO puede usar variables `sensitive` — la siguiente instancia se
+    // re-renderiza con los inputs del RECIBO, que llegan redactados (§13.1).
+    if (t.cadence === true) {
+      if ((t.depends_on ?? []).length > 0) {
+        issues.push({
+          code: "cadence_with_dependencies",
+          path: `templates[${i}].depends_on`,
+          details: { key: t.key, depends_on: t.depends_on },
+        });
+      }
+    }
     // undeclared_variable: inputs ∪ toggles ∪ var de fan_out (propia) ∪ built-ins
     const allowed = new Set<string>([
       ...inputByKey.keys(),
@@ -392,6 +423,13 @@ export function validateBlueprint(raw: unknown): ValidateBlueprintResult {
       for (const v of extractTemplateVars(text)) {
         if (!allowed.has(v)) {
           issues.push({ code: "undeclared_variable", path: `templates[${i}].${field}`, details: { variable: v } });
+        }
+        if (t.cadence === true && sensitiveInputKeys.has(v)) {
+          issues.push({
+            code: "cadence_sensitive_variable",
+            path: `templates[${i}].${field}`,
+            details: { key: t.key, variable: v },
+          });
         }
       }
     }

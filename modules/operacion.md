@@ -109,6 +109,7 @@ templates:
     priority: normal
     assign: { role: datos }
     cadence: true
+    cadence_period_days: 7
     due_offset_days: 7
   - key: sprint_semanal
     title: "Sprint semanal de operación"
@@ -119,6 +120,7 @@ templates:
     priority: normal
     assign: { role: orquestador }
     cadence: true
+    cadence_period_days: 7
     due_offset_days: 7
   - key: checkin_cliente
     title: "Check-in con {{cliente}}"
@@ -129,6 +131,7 @@ templates:
     priority: normal
     assign: { role: orquestador }
     cadence: true
+    cadence_period_days: 14
     due_offset_days: 7
 closing_deliverables:
   - kind: ops_dashboard
@@ -159,13 +162,17 @@ Los SLAs son los publicados en la web de Sixteam (CA-M4.2): tareas chicas 1-3
 días, automatizaciones 3-7; quedan como `due_at` por defecto vía
 `due_offset_days`.
 
-## 2. Cadencia consent-first (CA-M3.4) — EXCLUIDA del launch v1
+## 2. Cadencia consent-first (CA-M3.4 — M6a)
 
-`reporte_semanal`, `sprint_semanal` y `checkin_cliente` están marcadas con
-`cadence: true`. **El launch v1 NO las crea**: el mecanismo consent-first llega
-en M6 — el wizard las propondrá en el resumen y el humano confirmará cuáles
-activar (y con qué recurrencia). Declararlas aquí deja el contrato listo sin
-crear tareas que nadie pidió.
+`reporte_semanal` (7 días), `sprint_semanal` (7 días) y `checkin_cliente`
+(14 días; el primero a la semana vía `due_offset_days`) están marcadas con
+`cadence: true` + `cadence_period_days`. **El launch solo crea las que el
+humano CONFIRMA** en el resumen del wizard (`cadences_confirmed`): la
+confirmada nace como primera instancia READY con su due; al cerrarla en DONE,
+el tablero re-crea la siguiente (título re-renderizado, asignado re-resuelto
+contra el roster actual, due = due anterior + periodo). Guarda-raíl: nunca hay
+dos instancias abiertas de la misma plantilla. La no confirmada no nace ni
+renace — consent-first de punta a punta.
 
 ## Cierre y presupuesto
 

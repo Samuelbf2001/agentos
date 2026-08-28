@@ -52,6 +52,7 @@ import {
   type Task,
 } from "@agentos/db";
 import { noopEventSink, type EventSink } from "../events.js";
+import { respawnCadenceInstance } from "../modules.js";
 import { computeOrgChainHealth, type OrgChainHealth } from "../org.js";
 import { computeRequiresApproval } from "./policy.js";
 import { actorKind, assertTransitionAllowed, type ActorKind } from "./state-machine.js";
@@ -76,6 +77,9 @@ export const MAX_FAN_OUT_PER_RUN = 4;
 /** El único gate de proyecto del MVP (cierre de ENTENDER → habilita CONSTRUIR). */
 export const GATE_G1_PLAN = "g1_plan" as const;
 export type GateName = typeof GATE_G1_PLAN;
+
+/** Orden del ciclo Entender → Construir → Operar (gate de fase, M6a). */
+const STAGE_ORDER: Record<Task["stage"], number> = { ENTENDER: 0, CONSTRUIR: 1, OPERAR: 2 };
 
 // ── Tipos de entrada ────────────────────────────────────────────────────────
 
@@ -272,15 +276,30 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     return project;
   }
 
-  /** Gate 1: una tarea CONSTRUIR no sale de BACKLOG sin g1_plan aprobado. */
+  /**
+   * Gate de fase (M6a generaliza el Gate 1 sin cambiar su caso clásico).
+   *
+   * Semántica de `projects.gate_state` (verificada y documentada al encadenar
+   * fases — US-M3): es el estado del gate de cierre de la FASE ACTUAL del
+   * proyecto. Nace 'pending' al disparar una fase; el humano lo aprueba al
+   * cerrar esa fase; y el motor de launch lo devuelve a 'pending' cuando la
+   * SIGUIENTE fase se dispara sobre el mismo proyecto (el gate vigente pasa a
+   * ser el del cierre de la fase nueva).
+   *
+   * Regla: una tarea de una etapa POSTERIOR a la del proyecto no sale de
+   * BACKLOG sin ese gate aprobado; las tareas de la etapa actual (o anteriores)
+   * fluyen. Con el proyecto en ENTENDER esto es EXACTAMENTE el Gate 1 clásico:
+   * CONSTRUIR bloqueado hasta aprobar g1_plan.
+   */
   function assertGate1(task: Pick<Task, "stage" | "projectId">): void {
-    if (task.stage !== "CONSTRUIR") return;
     const project = mustGetProject(task.projectId);
+    if (STAGE_ORDER[task.stage] <= STAGE_ORDER[project.stage]) return;
     if (project.gateState !== "approved") {
       throw new AgentosError(
         ErrorCodes.GATE_NOT_PASSED,
-        `Gate 1 (${GATE_G1_PLAN}) no aprobado en el proyecto ${project.id}: ` +
-          `las tareas de CONSTRUIR no salen de BACKLOG (gate_state=${project.gateState})`,
+        `Gate de fase (${GATE_G1_PLAN}) no aprobado en el proyecto ${project.id}: ` +
+          `las tareas de ${task.stage} no salen de BACKLOG con el proyecto en ` +
+          `${project.stage} (gate_state=${project.gateState})`,
         { projectId: project.id, gate: GATE_G1_PLAN, gateState: project.gateState },
       );
     }
@@ -549,6 +568,23 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     // inmediato (el motor no abre transacciones; SQL crudo suelto como siempre).
     if (to === "DONE") {
       promoteUnblockedTasks(task.projectId, { runId: input.runId ?? null });
+      // Hook de cadencia (CA-M3.4 — M6a): si la tarea cerrada es una instancia
+      // de plantilla `cadence` CONFIRMADA en el recibo de su launch, nace la
+      // SIGUIENTE instancia. Mismo patrón fail-soft que la promoción: un fallo
+      // de la cadencia jamás tumba el DONE que la disparó.
+      try {
+        const respawned = respawnCadenceInstance(db, task.id, { runId: input.runId ?? null });
+        if (respawned) {
+          publishBoard(
+            task.projectId,
+            "task.created",
+            { taskId: respawned.id, status: respawned.status, actor: "system:cadence", cadence: true },
+            input.runId,
+          );
+        }
+      } catch {
+        /* fail-soft: la instancia siguiente la crea un humano o el próximo cierre */
+      }
     }
     return getTask(db, task.id)!;
   }
