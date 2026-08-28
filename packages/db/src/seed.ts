@@ -431,14 +431,18 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   }
 
   // 7) Config base (no pisa valores editados a mano)
+  // Seguro por defecto: un arranque en frío queda PAUSADO. El seed deja tareas
+  // en READY y el despachador las arrancaría (gastando suscripción) al boot; con
+  // el kill switch activo, nada corre hasta que un humano haga resume_all cuando
+  // esté listo para observar.
   if (getConfig(db, ConfigKeys.KILL_SWITCH) === undefined) {
-    setConfig(db, ConfigKeys.KILL_SWITCH, false);
+    setConfig(db, ConfigKeys.KILL_SWITCH, true);
   }
   if (getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD) === undefined) {
     setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD, 2);
   }
   if (getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD) === undefined) {
-    setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD, 20);
+    setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD, 10);
   }
 
   return collectCounts(db, agentsFallback);

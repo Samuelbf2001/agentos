@@ -171,11 +171,13 @@ describe("seeds", () => {
     expect(dump).toContain("OPENAI_API_KEY");
   });
 
-  it("config base: kill switch apagado y presupuestos definidos", () => {
+  it("config base: seguro por defecto (kill switch activo) y presupuestos definidos", () => {
     const db = freshDb();
     seed(db, { env: {} });
-    expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(false);
+    // Arranque en frío PAUSADO: el despachador no dispara los runs de las tareas
+    // READY del seed hasta que un humano haga resume_all.
+    expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(true);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD)).toBe(2);
-    expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD)).toBe(20);
+    expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD)).toBe(10);
   });
 });
