@@ -13,6 +13,7 @@ import { delegationTools } from "./tools/delegation.js";
 import { knowledgeTools } from "./tools/knowledge.js";
 import { processTools } from "./tools/processes.js";
 import { methodologyTools } from "./tools/methodology.js";
+import { isoTools } from "./tools/iso.js";
 import { emailTools } from "./tools/email.js";
 
 /** Helper con inferencia de tipos: el handler recibe args ya tipados por su schema. */
@@ -36,6 +37,7 @@ export function buildCatalog(extra: ToolDefinition[] = []): Map<string, ToolDefi
     ...knowledgeTools,
     ...processTools,
     ...methodologyTools,
+    ...isoTools,
     ...emailTools,
     ...extra,
   ];

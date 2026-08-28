@@ -101,6 +101,7 @@ export const KnowledgeKind = z.enum([
   "finding",
   "decision",
   "iso_clause",
+  "iso_gap",
   "evidence",
   "template",
   "note",

@@ -7,6 +7,7 @@ import { getProviderProfile } from "../src/repositories/providers.js";
 import { getProjectByName } from "../src/repositories/projects.js";
 import { listTasks, listTaskEvents } from "../src/repositories/tasks.js";
 import { getConfig, ConfigKeys } from "../src/repositories/config.js";
+import { getMethodology, listMethodologies } from "../src/repositories/methodologies.js";
 
 function freshDb(): AgentosDb {
   const db = openDb(":memory:");
@@ -83,7 +84,7 @@ describe("seeds", () => {
     expect(counts.providerProfiles).toBe(6);
     expect(counts.agents).toBe(7);
     expect(counts.promptVersions).toBe(7);
-    expect(counts.methodologies).toBe(3); // assessment-14d, transform, ops (B7a)
+    expect(counts.methodologies).toBe(5); // assessment-14d, transform, ops + iso9001-prep, iso9001-clausulas (F2-3)
     expect(counts.projects).toBe(1);
     expect(counts.tasks).toBe(12);
     expect(counts.tables).toBe(20);
@@ -202,5 +203,40 @@ describe("seeds", () => {
     expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(true);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD)).toBe(2);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD)).toBe(10);
+  });
+});
+
+describe("metodologías ISO 9001 (F2-3)", () => {
+  it("carga iso9001-prep e iso9001-clausulas junto a las 3 base (5 en total)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const slugs = listMethodologies(db).map((m) => m.slug);
+    for (const s of ["assessment-14d", "transform", "ops", "iso9001-prep", "iso9001-clausulas"]) {
+      expect(slugs, `falta metodología ${s}`).toContain(s);
+    }
+  });
+
+  it("iso9001-prep e iso9001-clausulas incluyen el disclaimer de preparación (no certificación)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const disclaimer = "organismo de certificación acreditado";
+    const prep = getMethodology(db, "iso9001-prep")!;
+    const catalogo = getMethodology(db, "iso9001-clausulas")!;
+    expect(prep.bodyMd).toContain(disclaimer);
+    expect(prep.bodyMd).toContain("no certifica");
+    expect(catalogo.bodyMd).toContain(disclaimer);
+    // El catálogo cubre de 4.1 a 10.3.
+    expect(catalogo.bodyMd).toContain("4.1");
+    expect(catalogo.bodyMd).toContain("10.3");
+  });
+
+  it("re-seed aplica el prompt ISO 9001 de Sam (versión activa)", () => {
+    const db = freshDb();
+    seed(db, { env: {} });
+    const sam = getAgentBySlug(db, "sam")!;
+    const prompt = getActivePrompt(db, sam.id);
+    expect(prompt?.stable).toContain("ISO 9001");
+    expect(prompt?.stable).toContain("iso_gap");
+    expect(prompt?.stable).toContain("iso.gap_matrix_template");
   });
 });
