@@ -422,6 +422,8 @@ describe("auditoría", () => {
 
 describe("config y sistema", () => {
   it("system.pause_all cambia app_config y resume_all lo revierte", async () => {
+    // El seed arranca seguro por defecto (kill switch activo); resume primero.
+    await f.call("agentos.system.resume_all", {});
     expect(getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(false);
     await f.call("agentos.system.pause_all", { reason: "incidente" });
     expect(getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(true);
@@ -447,7 +449,8 @@ describe("config y sistema", () => {
     expect(health.db_ok).toBe(true);
     expect(health.tables).toBeGreaterThanOrEqual(20);
     expect(health.agents).toBeGreaterThanOrEqual(7);
-    expect(health.kill_switch_active).toBe(false);
+    // Seguro por defecto: un seed nuevo arranca con el kill switch ACTIVO.
+    expect(health.kill_switch_active).toBe(true);
   });
 
   it("people.upsert actualiza por nombre y crea con org_id", async () => {
