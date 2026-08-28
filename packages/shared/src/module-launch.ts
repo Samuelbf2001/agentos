@@ -271,6 +271,21 @@ export function slugifyFanOutValue(value: string): string {
   return slug === "" ? "x" : slug;
 }
 
+/**
+ * Sanea una ruta de workspace renderizada desde el blueprint. El template
+ * interpola valores libres del cliente ("Textiles del Norte S.A.") en lo que
+ * acaba siendo un directorio real: sin sanear, Windows rechaza los puntos y
+ * espacios finales y el spawn del runner falla con la carpeta como cwd.
+ * Cada segmento se convierte en slug; la forma `a/b/c` se conserva.
+ */
+export function sanitizeWorkspacePath(rendered: string): string {
+  const segments = rendered
+    .split(/[\\/]+/)
+    .filter((s) => s.trim() !== "")
+    .map((s) => slugifyFanOutValue(s).replace(/_/g, "-"));
+  return segments.length === 0 ? "workspaces/sin-nombre" : segments.join("/");
+}
+
 interface Instance {
   key: string;
   tpl: ModuleTemplate;
@@ -518,7 +533,7 @@ export function planLaunch(
     cadencesConfirmed: planned.filter((t) => t.cadence === true).map((t) => t.key),
     cadenceProposals,
     projectName: renderTemplate(bp.project.name_tpl, vars),
-    workspacePath: renderTemplate(bp.project.workspace_tpl, vars),
+    workspacePath: sanitizeWorkspacePath(renderTemplate(bp.project.workspace_tpl, vars)),
   };
 }
 

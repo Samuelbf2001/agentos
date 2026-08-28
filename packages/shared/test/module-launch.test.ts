@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DAY_MS,
   planLaunch,
+  sanitizeWorkspacePath,
   slugifyFanOutValue,
   validateBlueprint,
   validateLaunchInputs,
@@ -297,5 +298,33 @@ describe("slugifyFanOutValue", () => {
     expect(slugifyFanOutValue("Producción")).toBe("produccion");
     expect(slugifyFanOutValue("Ventas→Facturación")).toBe("ventas_facturacion");
     expect(slugifyFanOutValue("  Área de I+D  ")).toBe("area_de_i_d");
+  });
+});
+
+// Regresión: un launch real de "Textiles del Norte S.A." generó
+// `workspaces/assessment-Textiles del Norte S.A.` y el spawn del runner falló
+// (Windows no admite el punto/espacio final del nombre de directorio).
+describe("sanitizeWorkspacePath", () => {
+  it("convierte el nombre libre del cliente en una ruta válida por segmento", () => {
+    expect(sanitizeWorkspacePath("workspaces/assessment-Textiles del Norte S.A.")).toBe(
+      "workspaces/assessment-textiles-del-norte-s-a",
+    );
+    expect(sanitizeWorkspacePath("workspaces/operacion-Café & Cía.")).toBe(
+      "workspaces/operacion-cafe-cia",
+    );
+  });
+
+  it("no deja segmentos con espacios, puntos finales ni separadores de Windows", () => {
+    const out = sanitizeWorkspacePath("workspaces\\implementacion-ACME S.A. ");
+    expect(out).toBe("workspaces/implementacion-acme-s-a");
+    for (const seg of out.split("/")) {
+      expect(seg).toMatch(/^[a-z0-9-]+$/);
+      expect(seg.endsWith(".")).toBe(false);
+    }
+  });
+
+  it("nunca devuelve ruta vacía", () => {
+    expect(sanitizeWorkspacePath("///")).toBe("workspaces/sin-nombre");
+    expect(sanitizeWorkspacePath("   ")).toBe("workspaces/sin-nombre");
   });
 });
