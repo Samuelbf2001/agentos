@@ -437,3 +437,57 @@ describe("claim atómico a nivel SQL (patrón de B3, CA-3.2)", () => {
     expect(listArtifacts(db, task.id)[0]?.title).toBe("Informe");
   });
 });
+
+describe("project_sources (Fuentes del proyecto, F2)", () => {
+  it("crear/listar/actualizar y dedupe por referencia externa", async () => {
+    const db = freshDb();
+    const { project } = fixture(db);
+    const { createProjectSource, findProjectSourceByExternalRef, listProjectSources, updateProjectSource } =
+      await import("../src/repositories/project-sources.js");
+
+    const meeting = createProjectSource(db, {
+      projectId: project.id,
+      kind: "meeting",
+      externalRef: { system: "whatsapphub", meetingId: "m-1", title: "Kickoff ACME" },
+      status: "linked",
+      createdBy: "person:p1",
+    });
+    expect(meeting.status).toBe("linked");
+    expect(meeting.externalRef.meetingId).toBe("m-1");
+
+    const thread = createProjectSource(db, {
+      projectId: project.id,
+      kind: "whatsapp_thread",
+      externalRef: { system: "whatsapphub", contactId: "c-9", title: "Hilo cliente" },
+      status: "linked",
+    });
+
+    expect(listProjectSources(db, { projectId: project.id })).toHaveLength(2);
+    expect(listProjectSources(db, { projectId: project.id, kind: "meeting" })).toHaveLength(1);
+
+    // Dedupe: misma reunión → devuelve la existente; otro id → undefined.
+    expect(
+      findProjectSourceByExternalRef(db, project.id, "meeting", { meetingId: "m-1" })?.id,
+    ).toBe(meeting.id);
+    expect(findProjectSourceByExternalRef(db, project.id, "meeting", { meetingId: "m-2" })).toBeUndefined();
+    expect(
+      findProjectSourceByExternalRef(db, project.id, "whatsapp_thread", { contactId: "c-9" })?.id,
+    ).toBe(thread.id);
+
+    const updated = updateProjectSource(db, meeting.id, {
+      status: "error",
+      lastError: "VPS caído",
+    });
+    expect(updated.status).toBe("error");
+    expect(updated.lastError).toBe("VPS caído");
+    expect(listProjectSources(db, { projectId: project.id, status: "error" })).toHaveLength(1);
+  });
+
+  it("updateProjectSource de un id inexistente lanza not_found", async () => {
+    const db = freshDb();
+    const { updateProjectSource } = await import("../src/repositories/project-sources.js");
+    expect(() => updateProjectSource(db, "no-existe", { status: "ingested" })).toThrowError(
+      /project_source/,
+    );
+  });
+});

@@ -1,5 +1,6 @@
 /**
- * Esquema AgentOS — 20 tablas de ARCHITECTURE.md §5 y §8b.
+ * Esquema AgentOS — 21 tablas: las 20 de ARCHITECTURE.md §5 y §8b
+ * + `project_sources` (Fuentes del proyecto, Fase 2).
  *
  * Convenciones no opcionales (portabilidad a Postgres):
  * - id TEXT uuidv7 (generado en los repositorios, nunca en SQL)
@@ -33,6 +34,9 @@ import type {
   ProcessStatus,
   ProcessStep,
   ProcessVariant,
+  ProjectSourceExternalRef,
+  ProjectSourceKind,
+  ProjectSourceStatus,
   ProjectType,
   ProviderCapabilities,
   ProviderKind,
@@ -420,6 +424,33 @@ export const knowledgeDocs = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [index("idx_knowledge_org_kind").on(t.orgId, t.kind)],
+);
+
+/**
+ * Fuentes del proyecto (Fase 2): reuniones y hilos de WhatsApp de 2brain
+ * asociados a un proyecto. Al ingerir, el markdown del conector se registra
+ * como knowledge_doc TIPADO (interview/evidence) y `knowledge_doc_id` enlaza
+ * el doc — re-ingerir actualiza el MISMO doc, nunca duplica.
+ */
+export const projectSources = sqliteTable(
+  "project_sources",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id),
+    kind: text("kind").$type<ProjectSourceKind>().notNull(),
+    /** {system:'whatsapphub', meetingId?|contactId?, title, url?} */
+    externalRef: text("external_ref", { mode: "json" }).$type<ProjectSourceExternalRef>().notNull(),
+    status: text("status").$type<ProjectSourceStatus>().notNull().default("linked"),
+    knowledgeDocId: text("knowledge_doc_id").references(() => knowledgeDocs.id),
+    /** Último error legible del conector (status='error'); null si sano. */
+    lastError: text("last_error"),
+    lastIngestedAt: integer("last_ingested_at"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_project_sources_project").on(t.projectId, t.kind)],
 );
 
 export const processes = sqliteTable(
