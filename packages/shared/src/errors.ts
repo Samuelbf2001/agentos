@@ -27,6 +27,8 @@ export const ErrorCodes = {
   DELEGATION_LIMIT: "delegation_limit",
   /** Cadena de mando rota (Fase 2): ancestro terminado, manager faltante o ciclo. */
   AGENT_NOT_ASSIGNABLE: "agent_not_assignable",
+  /** Módulos de fase (§13): mismo (slug,version) con contenido distinto exige subir versión. */
+  MODULE_VERSION_IMMUTABLE: "module_version_immutable",
   // Proveedores / runtime
   PROVIDER_ERROR: "provider_error",
   PROVIDER_NOT_CONFIGURED: "provider_not_configured",

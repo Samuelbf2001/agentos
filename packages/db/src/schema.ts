@@ -9,6 +9,7 @@
  * - columna `version` para optimistic locking donde ARCHITECTURE lo indica
  * - sin triggers de negocio en SQL (los espejos FTS viven aislados en search.ts)
  */
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -30,6 +31,8 @@ import type {
   GateState,
   KnowledgeKind,
   MessageRole,
+  ModuleBlueprint,
+  ModuleStatus,
   OrgKind,
   ProcessStatus,
   ProcessStep,
@@ -188,6 +191,14 @@ export const tasks = sqliteTable(
     leaseUntil: integer("lease_until"),
     attempts: integer("attempts").notNull().default(0),
     blockedReason: text("blocked_reason").$type<BlockedReason>(),
+    /**
+     * Dependencias como propiedad de la tarjeta (§13.1, patrón
+     * `processes.source_doc_ids` — sin tabla puente): ids de las tareas de las
+     * que depende. El promotor filtra en JS (≤40 tareas/proyecto).
+     */
+    dependsOn: text("depends_on", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** SLA / fecha objetivo (CA-M4.2): epoch ms, null = sin vencimiento. */
+    dueAt: integer("due_at"),
     /** Clave de orden fraccionaria (orden lexicográfico dentro de la columna). */
     orderKey: text("order_key").notNull(),
     version: integer("version").notNull().default(1),
@@ -491,4 +502,108 @@ export const methodologies = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [uniqueIndex("uq_methodologies_slug_version").on(t.slug, t.version)],
+);
+
+// ── Módulos de Fase (§13 — el producto que vende Sixteam) ───────────────────
+
+/**
+ * Versión INMUTABLE de un módulo de fase (§13.1): editar = insertar version+1
+ * (patrón `prompt_versions`); nada se sobrescribe (CA-M1.2). `version` es
+ * semántica Y token de `expected_version`. Una sola versión activa por slug
+ * (índice único parcial).
+ */
+export const phaseModules = sqliteTable(
+  "phase_modules",
+  {
+    id: text("id").primaryKey(),
+    slug: text("slug").notNull(),
+    version: integer("version").notNull(),
+    name: text("name").notNull(),
+    phase: text("phase").$type<Stage>().notNull(),
+    projectType: text("project_type").$type<ProjectType>().notNull(),
+    status: text("status").$type<ModuleStatus>().notNull().default("draft"),
+    methodologySlug: text("methodology_slug").notNull(),
+    /** null = la versión más alta al momento de disparar (§13.1). */
+    methodologyVersion: integer("methodology_version"),
+    /** Frontmatter completo CANONICALIZADO (claves ordenadas) — ES el blueprint. */
+    blueprint: text("blueprint", { mode: "json" }).$type<ModuleBlueprint>().notNull(),
+    /** sha256 hex del JSON canónico del blueprint. */
+    blueprintHash: text("blueprint_hash").notNull(),
+    bodyMd: text("body_md").notNull(),
+    changelog: text("changelog"),
+    seedFile: text("seed_file"),
+    seedHash: text("seed_hash"),
+    createdBy: text("created_by"),
+    activatedAt: integer("activated_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_phase_modules_slug_version").on(t.slug, t.version),
+    /** Parcial: UNA sola versión activa por slug (§13.1). */
+    uniqueIndex("uq_phase_modules_slug_active")
+      .on(t.slug)
+      .where(sql`status = 'active'`),
+    index("idx_phase_modules_phase_status").on(t.phase, t.status),
+  ],
+);
+
+/**
+ * Recibo INMUTABLE append-only de un disparo (§13.1): FK a la fila de versión
+ * concreta + slug/version desnormalizados + snapshot literal del blueprint +
+ * hash — triple candado NM-3: editar el módulo después no toca proyectos
+ * disparados. `uq(project_id, phase)`: una fase se dispara UNA vez por
+ * proyecto (el retry idéntico lo cubre la idempotencia CA-M2.6).
+ */
+export const moduleLaunches = sqliteTable(
+  "module_launches",
+  {
+    id: text("id").primaryKey(),
+    moduleId: text("module_id")
+      .notNull()
+      .references(() => phaseModules.id),
+    moduleSlug: text("module_slug").notNull(),
+    moduleVersion: integer("module_version").notNull(),
+    /** Desnormalizada del módulo ([SÍNTESIS] Codex) para el índice único de fase. */
+    phase: text("phase").$type<Stage>().notNull(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id),
+    /** Copia LITERAL del blueprint al momento de disparar. */
+    blueprintSnapshot: text("blueprint_snapshot", { mode: "json" })
+      .$type<ModuleBlueprint>()
+      .notNull(),
+    blueprintHash: text("blueprint_hash").notNull(),
+    /** Inputs literales, con los campos `sensitive` REDACTADOS (§13.1). */
+    inputs: text("inputs", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** sha256 de los inputs SIN redactar (idempotencia CA-M2.6). */
+    inputsDigest: text("inputs_digest").notNull(),
+    toggles: text("toggles", { mode: "json" }).$type<Record<string, boolean>>().notNull(),
+    /** Metodología PINNEADA del launch (la capa context la lee — wiring M3/M4). */
+    methodologyId: text("methodology_id")
+      .notNull()
+      .references(() => methodologies.id),
+    /** Qué se materializó: tasks con key→taskId, gate, budget. */
+    result: text("result", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    taskCount: integer("task_count").notNull(),
+    budgetPhaseUsd: real("budget_phase_usd").notNull(),
+    budgetPerRunUsd: real("budget_per_run_usd").notNull(),
+    /** Encadenado de fases (US-M3): launch de la fase anterior. */
+    previousLaunchId: text("previous_launch_id").references(
+      (): AnySQLiteColumn => moduleLaunches.id,
+    ),
+    idempotencyKey: text("idempotency_key").notNull(),
+    actor: text("actor").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_module_launches_idempotency").on(t.idempotencyKey),
+    /** Una fase solo se dispara una vez por proyecto ([SÍNTESIS] Codex). */
+    uniqueIndex("uq_module_launches_project_phase").on(t.projectId, t.phase),
+    index("idx_module_launches_module").on(t.moduleId),
+  ],
 );

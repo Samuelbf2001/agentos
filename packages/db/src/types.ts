@@ -42,3 +42,7 @@ export type Process = typeof s.processes.$inferSelect;
 export type NewProcess = typeof s.processes.$inferInsert;
 export type Methodology = typeof s.methodologies.$inferSelect;
 export type NewMethodology = typeof s.methodologies.$inferInsert;
+export type PhaseModule = typeof s.phaseModules.$inferSelect;
+export type NewPhaseModule = typeof s.phaseModules.$inferInsert;
+export type ModuleLaunch = typeof s.moduleLaunches.$inferSelect;
+export type NewModuleLaunch = typeof s.moduleLaunches.$inferInsert;

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { ProviderCapabilities, Stage, TaskPriority, TaskStatus } from "@agentos/shared";
 import { openDb, resolveDbPath, type AgentosDb } from "./client.js";
 import { runMigrations } from "./migrate.js";
-import { loadAgentSeeds, loadMethodologySeeds, sha256 } from "./seed-sources.js";
+import { loadAgentSeeds, loadMethodologySeeds, loadModuleSeeds, sha256 } from "./seed-sources.js";
 import {
   createPromptVersion,
   getActivePrompt,
@@ -22,6 +22,7 @@ import {
 } from "./repositories/agents.js";
 import { ConfigKeys, getConfig, setConfig } from "./repositories/config.js";
 import { upsertMethodology } from "./repositories/methodologies.js";
+import { upsertPhaseModuleFromSeed } from "./repositories/modules.js";
 import {
   createOrganization,
   createPerson,
@@ -44,6 +45,7 @@ export interface SeedCounts {
   agentsFallback: string[];
   promptVersions: number;
   methodologies: number;
+  phaseModules: number;
   projects: number;
   tasks: number;
   tables: number;
@@ -420,6 +422,14 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
     });
   }
 
+  // 5b) Módulos de fase desde modules/*.md (§13 — CA-M1.1): consultoria,
+  // implementacion y operacion, validados fail-closed en el parse y ACTIVOS.
+  // Idempotente por seed_hash; contenido cambiado sin subir `version` en el
+  // archivo LANZA module_version_immutable (las versiones son inmutables).
+  for (const m of loadModuleSeeds()) {
+    upsertPhaseModuleFromSeed(db, m);
+  }
+
   // 6) Proyecto demo con 12 tareas de assessment
   let project = getProjectByName(db, "Assessment ACME");
   if (!project) {
@@ -484,6 +494,7 @@ function collectCounts(db: AgentosDb, agentsFallback: string[]): SeedCounts {
     agentsFallback,
     promptVersions: one("SELECT count(*) n FROM prompt_versions"),
     methodologies: one("SELECT count(*) n FROM methodologies"),
+    phaseModules: one("SELECT count(*) n FROM phase_modules"),
     projects: one("SELECT count(*) n FROM projects"),
     tasks: one("SELECT count(*) n FROM tasks"),
     tables: countDomainTables(db),

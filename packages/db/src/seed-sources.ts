@@ -8,12 +8,25 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { errors, AgentAutonomy, AgentLayer, AgentRuntime } from "@agentos/shared";
+import {
+  errors,
+  AgentAutonomy,
+  AgentLayer,
+  AgentRuntime,
+  blueprintHash,
+  canonicalizeBlueprint,
+  validateBlueprint,
+  type ModuleBlueprint,
+  type ModuleStatus,
+  type ProjectType,
+  type Stage,
+} from "@agentos/shared";
 import { z } from "zod";
 import { REPO_ROOT } from "./client.js";
 
 export const AGENTS_DIR = path.join(REPO_ROOT, "agents");
 export const METHODOLOGIES_DIR = path.join(REPO_ROOT, "methodologies");
+export const MODULES_DIR = path.join(REPO_ROOT, "modules");
 
 const AgentFrontmatter = z.object({
   slug: z.string().min(1),
@@ -57,7 +70,8 @@ export function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function splitFrontmatter(raw: string, file: string): { meta: unknown; body: string } {
+/** Separa frontmatter YAML y cuerpo. Exportada: `modules/*.md` la reutiliza (§13.2). */
+export function splitFrontmatter(raw: string, file: string): { meta: unknown; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
   if (!match) throw errors.validation(`Seed sin frontmatter: ${file}`);
   return { meta: YAML.parse(match[1]!), body: match[2] ?? "" };
@@ -128,4 +142,62 @@ export function loadMethodologySeeds(dir: string = METHODOLOGIES_DIR): ParsedMet
     .filter((f) => f.endsWith(".md"))
     .sort()
     .map((f) => parseMethodologySeed(path.join(dir, f)));
+}
+
+// ── Módulos de fase (`modules/*.md` — §13.2) ────────────────────────────────
+
+export interface ParsedModuleSeed {
+  slug: string;
+  version: number;
+  name: string;
+  phase: Stage;
+  projectType: ProjectType;
+  status?: ModuleStatus;
+  methodology: { slug: string; version: number | null };
+  /** Frontmatter completo CANONICALIZADO (claves ordenadas) — ES el blueprint. */
+  blueprint: ModuleBlueprint;
+  blueprintHash: string;
+  bodyMd: string;
+  seedFile: string;
+  /** sha256 del archivo completo (frontmatter + cuerpo) — delata divergencia. */
+  seedHash: string;
+}
+
+/**
+ * Parsea y VALIDA una semilla de módulo (patrón `parseAgentSeed`): un blueprint
+ * inválido LANZA con los issues en details — fail-closed desde el seed (§13.5 A).
+ */
+export function parseModuleSeed(file: string): ParsedModuleSeed {
+  const raw = fs.readFileSync(file, "utf8");
+  const { meta, body } = splitFrontmatter(raw, file);
+  const result = validateBlueprint(meta);
+  if (!result.ok || !result.blueprint) {
+    throw errors.validation(`Blueprint de módulo inválido en ${file}`, result.issues);
+  }
+  const canonical = canonicalizeBlueprint(meta);
+  // JSON.parse del canónico: objeto con claves YA ordenadas — lo que persiste la DB.
+  const blueprint = JSON.parse(canonical) as ModuleBlueprint;
+  const bp = result.blueprint;
+  return {
+    slug: bp.slug,
+    version: bp.version,
+    name: bp.name,
+    phase: bp.phase,
+    projectType: bp.project_type,
+    ...(bp.status !== undefined ? { status: bp.status } : {}),
+    methodology: { slug: bp.methodology.slug, version: bp.methodology.version },
+    blueprint,
+    blueprintHash: blueprintHash(canonical),
+    bodyMd: body.trim(),
+    seedFile: path.relative(REPO_ROOT, file).replaceAll("\\", "/"),
+    seedHash: sha256(raw),
+  };
+}
+
+export function loadModuleSeeds(dir: string = MODULES_DIR): ParsedModuleSeed[] {
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .map((f) => parseModuleSeed(path.join(dir, f)));
 }
