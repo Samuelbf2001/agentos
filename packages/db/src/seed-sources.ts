@@ -194,6 +194,17 @@ export function parseModuleSeed(file: string): ParsedModuleSeed {
   };
 }
 
+/**
+ * Serializa un módulo de DB al formato `modules/<slug>.md` (frontmatter YAML =
+ * blueprint + cuerpo) — la inversa de `parseModuleSeed`, para
+ * `agentos.modules.export` (paridad con el flujo git→DB del seed §13.2).
+ */
+export function serializeModuleMd(blueprint: ModuleBlueprint, bodyMd: string): string {
+  const yaml = YAML.stringify(blueprint).trimEnd();
+  const body = bodyMd.trim();
+  return `---\n${yaml}\n---\n${body === "" ? "" : `\n${body}\n`}`;
+}
+
 export function loadModuleSeeds(dir: string = MODULES_DIR): ParsedModuleSeed[] {
   return fs
     .readdirSync(dir)

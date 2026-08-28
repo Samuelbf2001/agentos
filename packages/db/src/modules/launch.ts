@@ -595,6 +595,206 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
   };
 }
 
+// ── Preview (dry-run — CA-M2.1) ─────────────────────────────────────────────
+
+export interface PreviewLaunchInput {
+  moduleSlug: string;
+  /**
+   * Sin versión: la ACTIVA (igual que el launch). Con versión explícita se
+   * permite previsualizar también un draft/archived (dry-run puro, nada se
+   * escribe): sirve para ver el plan de un borrador antes de publicarlo.
+   */
+  moduleVersion?: number;
+  inputs: Record<string, unknown>;
+  toggles?: Record<string, boolean>;
+  /** Epoch ms inyectable para determinismo de `{{hoy}}` y due_at. */
+  now?: number;
+}
+
+/** Issue de preview: los BlueprintIssue de shared más los de resolución con DB. */
+export interface PreviewIssue {
+  code: string;
+  path: string;
+  details?: Record<string, unknown> | undefined;
+}
+
+export interface PreviewTask {
+  key: string;
+  templateKey: string;
+  fanOutValue: string | null;
+  title: string;
+  description: string | null;
+  definitionOfDone: string | null;
+  stage: string;
+  activityType: string;
+  priority: string;
+  role: string;
+  /** Asignación RESUELTA contra el roster actual (slug real del agente). */
+  assigneeAgentSlug: string;
+  assigneeAgentId: string;
+  dependsOn: string[];
+  produces: string[];
+  gate: string | null;
+  requiresApproval: boolean;
+  status: "READY" | "BACKLOG";
+  dueAt: number | null;
+}
+
+export interface PreviewLaunchResult {
+  ok: boolean;
+  module: {
+    id: string;
+    slug: string;
+    version: number;
+    name: string;
+    phase: string;
+    projectType: string;
+    status: string;
+  };
+  /** Claves de inputs requeridos que faltan (el wizard deshabilita Disparar). */
+  missing: string[];
+  issues: PreviewIssue[];
+  plan: {
+    projectName: string;
+    workspacePath: string;
+    tasks: PreviewTask[];
+    gates: LaunchPlan["gates"];
+    deliverables: LaunchPlan["deliverables"];
+    methodology: LaunchPlan["methodology"];
+    budget: LaunchPlan["budget"];
+    toggles: Record<string, boolean>;
+    cadenceExcluded: string[];
+  } | null;
+}
+
+/**
+ * Dry-run del launch (CA-M2.1): ejecuta EXACTAMENTE el pre-vuelo del motor
+ * (blueprint → inputs → plan → asignaciones contra el roster real →
+ * metodología) sin escribir NADA. Devuelve las tareas que se crearían con
+ * título renderizado, asignación por rol resuelta, deps, due, gates y
+ * entregables efectivos — o `{ok:false, missing, issues}` fail-closed.
+ */
+export function previewLaunch(db: AgentosDb, input: PreviewLaunchInput): PreviewLaunchResult {
+  const now = input.now ?? nowMs();
+
+  // Módulo: activa por defecto; una versión explícita se acepta en cualquier
+  // status (preview de borradores) — el launch real seguirá exigiendo active.
+  let module: PhaseModule;
+  if (input.moduleVersion !== undefined) {
+    const row = getModuleVersion(db, input.moduleSlug, input.moduleVersion);
+    if (!row) throw errors.notFound("phase_module", `${input.moduleSlug}@${input.moduleVersion}`);
+    module = row;
+  } else {
+    const active = getActiveModule(db, input.moduleSlug);
+    if (!active) {
+      const any = listPhaseModules(db, { slug: input.moduleSlug });
+      if (any.length === 0) throw errors.notFound("phase_module", input.moduleSlug);
+      moduleNotActive(input.moduleSlug, null, any[0]!.status);
+    }
+    module = active!;
+  }
+
+  const moduleInfo = {
+    id: module.id,
+    slug: module.slug,
+    version: module.version,
+    name: module.name,
+    phase: module.phase,
+    projectType: module.projectType,
+    status: module.status,
+  };
+  const fail = (missing: string[], issues: PreviewIssue[]): PreviewLaunchResult => ({
+    ok: false,
+    module: moduleInfo,
+    missing,
+    issues,
+    plan: null,
+  });
+
+  const bpResult = validateBlueprint(module.blueprint);
+  if (!bpResult.ok || !bpResult.blueprint) return fail([], bpResult.issues);
+  const bp = bpResult.blueprint;
+
+  const inputsResult = validateLaunchInputs(bp, input.inputs, input.toggles ?? {});
+  if (!inputsResult.ok) return fail(inputsResult.missing, inputsResult.issues);
+
+  const plan = planLaunch(bp, inputsResult.values, inputsResult.toggles, now);
+  if (!plan.ok) return fail([], plan.issues);
+
+  // Asignaciones y metodología contra la DB real: los errores de dominio se
+  // devuelven como issues (el wizard los muestra; nada que "lanzar" en un dry-run).
+  const issues: PreviewIssue[] = [];
+  let assignments: Map<string, { agentId: string; agentSlug: string }> = new Map();
+  try {
+    assignments = resolveAssignments(db, plan);
+  } catch (err) {
+    if (err instanceof AgentosError && err.code === ErrorCodes.AGENT_NOT_ASSIGNABLE) {
+      issues.push({
+        code: "agent_not_assignable",
+        path: "roster",
+        details: (err.details ?? {}) as Record<string, unknown>,
+      });
+    } else {
+      throw err;
+    }
+  }
+  try {
+    resolveMethodology(db, plan);
+  } catch (err) {
+    if (err instanceof AgentosError && err.code === ErrorCodes.VALIDATION_ERROR) {
+      const detailIssues = Array.isArray(err.details) ? (err.details as PreviewIssue[]) : [];
+      issues.push(
+        ...(detailIssues.length > 0
+          ? detailIssues
+          : [{ code: "unknown_methodology", path: "methodology" }]),
+      );
+    } else {
+      throw err;
+    }
+  }
+  if (issues.length > 0) return fail([], issues);
+
+  return {
+    ok: true,
+    module: moduleInfo,
+    missing: [],
+    issues: [],
+    plan: {
+      projectName: plan.projectName,
+      workspacePath: plan.workspacePath,
+      tasks: plan.tasks.map((pt) => {
+        const a = assignments.get(pt.key)!;
+        return {
+          key: pt.key,
+          templateKey: pt.templateKey,
+          fanOutValue: pt.fanOutValue,
+          title: pt.title,
+          description: pt.description,
+          definitionOfDone: pt.definitionOfDone,
+          stage: pt.stage,
+          activityType: pt.activityType,
+          priority: pt.priority,
+          role: pt.role,
+          assigneeAgentSlug: a.agentSlug,
+          assigneeAgentId: a.agentId,
+          dependsOn: pt.dependsOn,
+          produces: pt.produces,
+          gate: pt.gate,
+          requiresApproval: pt.requiresApproval,
+          status: pt.status,
+          dueAt: pt.dueAt,
+        };
+      }),
+      gates: plan.gates,
+      deliverables: plan.deliverables,
+      methodology: plan.methodology,
+      budget: plan.budget,
+      toggles: plan.toggles,
+      cadenceExcluded: plan.cadenceExcluded,
+    },
+  };
+}
+
 // ── Idempotencia ────────────────────────────────────────────────────────────
 
 function idempotencyConflict(key: string, existing: ModuleLaunch): AgentosError {

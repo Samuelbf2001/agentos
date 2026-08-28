@@ -13,6 +13,7 @@ import {
 } from "./registry.js";
 import { agentTools, promptTools } from "./tools/agents.js";
 import { boardTools } from "./tools/board.js";
+import { moduleTools } from "./tools/modules.js";
 import { projectTools } from "./tools/projects.js";
 import { runTools } from "./tools/runs.js";
 import { approvalTools } from "./tools/approvals.js";
@@ -29,6 +30,7 @@ export function buildAdminToolCatalog(): Map<string, AdminToolDefinition> {
     promptTools,
     boardTools,
     projectTools,
+    moduleTools,
     runTools,
     approvalTools,
     providerTools,

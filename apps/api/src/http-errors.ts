@@ -24,6 +24,11 @@ const STATUS_BY_CODE: Record<string, number> = {
   [ErrorCodes.KILL_SWITCH_ACTIVE]: 409,
   [ErrorCodes.BUDGET_EXCEEDED]: 429,
   [ErrorCodes.DELEGATION_LIMIT]: 422,
+  [ErrorCodes.AGENT_NOT_ASSIGNABLE]: 422,
+  // Módulos de fase (§13): errores de dominio → 4xx con código estable, jamás 500.
+  [ErrorCodes.MODULE_VERSION_IMMUTABLE]: 409,
+  [ErrorCodes.MODULE_NOT_ACTIVE]: 409,
+  [ErrorCodes.DEPENDENCY_NOT_SATISFIED]: 422,
   [ErrorCodes.PROVIDER_ERROR]: 502,
   [ErrorCodes.PROVIDER_NOT_CONFIGURED]: 502,
   [ErrorCodes.RUNNER_UNAVAILABLE]: 502,

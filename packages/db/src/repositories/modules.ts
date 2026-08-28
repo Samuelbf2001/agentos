@@ -18,6 +18,7 @@ import {
   newId,
   nowMs,
   validateBlueprint,
+  type BlueprintIssue,
   type ModuleBlueprint,
   type ProjectType,
   type Stage,
@@ -26,8 +27,14 @@ import type { AgentosDb } from "../client.js";
 import { moduleLaunches, phaseModules } from "../schema.js";
 import type { ModuleLaunch, NewModuleLaunch, NewPhaseModule, PhaseModule } from "../types.js";
 import type { ParsedModuleSeed } from "../seed-sources.js";
+import { getAgentBySlug } from "./agents.js";
+import { getMethodology } from "./methodologies.js";
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
+
+export function getPhaseModuleById(db: AgentosDb, id: string): PhaseModule | undefined {
+  return db.select().from(phaseModules).where(eq(phaseModules.id, id)).get();
+}
 
 export function getActiveModule(db: AgentosDb, slug: string): PhaseModule | undefined {
   return db
@@ -132,9 +139,50 @@ function nextModuleVersion(db: AgentosDb, slug: string): number {
 }
 
 /**
+ * Reglas de validación CON DB del momento B (§13.5): `unknown_methodology`
+ * (la metodología pinneada y cada `methodology_add` de los toggles) y
+ * `unknown_agent_slug` (cada agente preferido del roster). Aquí y no en el MCP
+ * para que TODOS los caminos hacia `active` (seed incluido) las corran.
+ * `agent_not_assignable` NO se comprueba aquí: es regla del momento C — la
+ * asignabilidad se resuelve al disparar, contra el roster de ese instante.
+ */
+export function moduleBlueprintDbIssues(db: AgentosDb, bp: ModuleBlueprint): BlueprintIssue[] {
+  const issues: BlueprintIssue[] = [];
+  const main = getMethodology(db, bp.methodology.slug, bp.methodology.version ?? undefined);
+  if (!main) {
+    issues.push({
+      code: "unknown_methodology",
+      path: "methodology",
+      details: { slug: bp.methodology.slug, version: bp.methodology.version },
+    });
+  }
+  (bp.toggles ?? []).forEach((t, i) => {
+    if (t.methodology_add !== undefined && !getMethodology(db, t.methodology_add)) {
+      issues.push({
+        code: "unknown_methodology",
+        path: `toggles[${i}].methodology_add`,
+        details: { slug: t.methodology_add, toggle: t.key },
+      });
+    }
+  });
+  bp.roster.forEach((r, i) => {
+    if (!getAgentBySlug(db, r.agent)) {
+      issues.push({
+        code: "unknown_agent_slug",
+        path: `roster[${i}].agent`,
+        details: { agent: r.agent, role: r.role },
+      });
+    }
+  });
+  return issues;
+}
+
+/**
  * Activa una versión (momento B — §13.5): la validación fail-closed re-corre
- * ENTERA y un solo issue rechaza. Archiva la versión activa anterior del slug
- * (el índice parcial garantiza una sola activa).
+ * ENTERA — reglas puras + reglas con DB (`unknown_methodology`,
+ * `unknown_agent_slug`) — y un solo issue rechaza con la LISTA COMPLETA.
+ * Archiva la versión activa anterior del slug (el índice parcial garantiza
+ * una sola activa).
  */
 export function activateModuleVersion(db: AgentosDb, slug: string, version: number): PhaseModule {
   const row = getModuleVersion(db, slug, version);
@@ -142,10 +190,12 @@ export function activateModuleVersion(db: AgentosDb, slug: string, version: numb
   if (row.status === "active") return row;
 
   const result = validateBlueprint(row.blueprint);
-  if (!result.ok) {
+  const issues: BlueprintIssue[] = [...result.issues];
+  if (result.blueprint) issues.push(...moduleBlueprintDbIssues(db, result.blueprint));
+  if (issues.length > 0) {
     throw errors.validation(
-      `El módulo ${slug}@${version} no puede activarse: blueprint inválido`,
-      result.issues,
+      `El módulo ${slug}@${version} no puede activarse: blueprint inválido (momento B)`,
+      issues,
     );
   }
 
@@ -159,6 +209,22 @@ export function activateModuleVersion(db: AgentosDb, slug: string, version: numb
   }
   db.update(phaseModules)
     .set({ status: "active", activatedAt: now, updatedAt: now })
+    .where(eq(phaseModules.id, row.id))
+    .run();
+  return getModuleVersion(db, slug, version)!;
+}
+
+/**
+ * Archiva una versión (active|draft → archived). Los launches existentes no se
+ * tocan (su recibo es un snapshot — NM-3); el slug queda sin versión activa
+ * hasta el próximo publish/rollback.
+ */
+export function archiveModuleVersion(db: AgentosDb, slug: string, version: number): PhaseModule {
+  const row = getModuleVersion(db, slug, version);
+  if (!row) throw errors.notFound("phase_module", `${slug}@${version}`);
+  if (row.status === "archived") return row;
+  db.update(phaseModules)
+    .set({ status: "archived", updatedAt: nowMs() })
     .where(eq(phaseModules.id, row.id))
     .run();
   return getModuleVersion(db, slug, version)!;

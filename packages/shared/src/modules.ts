@@ -228,7 +228,12 @@ export type BlueprintIssueCode =
   | "input_option_not_allowed"
   | "input_min_items"
   | "too_many_tasks"
-  | "fan_out_key_collision";
+  | "fan_out_key_collision"
+  // Con DB (§13.5, momentos B y C) — las emiten @agentos/db, no este módulo
+  | "unknown_methodology"
+  | "unknown_agent_slug"
+  | "agent_not_assignable"
+  | "module_not_active";
 
 export interface BlueprintIssue {
   code: BlueprintIssueCode;
