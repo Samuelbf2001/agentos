@@ -18,3 +18,15 @@
 **Orden de sacrificio si aprieta el tiempo** (de Opus, vigente): 1º mapa del enjambre, 2º vista de run detallada, 3º ClaudeCodeRunner (arrancar solo ai_sdk). **Nunca**: claim/lease, gates, artefacto obligatorio.
 
 **Referencias integradas**: `referencias-openbot-grokbot.md` y `referencia-paperclip.md` (síntesis hecha; roadmap fase 2: jerarquía reports_to con salud de cadena, goals con fallback, holds de árbol, presupuestos con incidentes, empaquetado de equipo TEAM.md).
+
+## Módulos de Fase (rama `feat/modulos-fase` — spec `PRD-modulos-fase.md`, diseño `ARCHITECTURE.md` §13)
+
+| # | Bloque | Contenido | Rol | Depende | Estado |
+|---|---|---|---|---|---|
+| M0 | Diseño | Adenda §13 (síntesis Opus verificada 12/12; 2ª opinión Codex en vuelo por limitación del runtime) | ORQ+DR | — | ✅ hecho |
+| M1 | Persistencia+validación | Migración `0003_modulos_fase` (phase_modules, module_launches, tasks.depends_on/due_at); piezas puras en shared (ModuleBlueprint Zod, validateBlueprint, planLaunch, renderTemplate, canonicalize/hash, mudanza computeRequiresApproval); exportar splitFrontmatter; `modules/*.md` semillas de los 3 módulos; carga en seed | GP | M0 | ⬜ |
+| M2 | Motor de launch | `launchModule` transaccional en db (pre-vuelo, org/proyecto/tareas/deps/presupuesto/fuentes/recibo/audit), idempotencia, `launchModuleWithEvents` en core; tests NM-1..NM-4 | GP | M1 | ⬜ |
+| M3 | Tablero: dependencias | `system: BACKLOG>READY` + guard fail-closed en moveTask, `promoteUnblockedTasks` al DONE, `phaseClosureStatus`, dispatcher lee `budget:project:<id>` (avisar a rama fuentes antes de tocar board) | GP | M1 | ⬜ |
+| M4 | MCP+API+wizard | Tools `agentos.modules.*` (~14), REST equivalente, wizard "Nuevo proyecto" (módulo→inputs→resumen preview→Disparar), estado de cierre de fase en UI | GP+FW | M2,M3 | ⬜ |
+| M5 | Seed ACME=launch | El seed dispara consultoria v1 (12 tareas, 3 READY/9 BACKLOG preservados); deltas SOLO en migration-seed.test.ts (tablas 20→22, requiresApproval 2→7 ⚠️ pendiente visto bueno de Ernesto) | GP | M2 | ⬜ |
+| M6 | Encadenado+cadencia | phase chaining (prefill desde Context Hub, previous_launch_id), cadencia consent-first de Operación | GP | M4,M5 | ⬜ |
