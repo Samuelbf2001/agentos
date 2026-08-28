@@ -28,6 +28,7 @@ import {
   listDispatchableTasks,
   listMessages,
   listPendingApprovals,
+  listReconcilableApprovals,
   appendMessage,
   setConfig,
   updateRun,
@@ -40,7 +41,13 @@ import {
   type Thread,
 } from "@agentos/db";
 import { channelTopic, runTopic, threadTopic, type EventBus } from "@agentos/events";
-import { assemblePrompt, type BoardEngine } from "@agentos/core";
+import {
+  assemblePrompt,
+  QUINN_REVIEWED_ACTIVITY_TYPES,
+  type ApprovalReconcileDeps,
+  type BoardEngine,
+  type ReconcileResult,
+} from "@agentos/core";
 import type { GatewayResult, ToolCallContext, ToolRuntime } from "@agentos/tools";
 import type { RunBudget, RunInput, RunnerPool, RunTraceContext } from "@agentos/runners";
 import type { ModelMessage } from "ai";
@@ -49,25 +56,13 @@ import { bindDomainTools, claudeCodeAllowlist } from "./domain-tools.js";
 
 export const QUINN_ACTIVITY_TYPES_KEY = "quinn_review_activity_types";
 /**
- * Tipos que disparan la auto-crítica de Quinn al entrar a REVIEW. Incluye los
- * entregables de consultoría (report, process_map, roadmap, iso_gap...): en un
- * engagement de assessment son EL caso principal de US-10 (fix H6).
+ * Tipos que disparan la auto-crítica de Quinn al entrar a REVIEW. Es la MISMA
+ * fuente única (`QUINN_REVIEWED_ACTIVITY_TYPES` de @agentos/core) que usa la
+ * política `computeRequiresApproval` (fix Q1): así todo entregable que Quinn
+ * revisa exige también REVIEW + aprobación humana y no puede ir directo a DONE.
+ * Antes esta lista y la de la política vivían separadas y se desincronizaban.
  */
-export const DEFAULT_QUINN_ACTIVITY_TYPES = [
-  "code",
-  "build",
-  "bug",
-  "integration",
-  "deploy",
-  "dev",
-  "technical",
-  "report",
-  "process_map",
-  "roadmap",
-  "iso_gap",
-  "org_profile",
-  "leak_analysis",
-];
+export const DEFAULT_QUINN_ACTIVITY_TYPES: string[] = [...QUINN_REVIEWED_ACTIVITY_TYPES];
 
 export interface DispatcherOptions {
   db: AgentosDb;
@@ -102,6 +97,13 @@ export interface Dispatcher {
   reap(): { requeued: string[]; blocked: string[] };
   enqueueChatRun(params: { threadId: string; text: string }): { runId: string };
   enqueueApprovalResume(approval: Approval, executed: GatewayResult): { runId: string } | null;
+  /**
+   * Reconcilia una aprobación YA decidida (Gate 2, fix Q2): ejecuta el efecto del
+   * tool_call + encola la reanudación, o desbloquea la tarjeta de pregunta/
+   * entregable. La llama el route REST tras decidir; el tick del despachador la
+   * usa para drenar las decisiones tomadas por el MCP admin.
+   */
+  reconcileApproval(approvalId: string): Promise<ReconcileResult>;
   /** runId → taskId de los runs de tarea en vuelo (para latido de lease). */
   inflight(): ReadonlyMap<string, string>;
 }
@@ -389,6 +391,9 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       await pool.refreshKillSwitch();
       if (engine.isKillSwitchActive()) return { skipped: "kill_switch", dispatched: [], errors: [] };
       renewLeases();
+      // (c.2) Gate 2: reconcilia aprobaciones decididas por el MCP admin (u otra
+      // ruta que solo fijó el estado) antes de despachar — desbloquea sus tareas.
+      await reconcilePendingApprovals();
       const dispatched: string[] = [];
       const tickErrors: string[] = [];
       for (const task of listDispatchableTasks(db, now(), maxDispatchPerTick)) {
@@ -612,6 +617,44 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     }
   }
 
+  // ── (c.2) reconciliación de aprobaciones decididas (fix Q2) ────────────────
+  //
+  // El efecto del tool_call y el resume viven en apps/api (gateway + despachador);
+  // el MCP admin es otro proceso sin ese runtime. Estas deps se inyectan en la
+  // función compartida de core, y el drenado (reconcilePendingApprovals) recoge
+  // las decisiones que el MCP dejó sin reconciliar — nada queda huérfano.
+  const reconcileDeps: ApprovalReconcileDeps = {
+    executeApproved: (approval) => {
+      const originRun = approval.runId ? getRun(db, approval.runId) : undefined;
+      const execCtx: ToolCallContext = {
+        run_id: approval.runId ?? null,
+        agent_id: originRun?.agentId ?? "system",
+        task_id: approval.taskId ?? null,
+        project_id: approval.projectId ?? null,
+        actor: "system:approvals",
+      };
+      return toolRuntime.executeApproved(execCtx, approval.id);
+    },
+    enqueueResume: (approval, executed) =>
+      enqueueApprovalResume(approval, executed as GatewayResult)?.runId ?? null,
+  };
+
+  function reconcileApproval(approvalId: string): Promise<ReconcileResult> {
+    return engine.reconcileDecidedApproval(approvalId, reconcileDeps);
+  }
+
+  /** Drena las decisiones decididas-pero-sin-reconciliar (típicamente del MCP admin). */
+  async function reconcilePendingApprovals(): Promise<void> {
+    for (const approval of listReconcilableApprovals(db)) {
+      try {
+        await reconcileApproval(approval.id);
+      } catch {
+        // Un fallo puntual no debe tumbar el tick. El reclamo atómico ya marcó
+        // reconciled_at, así que el efecto externo NO se reejecuta en bucle.
+      }
+    }
+  }
+
   // ── (d) auto-crítica de Quinn al entrar a REVIEW ──────────────────────────
 
   const unsubscribeCritique = bus.subscribeAll((persisted) => {
@@ -688,6 +731,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     reap: () => engine.reap(),
     enqueueChatRun,
     enqueueApprovalResume,
+    reconcileApproval,
     inflight: () => inflight,
   };
 }

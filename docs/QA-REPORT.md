@@ -25,7 +25,7 @@ Q1 antes de confiar el cierre de entregables a los agentes sin vigilancia.
 
 ## Hallazgos NUEVOS
 
-### Q1 — ALTA · Un agente auto-cierra entregables a DONE saltándose REVIEW, Quinn y el humano
+### Q1 — ALTA · Un agente auto-cierra entregables a DONE saltándose REVIEW, Quinn y el humano — **CORREGIDO** (B8 paso 3)
 
 **Vector:** integridad de gates / "un agente no aprueba su propio trabajo" (PRD const. §5,
 CA-4.1). Tool directa del agente (`tasks.move`), sin humano.
@@ -73,9 +73,23 @@ las dos listas. Mínimo: que la política trate los tipos revisables por Quinn c
 donde Quinn critica y el humano cierra). La primera cambia semántica (esos contextos
 pasarían a exigir aprobación humana), decisión del equipo.
 
+**Fix aplicado (B8 paso 3):** se unificaron las dos listas en UNA sola fuente en
+core: `QUINN_REVIEWED_ACTIVITY_TYPES` (`packages/core/src/board/policy.ts`).
+`computeRequiresApproval` ahora la incluye ⇒ todo entregable que Quinn revisa
+tiene `requires_approval=true` y un agente NO puede llevarlo directo a DONE
+(`moveTask` lanza `human_approval_required`); llega solo hasta REVIEW, donde Quinn
+critica y el humano cierra. El despachador (`DEFAULT_QUINN_ACTIVITY_TYPES` en
+`apps/api/src/dispatcher.ts`) ahora deriva su lista de esa MISMA constante, así
+política y auto-crítica no pueden volver a desincronizarse (cambio en un solo
+lugar). Cubre los cuatro tipos que fallaban (`org_profile`, `process_map`,
+`leak_analysis`, `iso_gap`) más `report`/`roadmap`/técnicos. **Tests** en
+`packages/core/test/policy.test.ts`: cada tipo sensible IN_PROGRESS→DONE por un
+agente → `human_approval_required` (y sí llega a REVIEW); un tipo no sensible
+(`research`) sigue pudiendo ir directo a DONE.
+
 ---
 
-### Q2 — ALTA · Decidir una aprobación por el MCP admin no reconcilia la tarea (Gate 2 queda huérfano)
+### Q2 — ALTA · Decidir una aprobación por el MCP admin no reconcilia la tarea (Gate 2 queda huérfano) — **CORREGIDO** (B8 paso 3)
 
 **Vector:** durabilidad/integridad del Gate 2 + capacidad documentada US-8/CA-8.3
 ("aprobar tareas por MCP se refleja en vivo"). Ruta MCP `agentos.approvals.decide` (rw).
@@ -125,6 +139,33 @@ resume necesitan `toolRuntime`+despachador, así que o la API se **suscribe a
 **rechaza los `tool_call`** con un mensaje que remita a la UI/API (fail-closed: nada
 huérfano). Mientras tanto: **aprobar Gate 2 solo por la UI/API.**
 
+**Fix aplicado (B8 paso 3) — dónde quedó la costura:** se extrajo la
+reconciliación a UNA función compartida de core,
+`engine.reconcileDecidedApproval(approvalId, deps)`
+(`packages/core/src/board/engine.ts`), separada de `decideApproval` (que solo fija
+el estado). Como ejecutar el efecto externo vive en `apps/api` (gateway de tools +
+despachador) y el MCP admin es **otro proceso sin ese runtime**, se eligió la
+opción de **encolar la reconciliación como trabajo que el despachador drena**:
+  - `decideApproval` (core) SOLO fija el estado. La reconciliación es un paso aparte
+    con un flag durable nuevo `approvals.reconciled_at` (migración
+    `0001_vengeful_spirit`), reclamado atómicamente (`claimApprovalReconciliation`)
+    ⇒ el efecto externo se ejecuta **exactamente una vez**.
+  - El **route REST** (`apps/api/src/routes/ops.ts`) decide y llama
+    `dispatcher.reconcileApproval(id)` en línea (comportamiento idéntico al previo).
+  - El **MCP admin** sigue llamando solo `engine.decideApproval` (capa fina): deja
+    `reconciled_at=NULL`, y el **tick del despachador** (`reconcilePendingApprovals`
+    en `apps/api/src/dispatcher.ts`, dren en cada `tick()`) recoge esas decisiones,
+    ejecuta el efecto del `tool_call` (`toolRuntime.executeApproved`) y encola el
+    resume (`enqueueApprovalResume`), o desbloquea la tarjeta de pregunta/entregable.
+    **Nada queda huérfano** aunque se apruebe por MCP. Las deps de ejecución se
+    inyectan (core no depende de `@agentos/tools`, sin ciclo).
+  - Se levanta la condición operativa previa: **el Gate 2 ya se puede aprobar por
+    MCP admin** (el despachador de apps/api debe estar corriendo, que es lo normal).
+**Test** en `apps/api/test/approvals.test.ts`: se decide por la vía del MCP
+(`engine.decideApproval` directo); antes del tick el efecto NO se ejecutó y la
+tarea sigue BLOCKED; un `dispatcher.tick()` ejecuta `email.send` (stub `simulated`),
+saca la tarea de BLOCKED y crea el run de reanudación con `resume_of_run_id`.
+
 ---
 
 ### Q3 — MEDIA · `decideApproval` no era atómico (last-write-wins entre los dos procesos escritores) — **CORREGIDO**
@@ -154,7 +195,7 @@ decidida/` y el estado sigue `approved`. (Falla sin el fix; verde con él.)
 
 ---
 
-### Q4 — BAJA · `verifyToken` no revalida que la persona exista / siga interna
+### Q4 — BAJA · `verifyToken` no revalida que la persona exista / siga interna — **CORREGIDO** (B8 paso 3)
 
 **Vector:** auth. `apps/api/src/auth.ts` `verifyToken` valida firma + expiración pero
 **no** consulta `people`. Un token firmado de una persona luego eliminada o desactivada
@@ -163,7 +204,13 @@ firma, derivado de la contraseña compartida), pero un interno deprovisionado co
 acceso. **Fix:** en el hook `onRequest` (`server.ts`), tras `verifyToken`, exigir
 `getPerson(personId)?.isInternal`.
 
-### Q5 — BAJA · `order_key` sin restricción de unicidad → empates al crear en paralelo
+**Fix aplicado (B8 paso 3):** el hook `onRequest` de `apps/api/src/server.ts` ahora,
+tras `verifyToken`, consulta `getPerson(ctx.db, session.personId)` y solo fija
+`req.session` si `person?.isInternal`; si no, cae al 401 (fail-closed). **Test** en
+`apps/api/test/rest.test.ts`: token de una persona interna vale; tras
+`updatePerson(..., { isInternal:false })` el MISMO token deja de valer (401).
+
+### Q5 — BAJA · `order_key` sin restricción de unicidad → empates al crear en paralelo — **DIFERIDO** (B8 paso 3)
 
 **Vector:** concurrencia/orden. `nextOrderKey` hace `SELECT max(order_key)…` y suma 1 char;
 `order_key` solo tiene índice, no `unique` (`packages/db/src/schema.ts`). Con los dos
@@ -171,6 +218,24 @@ escritores creando tareas en la misma columna a la vez, pueden salir `order_key`
 empate de orden (cosmético; el `reorder` sí va con `expected_version`, así que ese camino
 resiste). **Fix:** clave fraccionaria entre vecinos reales o `unique(project_id,status,
 order_key)` con reintento.
+
+**Decisión (B8 paso 3): DIFERIDO — un `unique` rompería flujos legítimos.** El
+`order_key` se asigna UNA vez al crear (según el estado de creación: BACKLOG en
+`createTask`, READY en `delegate`) y `moveTask` **no lo reescribe** al cambiar de
+columna. Además `nextOrderKey` reinicia a `"m"` cuando la columna queda vacía. Por
+tanto dos tareas creadas en momentos distintos pueden acabar con el MISMO
+`(project_id, status, order_key)` tras moverse entre columnas de forma
+perfectamente normal (p. ej. T1 nace "m" en BACKLOG y pasa a READY; luego T2 nace
+"m" en BACKLOG y pasa a READY → colisión en READY). Un
+`unique(project_id, status, order_key)` haría **fallar `moveTask`** (SQLITE_CONSTRAINT)
+en transiciones legítimas — rompería la máquina de estados. Un `unique(order_key)`
+global rompería el reordenamiento fraccionario, que reutiliza deliberadamente el
+espacio lexicográfico. El empate real solo aparece con dos escritores creando en la
+MISMA columna a la vez, es **cosmético** (orden lexicográfico estable como
+desempate secundario por `id` implícito) y el `reorder` ya resiste vía
+`expected_version`. Cerrar Q5 bien exige reescribir `order_key` en cada transición
+(clave fraccionaria entre vecinos reales del destino) — cambio de mayor alcance,
+fuera del criterio "trivial y sin ambigüedad". Se difiere.
 
 ---
 
@@ -218,25 +283,43 @@ order_key)` con reintento.
 
 - **Q3** (integridad de concurrencia): `decideApproval` ahora es un UPDATE condicional
   atómico (`status='pending'`) con `conflict` explícito, cerrando el last-write-wins que el
-  segundo proceso escritor (MCP admin) hacía posible. + test de regresión. Suite: **274
-  verdes**, typecheck limpio.
+  segundo proceso escritor (MCP admin) hacía posible. + test de regresión.
 
-Q1, Q2, Q4, Q5 quedan **documentados con repro y fix propuesto, sin parchear**: Q1 y Q2
-implican una decisión de diseño/producto (qué entregables se gatean; cómo debe ejecutar el
-MCP el efecto de una aprobación) o un cambio que cruza módulos — fuera del criterio "≤ pocas
-líneas y sin ambigüedad".
+### Cierre B8 paso 3 (corrector final de integridad)
+
+- **Q1 (ALTA) — CORREGIDO.** Lista única en core `QUINN_REVIEWED_ACTIVITY_TYPES`
+  (`policy.ts`) usada por `computeRequiresApproval` Y por la auto-crítica de Quinn
+  del despachador: todo entregable revisable por Quinn exige REVIEW+aprobación; un
+  agente ya no puede llevarlo directo a DONE. +3 tests.
+- **Q2 (ALTA) — CORREGIDO.** Reconciliación post-decisión extraída a
+  `engine.reconcileDecidedApproval` (core, deps inyectadas). REST la ejecuta en
+  línea; el MCP admin solo fija el estado y el **despachador de apps/api la drena**
+  (`reconcilePendingApprovals` en cada `tick`), con flag durable `reconciled_at`
+  (migración 0001) reclamado atómicamente (efecto exactamente-una-vez). Nada queda
+  huérfano al aprobar por MCP. +1 test.
+- **Q4 (BAJA) — CORREGIDO.** `onRequest` revalida `getPerson(personId)?.isInternal`
+  en cada request. +1 test.
+- **Q5 (BAJA) — DIFERIDO.** Un `unique(project_id,status,order_key)` rompería
+  `moveTask` (el `order_key` se asigna al crear y no se reescribe al cambiar de
+  columna, y `nextOrderKey` reinicia a "m" al vaciarse la columna) y un `unique`
+  global rompería el reordenamiento fraccionario; el empate es cosmético y el
+  `reorder` ya resiste por `expected_version`. Ver detalle en Q5.
+
+Suite completa: **verde** (`pnpm -r test`), `pnpm -r typecheck` exit 0.
 
 ## Recomendación
 
-**Sí, Ernesto puede usarla en local**, con estas condiciones operativas hasta cerrar Q1/Q2:
-1. **Aprobar el Gate 2 (efectos externos) solo por la UI/API**, nunca por MCP admin
-   (`agentos.approvals.decide` sobre un `tool_call` deja la tarea muerta) — Q2.
-2. **No dejar a los agentes cerrar entregables sin vigilancia**: mientras Q1 siga abierto,
-   `org_profile`/`process_map`/`leak_analysis`/`iso_gap` pueden ir a DONE sin QA ni humano;
-   revisar el tablero o cerrar Q1 antes de operar en desatendido.
-3. Correr MCP admin y la API **contra la misma DB** es correcto funcionalmente (WAL +
-   busy_timeout), pero conviene tratar formalmente al MCP admin como segundo escritor
-   (mover la reconciliación de aprobaciones al core, Q2) — es el habilitador de Q2/Q3.
+**Sí, Ernesto puede usarla en local.** Las dos condiciones operativas previas
+(Q1/Q2) quedan **cerradas**:
+1. El **Gate 2 (efectos externos) ya se puede aprobar por MCP admin** además de por
+   la UI/API: el despachador de apps/api reconcilia la decisión (ejecuta el efecto y
+   reanuda) — requiere que apps/api esté corriendo, que es lo normal. (Q2 cerrado.)
+2. Los agentes **ya no pueden cerrar entregables sin gate**:
+   `org_profile`/`process_map`/`leak_analysis`/`iso_gap`/`report`/`roadmap` exigen
+   REVIEW + aprobación humana; Quinn los critica en REVIEW. (Q1 cerrado.)
+3. Correr MCP admin y la API **contra la misma DB** es correcto (WAL + busy_timeout);
+   el MCP admin queda formalmente tratado como segundo escritor que **solo decide**,
+   delegando la ejecución del efecto al dueño del runtime (apps/api) — habilitador de
+   Q2/Q3 resuelto.
 
-Prioridad de arreglo: **Q2 y Q1 antes del primer engagement real desatendido**; Q4/Q5
-oportunistas.
+Pendiente oportunista: **Q5** (order_key), diferido con motivo documentado.

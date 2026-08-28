@@ -21,8 +21,11 @@ export const approvalTools: AdminToolDefinition[] = [
     name: "agentos.approvals.decide",
     description:
       "Decide una aprobación pendiente (approved|rejected) con person_id humano. " +
-      "Core verifica el digest del payload literal y audita; si se aprueba un tool_call " +
-      "devuelve el payload exacto a ejecutar (lo ejecuta el despachador de la API).",
+      "Core verifica el digest del payload literal, audita y fija el estado (atómico). " +
+      "El MCP admin es capa fina y NO ejecuta efectos externos: la reconciliación " +
+      "(ejecutar el efecto del tool_call aprobado + reanudar, o desbloquear la tarjeta) " +
+      "la drena el despachador de apps/api en su siguiente tick, así la tarea nunca queda " +
+      "huérfana (fix Q2). Si se aprueba un tool_call devuelve el payload exacto a ejecutar.",
     schema: z.object({
       approval_id: z.string().min(1),
       decision: z.enum(["approved", "rejected"]),

@@ -5,7 +5,6 @@ import { z } from "zod";
 import { AgentStatus, AgentAutonomy, KnowledgeKind, RunStatus, errors } from "@agentos/shared";
 import {
   appendAudit,
-  appendTaskEvent,
   getAgent,
   getAgentBySlug,
   getApproval,
@@ -13,7 +12,6 @@ import {
   getMethodology,
   getProcess,
   getRun,
-  getTask,
   getThread,
   listAgents,
   listArtifacts,
@@ -31,7 +29,6 @@ import {
   updateAgent,
   upsertDoc,
 } from "@agentos/db";
-import type { ToolCallContext } from "@agentos/tools";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
 
@@ -72,7 +69,7 @@ const KillSwitchBody = z.object({
 });
 
 export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
-  const { db, engine, pool, dispatcher, toolRuntime, sink } = ctx;
+  const { db, engine, pool, dispatcher, sink } = ctx;
 
   const personActor = (req: { session?: { personId: string } | undefined }): string =>
     `person:${req.session!.personId}`;
@@ -225,68 +222,14 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
     const { id } = req.params as { id: string };
     const body = parse(DecideBody, req.body);
     const personId = req.session!.personId;
-    const result = engine.decideApproval(id, body.decision, personId, body.note);
-    const approval = result.approval;
-
-    /**
-     * H9 (cierre del ciclo ask_human): una pregunta/entregable decidido deja la
-     * respuesta en el timeline y devuelve la tarjeta BLOCKED(approval) a READY —
-     * el agente retoma con la respuesta visible en sus últimos eventos.
-     * (Las tool_call van por su propio camino: ejecutar + run de reanudación.)
-     */
-    function recordAndUnblock(decisionLabel: string): void {
-      if (!approval.taskId) return;
-      const task = getTask(db, approval.taskId);
-      if (!task) return;
-      appendTaskEvent(db, {
-        taskId: task.id,
-        runId: approval.runId ?? null,
-        kind: "comment",
-        actor: personActor(req),
-        payload: { body: `Aprobación ${id} ${decisionLabel}${body.note ? `: ${body.note}` : ""}` },
-      });
-      if (approval.kind !== "tool_call" && task.status === "BLOCKED" && task.blockedReason === "approval") {
-        try {
-          engine.moveTask({
-            taskId: task.id,
-            to: "READY",
-            expectedVersion: task.version,
-            actor: "system:approvals",
-            note: `aprobación ${id} resuelta (${decisionLabel.toLowerCase()}): la tarjeta vuelve a la cola`,
-          });
-        } catch {
-          /* otro actor la movió: su movimiento manda */
-        }
-      }
-    }
-
-    if (body.decision === "rejected") {
-      // La nota queda en el timeline de la tarea; preguntas/entregables vuelven a la cola.
-      recordAndUnblock("RECHAZADA");
-      return { approval, executed: null, resume_run_id: null };
-    }
-
-    // Aprobado + pregunta/entregable: respuesta al timeline y tarjeta a la cola.
-    if (approval.kind !== "tool_call") recordAndUnblock("APROBADA");
-
-    // Aprobado + tool_call: la PLATAFORMA ejecuta el efecto (executeApproved,
-    // digest verificado) y encola el run de reanudación con resume_of_run_id.
-    let executed = null;
-    let resumeRunId: string | null = null;
-    if (result.executePayload) {
-      const originRun = approval.runId ? getRun(db, approval.runId) : undefined;
-      const execCtx: ToolCallContext = {
-        run_id: approval.runId ?? null,
-        agent_id: originRun?.agentId ?? "system",
-        task_id: approval.taskId ?? null,
-        project_id: approval.projectId ?? null,
-        actor: "system:approvals",
-      };
-      executed = await toolRuntime.executeApproved(execCtx, id);
-      const resume = dispatcher.enqueueApprovalResume(approval, executed);
-      resumeRunId = resume?.runId ?? null;
-    }
-    return { approval, executed, resume_run_id: resumeRunId };
+    // 1) Fija el estado de la aprobación (atómico y versionado). 2) Reconcilia el
+    // efecto por la MISMA función compartida de core que el despachador drena para
+    // las decisiones tomadas por el MCP admin (fix Q2): ejecutar el efecto del
+    // tool_call + encolar la reanudación, o desbloquear la tarjeta de pregunta/
+    // entregable. Así ambos caminos —REST y MCP— reconcilian idéntico.
+    engine.decideApproval(id, body.decision, personId, body.note);
+    const rec = await dispatcher.reconcileApproval(id);
+    return { approval: rec.approval, executed: rec.executed, resume_run_id: rec.resumeRunId };
   });
 
   // ── Threads / messages ────────────────────────────────────────────────────

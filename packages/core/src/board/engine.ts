@@ -26,6 +26,7 @@ import {
 import {
   appendAudit,
   appendTaskEvent,
+  claimApprovalReconciliation,
   claimTask as repoClaimTask,
   ConfigKeys,
   countArtifacts,
@@ -145,6 +146,32 @@ export interface DecideApprovalResult {
   executePayload?: Record<string, unknown>;
 }
 
+/**
+ * Dependencias inyectadas para reconciliar el efecto de una aprobación decidida
+ * (Gate 2, fix Q2). Viven "por encima" de core —el gateway de tools en
+ * @agentos/tools ejecuta el efecto; el despachador de apps/api encola la
+ * reanudación— así que core las recibe como callbacks OPACOS y no se crea ciclo
+ * de dependencias. La reconciliación en sí (comentar, desbloquear, orquestar) es
+ * compartida: el route REST y el drenado del despachador la ejecutan igual.
+ */
+export interface ApprovalReconcileDeps {
+  /** Ejecuta el efecto de un tool_call aprobado (gateway.executeApproved). El
+   * resultado es opaco para core (un GatewayResult de @agentos/tools). */
+  executeApproved(approval: Approval): Promise<unknown>;
+  /** Encola el run de reanudación tras ejecutar el efecto; devuelve runId o null. */
+  enqueueResume(approval: Approval, executed: unknown): string | null;
+}
+
+export interface ReconcileResult {
+  approval: Approval;
+  /** GatewayResult del efecto ejecutado (solo tool_call aprobado), o null. */
+  executed: unknown | null;
+  /** Run de reanudación encolado (solo tool_call aprobado), o null. */
+  resumeRunId: string | null;
+  /** false si la aprobación seguía pendiente o ya la había reconciliado otro. */
+  reconciled: boolean;
+}
+
 export interface BoardEngine {
   createTask(input: CreateTaskInput, opts: { actor: string; runId?: string | null }): Task;
   moveTask(input: MoveTaskInput): Task;
@@ -159,6 +186,17 @@ export interface BoardEngine {
     personId: string,
     note?: string,
   ): DecideApprovalResult;
+  /**
+   * Reconcilia el efecto de una aprobación YA decidida (Gate 2, fix Q2): ejecuta
+   * el efecto del tool_call aprobado (vía deps) + encola la reanudación, o
+   * desbloquea la tarjeta de pregunta/entregable. Es idempotente y exactamente-
+   * una-vez (reclamo atómico de `reconciled_at`). La llaman AMBOS caminos: el
+   * route REST tras decidir, y el despachador al drenar decisiones del MCP admin.
+   */
+  reconcileDecidedApproval(
+    approvalId: string,
+    deps: ApprovalReconcileDeps,
+  ): Promise<ReconcileResult>;
   listPendingApprovals(): Approval[];
   delegate(input: DelegateInput): Task;
   isKillSwitchActive(): boolean;
@@ -583,6 +621,88 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     };
   }
 
+  /**
+   * Reconciliación post-decisión compartida (fix Q2). `decideApproval` SOLO fija
+   * el estado; esta función ejecuta el efecto real de la decisión. Antes vivía
+   * inline en el route REST y el MCP admin (otro proceso, sin runtime) dejaba la
+   * tarjeta BLOCKED para siempre. Ahora ambos convergen aquí: REST la llama tras
+   * decidir; el despachador la drena para las decisiones tomadas por el MCP.
+   */
+  async function reconcileDecidedApproval(
+    approvalId: string,
+    deps: ApprovalReconcileDeps,
+  ): Promise<ReconcileResult> {
+    const approval = getApproval(db, approvalId);
+    if (!approval) throw errors.notFound("approval", approvalId);
+    // Aún pendiente (no decidida): nada que reconciliar.
+    if (approval.status === "pending") {
+      return { approval, executed: null, resumeRunId: null, reconciled: false };
+    }
+    // Reclamo atómico exactamente-una-vez: si ya la reconcilió otro (REST o un
+    // tick del despachador), no repetir el efecto externo.
+    if (!claimApprovalReconciliation(db, approvalId)) {
+      return {
+        approval: getApproval(db, approvalId) ?? approval,
+        executed: null,
+        resumeRunId: null,
+        reconciled: false,
+      };
+    }
+
+    const approved = approval.status === "approved";
+    const isToolCall = approval.kind === "tool_call";
+    const decisionLabel = approved ? "APROBADA" : "RECHAZADA";
+    const decidedActor = approval.decidedByPersonId
+      ? `person:${approval.decidedByPersonId}`
+      : "system:approvals";
+    const task = approval.taskId ? getTask(db, approval.taskId) : undefined;
+
+    // Comentario en el timeline: un tool_call APROBADO no comenta aquí — su
+    // resultado se lo cuenta al agente el run de reanudación.
+    if (task && !(approved && isToolCall)) {
+      appendTaskEvent(db, {
+        taskId: task.id,
+        runId: approval.runId ?? null,
+        kind: "comment",
+        actor: decidedActor,
+        payload: {
+          body: `Aprobación ${approvalId} ${decisionLabel}${approval.note ? `: ${approval.note}` : ""}`,
+        },
+      });
+    }
+
+    let executed: unknown | null = null;
+    let resumeRunId: string | null = null;
+
+    if (approved && isToolCall) {
+      // La PLATAFORMA ejecuta el efecto (digest verificado en el gateway) y encola
+      // el run de reanudación con resume_of_run_id (que desbloquea y reclama).
+      executed = await deps.executeApproved(approval);
+      resumeRunId = deps.enqueueResume(approval, executed);
+    } else if (task && !isToolCall && task.status === "BLOCKED" && task.blockedReason === "approval") {
+      // Pregunta/entregable decidido: la tarjeta vuelve a la cola con la respuesta
+      // visible en su timeline (mismo comportamiento que tenía el route REST).
+      try {
+        moveTask({
+          taskId: task.id,
+          to: "READY",
+          expectedVersion: task.version,
+          actor: "system:approvals",
+          note: `aprobación ${approvalId} resuelta (${decisionLabel.toLowerCase()}): la tarjeta vuelve a la cola`,
+        });
+      } catch {
+        /* otro actor la movió: su movimiento manda */
+      }
+    }
+
+    return {
+      approval: getApproval(db, approvalId) ?? approval,
+      executed,
+      resumeRunId,
+      reconciled: true,
+    };
+  }
+
   // ── Delegación ────────────────────────────────────────────────────────────
 
   function delegationDepth(taskId: string): number {
@@ -714,6 +834,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     approveGate,
     requestApproval,
     decideApproval,
+    reconcileDecidedApproval,
     listPendingApprovals: () => listPendingApprovals(db),
     delegate,
     isKillSwitchActive,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { AgentosError, ErrorCodes, errors, newId, nowMs, type ApprovalStatus } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { approvals } from "../schema.js";
@@ -102,4 +102,35 @@ export function decideApproval(
 /** Valida que el payload a ejecutar sigue siendo EXACTAMENTE el aprobado. */
 export function verifyApprovalDigest(approval: Approval, payload: unknown): boolean {
   return approval.actionDigest === digestPayload(payload);
+}
+
+/**
+ * Aprobaciones YA decididas (approved|rejected) pero SIN reconciliar todavía
+ * (fix Q2): son las que el despachador de apps/api debe drenar para ejecutar el
+ * efecto del tool_call y/o desbloquear la tarea. Incluye las decididas por el
+ * MCP admin (que solo fija el estado y no puede ejecutar el efecto).
+ */
+export function listReconcilableApprovals(db: AgentosDb): Approval[] {
+  return db
+    .select()
+    .from(approvals)
+    .where(and(ne(approvals.status, "pending"), isNull(approvals.reconciledAt)))
+    .orderBy(asc(approvals.createdAt))
+    .all();
+}
+
+/**
+ * Reclama ATÓMICAMENTE la reconciliación de una aprobación decidida (fix Q2):
+ * fija `reconciled_at` solo si la aprobación está decidida y aún sin reconciliar.
+ * `changes===1` = el llamador ganó la reconciliación y es el ÚNICO que debe
+ * ejecutar el efecto externo; `false` = ya la reconcilió otro (REST o un tick del
+ * despachador) — garantiza ejecución exactamente-una-vez del efecto.
+ */
+export function claimApprovalReconciliation(db: AgentosDb, id: string): boolean {
+  const res = db
+    .update(approvals)
+    .set({ reconciledAt: nowMs() })
+    .where(and(eq(approvals.id, id), ne(approvals.status, "pending"), isNull(approvals.reconciledAt)))
+    .run();
+  return res.changes === 1;
 }

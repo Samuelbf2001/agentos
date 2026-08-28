@@ -352,6 +352,15 @@ export const approvals = sqliteTable(
     decidedByPersonId: text("decided_by_person_id").references(() => people.id),
     decidedAt: integer("decided_at"),
     note: text("note"),
+    /**
+     * Reconciliación del efecto de una decisión (Gate 2, fix Q2): epoch ms en que
+     * la plataforma ya ejecutó el efecto del tool_call aprobado y/o desbloqueó la
+     * tarea. Decidir (por REST o por MCP) SOLO fija el estado; la reconciliación es
+     * un paso aparte. Si es NULL con status != 'pending', la decisión está pendiente
+     * de reconciliar y el despachador de apps/api la drena — nada queda huérfano
+     * aunque la aprobación se decida por el MCP admin (otro proceso, sin runtime).
+     */
+    reconciledAt: integer("reconciled_at"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [
