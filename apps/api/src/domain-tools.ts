@@ -46,6 +46,10 @@ export function bindDomainTools(
 export function claudeCodeAllowlist(allowlist: string[] | null | undefined): string[] {
   if (!allowlist) return [];
   return allowlist.map((name) =>
-    name.includes(".") ? `mcp__${MCP_SERVER_NAME}__${wireName(name)}` : name,
+    // BUG-1 (demo B7b): "delegate"/"ask_human" son tools del catálogo SIN punto;
+    // sin namespacing MCP el CLI las niega (fail-closed) y el agente queda mudo.
+    name.includes(".") || name === "delegate" || name === "ask_human"
+      ? `mcp__${MCP_SERVER_NAME}__${wireName(name)}`
+      : name,
   );
 }
