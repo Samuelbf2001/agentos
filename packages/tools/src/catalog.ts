@@ -15,6 +15,7 @@ import { processTools } from "./tools/processes.js";
 import { methodologyTools } from "./tools/methodology.js";
 import { isoTools } from "./tools/iso.js";
 import { emailTools } from "./tools/email.js";
+import { sourcesTools } from "./tools/sources.js";
 
 /** Helper con inferencia de tipos: el handler recibe args ya tipados por su schema. */
 export function defineTool<S extends z.ZodObject<z.ZodRawShape>>(d: ToolDefinition<S>): ToolDefinition {
@@ -39,6 +40,7 @@ export function buildCatalog(extra: ToolDefinition[] = []): Map<string, ToolDefi
     ...methodologyTools,
     ...isoTools,
     ...emailTools,
+    ...sourcesTools,
     ...extra,
   ];
   for (const tool of all) {

@@ -24,6 +24,8 @@ tools:
   - processes.link_source
   - methodology.get
   - iso.gap_matrix_template
+  - sources.list
+  - sources.ingest
   - ask_human
 ---
 

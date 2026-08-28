@@ -3,6 +3,7 @@
  * cada tool se declara UNA vez y se materializa por adaptadores.
  */
 import type { z } from "zod";
+import type { WhatsAppHubConnector } from "@agentos/shared";
 import type { AgentosDb } from "@agentos/db";
 import type { BoardEngine, EventSink } from "@agentos/core";
 
@@ -35,6 +36,8 @@ export interface ToolExecutionContext extends ToolCallContext {
   engine: BoardEngine;
   /** Base para workspaces de proyecto sin `workspace_path` propio. */
   workspaceRoot: string;
+  /** Conector WhatsAppHub (Fuentes del proyecto). Ausente = no configurado. */
+  whatsappHub?: WhatsAppHubConnector | undefined;
 }
 
 /** Una tool del catálogo: nombre, schema Zod, handler y flags. */
