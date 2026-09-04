@@ -135,6 +135,23 @@ Humanos asignables: Samuel, Sebastián, Jorge, Jefferson, Ernesto (nombre comple
 - **F2-8 MCPs externos reales**: Notion, GHL, Apollo, Drive con allowlist por agente.
 - **F2-9 Catálogo completo**: incorporar gradualmente la taxonomía de ~50 actividades por pilar (Marketing/Sales/Service/Reporting Ops).
 
+### Estado de fase 2 al 2026-09-03
+
+| # | Story | Estado |
+|---|---|---|
+| F2-1 | WhatsApp | Pendiente — contrato de gateway listo, adaptador no construido |
+| F2-2 | Entrevistas masivas | Pendiente |
+| F2-3 | ISO 9001 profundo | ✅ metodología + catálogo + tool (`iso9001-prep.md`, `iso9001-clausulas.md`, `iso.gap_matrix_template`); la generación documental completa sigue pendiente |
+| F2-4 | Cadencia automática | ✅ vía módulo Operación (consent-first) |
+| F2-5 | Auto-mejora | Pendiente |
+| F2-6 | Supabase/pgvector | ⚠️ capa de datos lista y probada (`@agentos/db/pg`, 23 tablas, suite PG dedicada); la app no está conectada a Postgres end-to-end |
+| F2-7 | Portal del cliente | Pendiente |
+| F2-8 | MCPs externos | Pendiente — solo el conector REST a WhatsAppHub |
+| F2-9 | Catálogo ~50 actividades | Parcial — `activity_types` del módulo Operación |
+| — | Jerarquía de agentes | ✅ (no era story original) — `agents.reports_to`, salud de cadena, `GET /api/agents/org`, `agentos.agents.set_manager` |
+| — | Fuentes del proyecto | ✅ (amplía US-12) — migración `project_sources`, conector WhatsAppHub, tools `sources.list/ingest` |
+| — | Módulos de Fase | ✅ (no era story original) — spec y diseño aparte, ver `docs/PRD-modulos-fase.md` |
+
 ## 5. Requisitos no funcionales
 
 | # | NFR | Umbral verificable |
@@ -171,3 +188,5 @@ Humanos asignables: Samuel, Sebastián, Jorge, Jefferson, Ernesto (nombre comple
 ## 7. Nota de términos de uso (suscripción Claude Code)
 
 La suscripción es individual: en el MVP el runtime de proceso hijo corre bajo el token/login de Ernesto para uso propio. En cuanto haya uso de equipo o cliente se cambia el perfil de proveedor a API key de Console o seats Team — cero cambios de código, porque el proveedor es un dato. La UI muestra este aviso en la config de proveedores.
+
+Confirmado por Ernesto: la suscripción es Max individual en esta PC — el runtime `claude_code` queda como caso previsto, no como pendiente de aclarar.

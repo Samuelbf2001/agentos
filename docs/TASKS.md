@@ -33,4 +33,33 @@
 | M6a | Encadenado+cadencia (backend) | `prefillNextPhaseInputs`, REST/MCP next-phase, stage al reutilizar proyecto, `previous_launch_id`; cadencia consent-first por re-creación al cerrar instancia (sin dispatcher, sin migración); gate generalizado a fase actual (caso ENTENDER verificado sin regresión) | GP | M4a,M5 | ✅ hecho (a262006; 490 tests) |
 | M6b | Cadencia en el wizard | Confirmación interactiva de las cadencias propuestas → `cadences_confirmed` en preview y launch | FW | M6a | ✅ hecho (a123725; incluye fix de desempate en prefillNextPhaseInputs hallado al integrar) |
 
-**PRD Módulos de Fase: COMPLETO.** Suite completa 493 verdes (60 archivos) + typecheck 10/10 en `feat/modulos-fase`. Pendiente: aviso de merge a la sesión que mantiene master + visto bueno de Ernesto sobre `requiresApproval` 2→7 del demo (§13.6).
+**PRD Módulos de Fase: COMPLETO.** Suite completa 493 verdes (60 archivos) + typecheck 10/10 en `feat/modulos-fase`. Mergeado a master en d0ae5de (2026-08-28). Pendiente: visto bueno de Ernesto sobre `requiresApproval` 2→7 del demo (§13.6).
+
+## Fase 2 (aterrizada 2026-08-28)
+
+| # | Bloque | Contenido | Commit | Tests/evidencia |
+|---|---|---|---|---|
+| F1 | Jerarquía de agentes | Columna `agents.reports_to`; salud de cadena gobierna asignabilidad; `GET /api/agents/org`; MCP `agentos.agents.set_manager`; Quinn raíz independiente | d53b0f7 | incluido en la suite de 513 verdes |
+| F2 | ISO 9001 profundo | `methodologies/iso9001-prep.md` (cláusulas 4–10), `iso9001-clausulas.md`, tool `iso.gap_matrix_template`, Sam ampliado | merge 9382a61 | incluido en la suite de 513 verdes |
+| F3 | Fuentes del proyecto | Migración 0004 tabla `project_sources`, conector REST a WhatsAppHub (`apps/api/src/connectors/whatsapphub.ts`, env `AGENTOS_WHATSAPPHUB_URL/KEY`), rutas sources/ingest/browse, tools `sources.list/ingest`, sección Fuentes en Contexto (reuniones y hilos de WhatsApp de 2brain → `knowledge_docs` con provenance) | merge e7cd3aa | incluido en la suite de 513 verdes |
+| F4 | Módulos de Fase | Ver tabla M0–M6b arriba; merge d0ae5de (11 commits de la sesión par 2brain-0d); spec `docs/PRD-modulos-fase.md`, diseño `ARCHITECTURE.md` §13. Fix posterior: `sanitizeWorkspacePath` (68540f3) — bug real hallado en vivo: nombre de cliente con punto/espacio final rompía el spawn del runner en Windows | d0ae5de + 68540f3 | seed ACME = launch real; 13 tareas en 29ms, 3 runs succeeded ($1.46), idempotencia OK |
+| F5 | Postgres + pgvector | Entrypoint `@agentos/db/pg`, 23 tablas espejo, tsvector + pgvector con `EmbeddingProvider` (OpenAI o mock), herramienta `migrate-to-pg`. Capa de datos ✅; app NO corre end-to-end en Postgres todavía (repos SQLite síncronos vs PG asíncronos; motor de launch no portado) — ver `docs/POSTGRES.md` §5 | merge cf9d822 | suite PG dedicada, 28 tests, probada con Docker `pgvector/pgvector:pg16` |
+
+Estado de master: `cf9d822`, 47 commits (2026-08-27/28). Suite: 513 tests verdes + 28 omitidos (suite Postgres, se activa con `AGENTOS_PG_URL`) + 1 skip; typecheck 10/10 paquetes. Esquema commiteado: 23 tablas (migraciones 0000–0004).
+
+## En curso — otra sesión (sin commitear, 2026-09-01→03)
+
+No verificado por esta sesión; se documenta como trabajo en progreso, no como hecho.
+
+- **Módulo operativo de Proyectos y Tareas** (`docs/PRD-MODULO-PROYECTOS-TAREAS.md`, 2026-09-01): responsables humanos múltiples (`task_assignees`), vencimientos, 2 avisos de correo con proveedor falso por defecto, vistas "Mis tareas". En el árbol de trabajo hay una migración 0005 sin commitear (`task_assignees`, `task_notification_log`) → 25 tablas en la DB viva local, aunque el esquema commiteado sigue en 23.
+- **Plan de despliegue a EasyPanel**: `Dockerfile.api` + `docs/PLAN-DESPLIEGUE-EASYPANEL.md` (plan, no ejecutado).
+- **Plan de migración desde Notion**: `docs/PLAN-MIGRACION-NOTION-EASYPANEL.md` y `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (Fase 1 preparada, solo lectura, nada escrito).
+
+## Pendientes
+
+- `AGENTOS_WHATSAPPHUB_KEY` (WIKI_SYNC_KEY) en `.env` — pendiente de Ernesto.
+- Cambio observable `requiresApproval` del demo 2→7 en DBs frescas (revert de 1 línea) — pendiente visto bueno de Ernesto.
+- Q5 `order_key` unique — diferido.
+- H12 / `projects.create` con approval — diferido.
+- Fase 2 sin construir: WhatsApp (adaptador, el contrato de gateway ya existe), entrevistas IA masivas, auto-mejora de prompts, portal del cliente, MCPs externos reales, catálogo completo de ~50 actividades.
+- Postgres: portar la app (repos async, motor de launch) para correr end-to-end sobre PG.
