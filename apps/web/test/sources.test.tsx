@@ -136,7 +136,8 @@ describe("Fuentes del proyecto (vista Contexto)", () => {
     fireEvent.click(await screen.findByText("+ Asociar fuente"));
     // Modal con tabs Reuniones / WhatsApp y buscador.
     expect(await screen.findByText("Asociar fuente de 2brain")).toBeTruthy();
-    expect(screen.getByText("Reuniones")).toBeTruthy();
+    // "Reuniones" aparece dos veces: la pestaña del Contexto y la del picker.
+    expect(screen.getAllByText("Reuniones").length).toBeGreaterThan(0);
     expect(screen.getByText("WhatsApp")).toBeTruthy();
     expect(screen.getByPlaceholderText(/Buscar reunión/)).toBeTruthy();
 
