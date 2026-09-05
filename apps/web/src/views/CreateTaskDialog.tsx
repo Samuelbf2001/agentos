@@ -94,11 +94,18 @@ export function CreateTaskDialog({
   onOpenChange,
   projectId,
   defaultStage,
+  initialTitle = "",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   defaultStage: Stage;
+  /**
+   * Título ya escrito fuera del diálogo. La creación rápida de la vista Tareas
+   * es una línea con título y proyecto: al pedir "más campos" no se puede
+   * perder lo que la persona ya tecleó.
+   */
+  initialTitle?: string;
 }) {
   const createTask = useStore((state) => state.createTask);
   const taskCreating = useStore((state) => state.taskCreating);
@@ -112,21 +119,24 @@ export function CreateTaskDialog({
   const loadProjectPeople = useStore((state) => state.loadProjectPeople);
   const openTask = useStore((state) => state.openTask);
 
-  const [draft, setDraft] = useState<CreateTaskDraft>(() => emptyDraft(defaultStage));
+  const [draft, setDraft] = useState<CreateTaskDraft>(() => ({
+    ...emptyDraft(defaultStage),
+    title: initialTitle,
+  }));
   const [labelInput, setLabelInput] = useState("");
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const titleRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    setDraft(emptyDraft(defaultStage));
+    setDraft({ ...emptyDraft(defaultStage), title: initialTitle });
     setLabelInput("");
     setTouched({});
     if (people.length === 0 && !peopleLoading) void loadPeople();
     if (projectPeopleId !== projectId) void loadProjectPeople(projectId);
     // El foco al primer campo evita que el humano tenga que buscar dónde escribir.
     requestAnimationFrame(() => titleRef.current?.focus());
-  }, [open, defaultStage]);
+  }, [open, defaultStage, initialTitle]);
 
   // El roster del proyecto manda cuando la API lo dio: la asignación exige
   // que la persona pertenezca a la organización del proyecto, así que ofrecer

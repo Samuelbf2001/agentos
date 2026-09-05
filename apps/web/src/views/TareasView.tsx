@@ -1,0 +1,1000 @@
+/**
+ * Tareas: la base transversal (PLAN-v1.5 §Navegación nueva; MODELO-TENANCY-v1.4
+ * §El tenant de agencia es el Notion de Sixteam).
+ *
+ * "No tengo que entrar a cada módulo o cada cliente para ver las tareas."
+ * Entonces esta vista es el reemplazo de la base de tareas de Notion para el
+ * trabajo diario de Sixteam: TODAS las tareas de TODOS los clientes y
+ * proyectos en una sola lista, con dos modos —tabla y tablero por estado—,
+ * agrupación y filtros combinables, y creación rápida sin salir de aquí.
+ *
+ * El cliente y el proyecto son columnas por las que se filtra y desde las que
+ * se salta al contexto, nunca puertas que haya que cruzar antes de ver el
+ * trabajo. "Mis tareas" es uno de esos filtros (atajo `m`), no otra pantalla.
+ *
+ * Se lee de `GET /api/tasks` sin `project_id`: la API ya devuelve la base
+ * entera con sus responsables, así que los filtros se cruzan en el navegador y
+ * ninguna combinación cuesta una ida y vuelta.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { useStore } from "../state/store";
+import { api } from "../lib/api";
+import { paths } from "../lib/paths";
+import { ActionButton } from "../components/system";
+import {
+  DuePill,
+  EmptyState,
+  ErrorBox,
+  PersonAvatar,
+  PriorityDot,
+  Spinner,
+  STATUS_LABELS,
+  STATUS_TONES,
+  StatusPill,
+} from "../components/ui";
+import {
+  TASK_STATUSES,
+  getTaskLabels,
+  type Task,
+  type TaskStatus,
+} from "../lib/types";
+import {
+  AGRUPACIONES,
+  AGRUPACION_LABELS,
+  COLUMNAS,
+  COLUMNA_LABELS,
+  ESTADOS_CERRADOS,
+  FILTROS_VACIOS,
+  VENCIMIENTOS,
+  VENCIMIENTO_LABELS,
+  YO,
+  agrupar,
+  chipsActivos,
+  clienteLabel,
+  clientesDe,
+  filtrar,
+  filtrosAParams,
+  guardarProyectoReciente,
+  guardarVista,
+  leerProyectoReciente,
+  leerVista,
+  ordenar,
+  orgIdOf,
+  parseAgrupacion,
+  parseFiltros,
+  parseOrden,
+  personName,
+  projectOf,
+  responsablePrincipal,
+  type Agrupacion,
+  type Columna,
+  type Contexto,
+  type Filtros,
+  type Vista,
+} from "../lib/tareas";
+import { CreateTaskDialog } from "./CreateTaskDialog";
+
+/** Estados del tablero: los cerrados sólo aparecen cuando se piden. */
+function columnasTablero(cerradas: boolean): TaskStatus[] {
+  return cerradas ? TASK_STATUSES : TASK_STATUSES.filter((s) => !ESTADOS_CERRADOS.includes(s));
+}
+
+const selectClass =
+  "min-h-8 rounded-tight border border-line bg-surface px-2 py-1 text-small text-ink-2 focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
+
+// ── Estado en línea: el motor puede decir que no, y entonces se revierte ────
+
+function StatusSelect({
+  task,
+  onChanged,
+}: {
+  task: Task;
+  onChanged: (task: Task) => void;
+}) {
+  const pushToast = useStore((s) => s.pushToast);
+  const openTask = useStore((s) => s.openTask);
+  const [busy, setBusy] = useState(false);
+  const tone = STATUS_TONES[task.status];
+  const toneClass =
+    tone === "work"
+      ? "bg-work-bg text-work border-work-line"
+      : tone === "decide"
+        ? "bg-decide-bg text-decide border-decide-line"
+        : tone === "broken"
+          ? "bg-broken-bg text-broken border-broken-line"
+          : tone === "done"
+            ? "bg-done-bg text-done border-done-line"
+            : "bg-surface text-muted border-line";
+
+  async function move(to: TaskStatus): Promise<void> {
+    if (to === task.status) return;
+    setBusy(true);
+    try {
+      const { task: updated } = await api.moveTask(task.id, { to, expected_version: task.version });
+      onChanged(updated);
+    } catch (err) {
+      // La regla anti-teatro (ningún REVIEW/DONE sin evidencia) se resuelve en
+      // la ficha, no aquí: se abre en vez de dejar un error mudo en la fila.
+      const message = err instanceof Error ? err.message : "La API rechazó la transición";
+      pushToast("error", message);
+      void openTask(task.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <select
+      aria-label={`Estado de ${task.title}`}
+      data-testid={`tarea-estado-${task.id}`}
+      data-status={task.status}
+      disabled={busy}
+      value={task.status}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => void move(event.target.value as TaskStatus)}
+      className={`min-h-6 appearance-none rounded-[6px] border px-1.5 py-0.5 text-label font-semibold uppercase focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50 ${toneClass}`}
+    >
+      {TASK_STATUSES.map((status) => (
+        <option key={status} value={status}>
+          {STATUS_LABELS[status]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// ── Título en línea ─────────────────────────────────────────────────────────
+
+function TitleCell({ task, onChanged }: { task: Task; onChanged: (task: Task) => void }) {
+  const openTask = useStore((s) => s.openTask);
+  const pushToast = useStore((s) => s.pushToast);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(task.title);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setValue(task.title);
+  }, [task.title, editing]);
+
+  async function save(): Promise<void> {
+    const title = value.trim();
+    setEditing(false);
+    if (!title || title === task.title) return;
+    setBusy(true);
+    try {
+      const { task: updated } = await api.patchTask(task.id, {
+        expected_version: task.version,
+        title,
+      });
+      onChanged(updated);
+    } catch (err) {
+      pushToast("error", err instanceof Error ? err.message : "No se pudo renombrar la tarea");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        data-testid={`tarea-titulo-input-${task.id}`}
+        aria-label={`Título de ${task.title}`}
+        onClick={(event) => event.stopPropagation()}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") void save();
+          if (event.key === "Escape") {
+            setValue(task.title);
+            setEditing(false);
+          }
+        }}
+        className="min-h-6 w-full rounded-tight border border-link bg-surface px-1.5 py-0.5 text-small text-ink focus:outline-none"
+      />
+    );
+  }
+
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <PriorityDot priority={task.priority} />
+      <button
+        type="button"
+        data-testid={`tarea-abrir-${task.id}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void openTask(task.id);
+        }}
+        className={`min-w-0 flex-1 truncate text-left text-small font-medium text-ink hover:text-link ${busy ? "opacity-50" : ""}`}
+      >
+        {task.title}
+      </button>
+      <button
+        type="button"
+        title="Renombrar aquí mismo"
+        aria-label={`Renombrar ${task.title}`}
+        data-testid={`tarea-renombrar-${task.id}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setEditing(true);
+        }}
+        className="press invisible shrink-0 rounded-tight px-1 text-label text-faint hover:text-ink-2 group-hover:visible"
+      >
+        Renombrar
+      </button>
+    </span>
+  );
+}
+
+// ── Fila de la tabla ────────────────────────────────────────────────────────
+
+function TaskRow({
+  task,
+  ctx,
+  selected,
+  onChanged,
+}: {
+  task: Task;
+  ctx: Contexto;
+  selected: boolean;
+  onChanged: (task: Task) => void;
+}) {
+  const openTask = useStore((s) => s.openTask);
+  const project = projectOf(task, ctx.projects);
+  const orgId = orgIdOf(task, ctx.projects);
+  const labels = getTaskLabels(task);
+  const responsable = responsablePrincipal(task);
+  const overdue = task.status !== "DONE" && task.status !== "CANCELLED" && (task.dueAt ?? task.due_at ?? Number.POSITIVE_INFINITY) < Date.now();
+
+  const cell = "border-b border-line-soft px-2.5 py-1 align-middle";
+
+  return (
+    <tr
+      data-testid={`tarea-fila-${task.id}`}
+      data-selected={selected ? "true" : undefined}
+      aria-selected={selected}
+      onClick={() => void openTask(task.id)}
+      className={`group h-8 cursor-pointer transition-colors hover:bg-surface-2 ${
+        selected ? "bg-link-bg" : ""
+      } ${overdue ? "late" : ""}`}
+    >
+      <td className={`${cell} max-w-0`}>
+        <TitleCell task={task} onChanged={onChanged} />
+      </td>
+      <td className={`${cell} whitespace-nowrap text-small`}>
+        {orgId ? (
+          <Link
+            to={paths.tareas({ cliente: orgId })}
+            onClick={(event) => event.stopPropagation()}
+            className="text-link hover:underline"
+          >
+            {clienteLabel(orgId, ctx.projects)}
+          </Link>
+        ) : (
+          <span className="text-faint">—</span>
+        )}
+      </td>
+      <td className={`${cell} whitespace-nowrap text-small`}>
+        {project ? (
+          <Link
+            to={paths.proyecto(project.id, "ruta")}
+            title="Ir a la Ruta del proyecto"
+            onClick={(event) => event.stopPropagation()}
+            className="text-ink-2 hover:text-link hover:underline"
+          >
+            {project.name}
+          </Link>
+        ) : (
+          <span className="text-faint">—</span>
+        )}
+      </td>
+      <td className={`${cell} whitespace-nowrap`}>
+        <StatusSelect task={task} onChanged={onChanged} />
+      </td>
+      <td className={`${cell} whitespace-nowrap text-small text-ink-2`}>
+        {responsable ? (
+          <span className="inline-flex items-center gap-1.5">
+            <PersonAvatar name={personName(responsable, ctx.people)} size={5} />
+            {personName(responsable, ctx.people)}
+          </span>
+        ) : (
+          <span className="text-faint">Sin responsable</span>
+        )}
+      </td>
+      <td className={cell}>
+        <span className="flex flex-wrap gap-1">
+          {labels.length === 0 ? <span className="text-label text-faint">—</span> : null}
+          {labels.map((label) => (
+            <Link
+              key={label}
+              to={paths.tareas({ etiqueta: label })}
+              onClick={(event) => event.stopPropagation()}
+              className="rounded-full bg-link-bg px-1.5 py-0.5 text-label text-link"
+            >
+              {label}
+            </Link>
+          ))}
+        </span>
+      </td>
+      <td className={`${cell} whitespace-nowrap`}>
+        <DuePill task={task} />
+      </td>
+      <td className={`${cell} whitespace-nowrap text-label uppercase text-muted`}>
+        {task.priority === "urgent"
+          ? "Urgente"
+          : task.priority === "high"
+            ? "Alta"
+            : task.priority === "low"
+              ? "Baja"
+              : "Normal"}
+      </td>
+    </tr>
+  );
+}
+
+// ── Tarjeta del tablero ─────────────────────────────────────────────────────
+
+function TaskCard({ task, ctx, selected }: { task: Task; ctx: Contexto; selected: boolean }) {
+  const openTask = useStore((s) => s.openTask);
+  const project = projectOf(task, ctx.projects);
+  const orgId = orgIdOf(task, ctx.projects);
+  const responsable = responsablePrincipal(task);
+  return (
+    <button
+      type="button"
+      data-testid={`tarea-tarjeta-${task.id}`}
+      data-selected={selected ? "true" : undefined}
+      onClick={() => void openTask(task.id)}
+      className={`flex w-full flex-col gap-1 rounded-soft border bg-surface px-2.5 py-2 text-left shadow-rest transition-colors hover:bg-surface-2 ${
+        selected ? "border-link" : "border-line-soft"
+      }`}
+    >
+      <span className="flex items-start gap-1.5">
+        <PriorityDot priority={task.priority} />
+        <span className="min-w-0 flex-1 text-small font-medium leading-snug text-ink">{task.title}</span>
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5 text-label text-muted">
+        <span className="max-w-[10rem] truncate">{clienteLabel(orgId, ctx.projects)}</span>
+        {project ? <span className="max-w-[10rem] truncate text-faint">· {project.name}</span> : null}
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5 text-label">
+        {responsable ? (
+          <span className="text-muted">{personName(responsable, ctx.people)}</span>
+        ) : (
+          <span className="text-faint">Sin responsable</span>
+        )}
+        <DuePill task={task} />
+      </span>
+    </button>
+  );
+}
+
+// ── La vista ────────────────────────────────────────────────────────────────
+
+export default function TareasView() {
+  const projects = useStore((s) => s.projects);
+  const loadProjects = useStore((s) => s.loadProjects);
+  const people = useStore((s) => s.people);
+  const loadPeople = useStore((s) => s.loadPeople);
+  const labelCatalog = useStore((s) => s.labelCatalog);
+  const loadLabels = useStore((s) => s.loadLabels);
+  const me = useStore((s) => s.person);
+  const createTask = useStore((s) => s.createTask);
+  const openTask = useStore((s) => s.openTask);
+  const detailTask = useStore((s) => s.taskDetail?.task ?? null);
+
+  const [params, setParams] = useSearchParams();
+  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [vista, setVista] = useState<Vista>(() => leerVista());
+  const [cursor, setCursor] = useState(-1);
+  const [quickTitle, setQuickTitle] = useState("");
+  const [quickProject, setQuickProject] = useState<string>(() => leerProyectoReciente() ?? "");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const filtros = useMemo(() => parseFiltros(params), [params]);
+  const agrupacion = useMemo(() => parseAgrupacion(params), [params]);
+  const orden = useMemo(() => parseOrden(params), [params]);
+
+  const ctx = useMemo<Contexto>(
+    () => ({ projects, people, meId: me?.id ?? null }),
+    [projects, people, me],
+  );
+
+  const cargar = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Sin `project_id`: la base es una sola y cruza todos los clientes.
+      const result = await api.tasks({});
+      setTasks(result.tasks);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudieron cargar las tareas");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void cargar();
+    void loadProjects();
+    void loadPeople();
+    // El catálogo global (sin proyecto) es el correcto: la vista cruza proyectos.
+    void loadLabels(undefined);
+  }, [cargar, loadProjects, loadPeople, loadLabels]);
+
+  // Lo que se edita en la ficha se ve en la fila sin recargar la base entera.
+  useEffect(() => {
+    if (!detailTask) return;
+    setTasks((prev) =>
+      prev ? prev.map((task) => (task.id === detailTask.id ? detailTask : task)) : prev,
+    );
+  }, [detailTask]);
+
+  useEffect(() => {
+    if (!quickProject && projects.length > 0) setQuickProject(projects[0]!.id);
+  }, [projects, quickProject]);
+
+  function aplicar(next: Filtros, extra?: { agrupacion?: Agrupacion; orden?: typeof orden }): void {
+    setParams(
+      filtrosAParams(next, {
+        agrupacion: extra?.agrupacion ?? agrupacion,
+        orden: extra?.orden ?? orden,
+      }),
+      { replace: true },
+    );
+    setCursor(-1);
+  }
+
+  function setFiltro<K extends keyof Filtros>(key: K, value: Filtros[K]): void {
+    aplicar({ ...filtros, [key]: value });
+  }
+
+  const visibles = useMemo(() => {
+    if (!tasks) return [];
+    return ordenar(filtrar(tasks, filtros, ctx), orden.columna, orden.direccion, ctx);
+  }, [tasks, filtros, ctx, orden]);
+
+  const grupos = useMemo(() => agrupar(visibles, agrupacion, ctx), [visibles, agrupacion, ctx]);
+  /** Orden de recorrido del teclado: el mismo que se ve, grupo a grupo. */
+  const recorrido = useMemo(() => grupos.flatMap((grupo) => grupo.tasks), [grupos]);
+  const chips = useMemo(() => chipsActivos(filtros, ctx), [filtros, ctx]);
+  const clientes = useMemo(() => clientesDe(projects), [projects]);
+  const proyectosDelCliente = useMemo(
+    () => (filtros.cliente ? projects.filter((p) => p.orgId === filtros.cliente) : projects),
+    [projects, filtros.cliente],
+  );
+  const mine = filtros.responsable === YO;
+
+  const onChanged = useCallback((updated: Task) => {
+    setTasks((prev) => (prev ? prev.map((t) => (t.id === updated.id ? updated : t)) : prev));
+  }, []);
+
+  // Teclado: `j`/`k` recorren, Enter abre, Esc suelta, `/` busca, `m` es mío.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
+      if (event.key === "/" && !typing) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (typing) return;
+      if (event.key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        setCursor((c) => Math.min(recorrido.length - 1, c + 1));
+      } else if (event.key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        setCursor((c) => Math.max(0, c - 1));
+      } else if (event.key === "Enter") {
+        const task = recorrido[cursor];
+        if (task) {
+          event.preventDefault();
+          void openTask(task.id);
+        }
+      } else if (event.key === "Escape") {
+        setCursor(-1);
+      } else if (event.key === "m") {
+        event.preventDefault();
+        aplicar({ ...filtros, responsable: mine ? null : YO });
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  /** Un chip es un filtro puesto: quitarlo lo devuelve a su valor neutro. */
+  function quitarChip(key: keyof Filtros): void {
+    if (key === "texto") aplicar({ ...filtros, texto: "" });
+    else if (key === "cerradas") aplicar({ ...filtros, cerradas: false });
+    else aplicar({ ...filtros, [key]: null });
+  }
+
+  function ordenarPor(columna: Columna): void {
+    const direccion: "asc" | "desc" =
+      orden.columna === columna && orden.direccion === "asc" ? "desc" : "asc";
+    aplicar(filtros, { orden: { columna, direccion } });
+  }
+
+  function cambiarVista(next: Vista): void {
+    setVista(next);
+    guardarVista(next);
+  }
+
+  async function crearRapido(): Promise<void> {
+    const title = quickTitle.trim();
+    const project = projects.find((p) => p.id === quickProject);
+    if (!title || !project) return;
+    const task = await createTask({ project_id: project.id, title, stage: project.stage });
+    if (task) {
+      setQuickTitle("");
+      guardarProyectoReciente(project.id);
+      setTasks((prev) => (prev ? [task, ...prev] : [task]));
+    }
+  }
+
+  const total = tasks?.length ?? 0;
+  const sinFiltros = chips.length === 0;
+
+  return (
+    <div className="density-operar mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-display text-ink">Tareas</h1>
+          <p className="mt-1.5 max-w-[68ch] text-body text-muted">
+            Todo el trabajo de Sixteam en una sola base: todos los clientes, todos los proyectos. El
+            cliente y el proyecto son filtros, no puertas que haya que cruzar.
+          </p>
+        </div>
+        <div
+          role="group"
+          aria-label="Modo de vista"
+          className="flex gap-0.5 rounded-[11px] bg-canvas-deep p-[3px]"
+        >
+          {(["tabla", "tablero"] as const).map((modo) => (
+            <button
+              key={modo}
+              type="button"
+              data-testid={`tareas-vista-${modo}`}
+              aria-pressed={vista === modo}
+              onClick={() => cambiarVista(modo)}
+              className={`press inline-flex min-h-8 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
+                vista === modo ? "bg-surface text-ink shadow-rest" : "text-muted hover:text-ink-2"
+              }`}
+            >
+              {modo === "tabla" ? "Tabla" : "Tablero"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Buscar, filtrar y agrupar ─────────────────────────────────────── */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-52 flex-1">
+          <label htmlFor="tareas-buscar" className="sr-only">
+            Buscar entre todas las tareas
+          </label>
+          <input
+            id="tareas-buscar"
+            ref={searchRef}
+            type="search"
+            data-testid="tareas-buscar"
+            value={filtros.texto}
+            onChange={(event) => setFiltro("texto", event.target.value)}
+            placeholder="Buscar en todas las tareas…"
+            className="min-h-8 w-full rounded-full border border-line bg-surface px-3.5 py-1 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+          />
+          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">
+            /
+          </kbd>
+        </div>
+
+        <button
+          type="button"
+          data-testid="tareas-mias"
+          aria-pressed={mine}
+          title="Sólo lo asignado a ti (m)"
+          onClick={() => setFiltro("responsable", mine ? null : YO)}
+          className={`press inline-flex min-h-8 items-center gap-1.5 rounded-tight border px-2.5 py-1 text-small font-semibold ${
+            mine ? "border-link bg-link-bg text-link" : "border-line bg-surface text-muted"
+          }`}
+        >
+          Mis tareas
+          <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">m</kbd>
+        </button>
+
+        <label className="sr-only" htmlFor="tareas-agrupar">
+          Agrupar por
+        </label>
+        <select
+          id="tareas-agrupar"
+          data-testid="tareas-agrupar"
+          value={agrupacion}
+          onChange={(event) => aplicar(filtros, { agrupacion: event.target.value as Agrupacion })}
+          className={selectClass}
+        >
+          {AGRUPACIONES.map((value) => (
+            <option key={value} value={value}>
+              {value === "ninguna" ? "Sin agrupar" : `Agrupar: ${AGRUPACION_LABELS[value]}`}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className="sr-only" htmlFor="tareas-cliente">
+          Cliente
+        </label>
+        <select
+          id="tareas-cliente"
+          data-testid="tareas-filtro-cliente"
+          value={filtros.cliente ?? ""}
+          onChange={(event) => setFiltro("cliente", event.target.value || null)}
+          className={selectClass}
+        >
+          <option value="">Todos los clientes</option>
+          {clientes.map((cliente) => (
+            <option key={cliente.id} value={cliente.id}>
+              {cliente.label}
+            </option>
+          ))}
+        </select>
+
+        <label className="sr-only" htmlFor="tareas-proyecto">
+          Proyecto
+        </label>
+        <select
+          id="tareas-proyecto"
+          data-testid="tareas-filtro-proyecto"
+          value={filtros.proyecto ?? ""}
+          onChange={(event) => setFiltro("proyecto", event.target.value || null)}
+          className={selectClass}
+        >
+          <option value="">Todos los proyectos</option>
+          {proyectosDelCliente.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+
+        <label className="sr-only" htmlFor="tareas-responsable">
+          Responsable
+        </label>
+        <select
+          id="tareas-responsable"
+          data-testid="tareas-filtro-responsable"
+          value={filtros.responsable ?? ""}
+          onChange={(event) => setFiltro("responsable", event.target.value || null)}
+          className={selectClass}
+        >
+          <option value="">Cualquier responsable</option>
+          <option value={YO}>Yo</option>
+          {people.map((person) => (
+            <option key={person.id} value={person.id}>
+              {person.full_name || person.fullName}
+            </option>
+          ))}
+        </select>
+
+        <label className="sr-only" htmlFor="tareas-estado">
+          Estado
+        </label>
+        <select
+          id="tareas-estado"
+          data-testid="tareas-filtro-estado"
+          value={filtros.estado ?? ""}
+          onChange={(event) => setFiltro("estado", (event.target.value || null) as TaskStatus | null)}
+          className={selectClass}
+        >
+          <option value="">Cualquier estado</option>
+          {TASK_STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {STATUS_LABELS[status]}
+            </option>
+          ))}
+        </select>
+
+        <label className="sr-only" htmlFor="tareas-etiqueta">
+          Etiqueta
+        </label>
+        <select
+          id="tareas-etiqueta"
+          data-testid="tareas-filtro-etiqueta"
+          value={filtros.etiqueta ?? ""}
+          onChange={(event) => setFiltro("etiqueta", event.target.value || null)}
+          className={selectClass}
+        >
+          <option value="">Cualquier etiqueta</option>
+          {labelCatalog.map((usage) => (
+            <option key={usage.label} value={usage.label}>
+              {usage.label} ({usage.count})
+            </option>
+          ))}
+        </select>
+
+        <label className="sr-only" htmlFor="tareas-vencimiento">
+          Vencimiento
+        </label>
+        <select
+          id="tareas-vencimiento"
+          data-testid="tareas-filtro-vencimiento"
+          value={filtros.vencimiento ?? ""}
+          onChange={(event) =>
+            setFiltro("vencimiento", (event.target.value || null) as Filtros["vencimiento"])
+          }
+          className={selectClass}
+        >
+          <option value="">Cualquier vencimiento</option>
+          {VENCIMIENTOS.map((value) => (
+            <option key={value} value={value}>
+              {VENCIMIENTO_LABELS[value]}
+            </option>
+          ))}
+        </select>
+
+        <label className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 text-label text-muted">
+          <input
+            type="checkbox"
+            data-testid="tareas-incluir-cerradas"
+            checked={filtros.cerradas}
+            onChange={(event) => setFiltro("cerradas", event.target.checked)}
+            className="h-4 w-4 rounded border-line accent-[var(--color-link)]"
+          />
+          Incluir cerradas
+        </label>
+      </div>
+
+      {/* ── Lo filtrado se ve y se puede quitar ───────────────────────────── */}
+      {chips.length > 0 ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5" data-testid="tareas-chips">
+          {chips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              data-testid={`tareas-chip-${chip.key}`}
+              onClick={() => quitarChip(chip.key)}
+              className="press inline-flex items-center gap-1.5 rounded-full border border-link bg-link-bg px-2 py-0.5 text-label font-semibold text-link"
+            >
+              {chip.label}: {chip.value}
+              <span aria-hidden="true">×</span>
+              <span className="sr-only">Quitar este filtro</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            data-testid="tareas-limpiar"
+            onClick={() => aplicar(FILTROS_VACIOS)}
+            className="press text-label font-semibold text-muted hover:text-ink-2"
+          >
+            Limpiar todo
+          </button>
+        </div>
+      ) : null}
+
+      {/* ── Creación rápida: una línea, sin salir de aquí ─────────────────── */}
+      <form
+        data-testid="tareas-alta-rapida"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void crearRapido();
+        }}
+        className="mt-3 flex flex-wrap items-center gap-2 rounded-soft border border-line-soft bg-surface px-2.5 py-2 shadow-rest"
+      >
+        <span aria-hidden="true" className="text-title leading-none text-faint">
+          +
+        </span>
+        <label htmlFor="tareas-alta-titulo" className="sr-only">
+          Título de la tarea nueva
+        </label>
+        <input
+          id="tareas-alta-titulo"
+          data-testid="tareas-alta-titulo"
+          value={quickTitle}
+          onChange={(event) => setQuickTitle(event.target.value)}
+          placeholder="Añade una tarea y pulsa Enter…"
+          className="min-h-8 min-w-48 flex-1 rounded-tight border border-transparent bg-transparent px-1.5 py-1 text-small text-ink focus:border-line focus:outline-none"
+        />
+        <label htmlFor="tareas-alta-proyecto" className="sr-only">
+          Proyecto de la tarea nueva
+        </label>
+        <select
+          id="tareas-alta-proyecto"
+          data-testid="tareas-alta-proyecto"
+          value={quickProject}
+          onChange={(event) => setQuickProject(event.target.value)}
+          className={selectClass}
+        >
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+        <ActionButton
+          type="submit"
+          variant="primary"
+          disabled={!quickTitle.trim() || !quickProject}
+          data-testid="tareas-alta-enviar"
+        >
+          Añadir
+        </ActionButton>
+        <button
+          type="button"
+          data-testid="tareas-alta-mas"
+          disabled={!quickProject}
+          onClick={() => setDialogOpen(true)}
+          className="press text-small font-semibold text-link hover:underline disabled:opacity-45"
+        >
+          Más campos…
+        </button>
+      </form>
+
+      {/* ── Cuerpo ───────────────────────────────────────────────────────── */}
+      <div className="mt-4">
+        {loading && !tasks ? <Spinner label="Leyendo la base de tareas…" /> : null}
+        {error ? <ErrorBox message={error} onRetry={() => void cargar()} /> : null}
+
+        {!error && tasks && visibles.length === 0 ? (
+          <EmptyState
+            title={sinFiltros ? "Todavía no hay tareas" : "Nada coincide con estos filtros"}
+            hint={
+              sinFiltros
+                ? "Escribe arriba el primer título, elige el proyecto y pulsa Enter: la tarea nace en el tablero de ese cliente."
+                : "Prueba a quitar un filtro. También puedes limpiarlos todos y volver a la base completa."
+            }
+            {...(sinFiltros
+              ? {}
+              : {
+                  action: (
+                    <ActionButton onClick={() => aplicar(FILTROS_VACIOS)}>Limpiar los filtros</ActionButton>
+                  ),
+                })}
+          />
+        ) : null}
+
+        {!error && visibles.length > 0 && vista === "tabla" ? (
+          <div className="space-y-5">
+            {grupos.map((grupo) => {
+              let indexBase = 0;
+              for (const previo of grupos) {
+                if (previo.key === grupo.key) break;
+                indexBase += previo.tasks.length;
+              }
+              return (
+                <section key={grupo.key} data-testid={`tareas-grupo-${grupo.key}`}>
+                  {agrupacion !== "ninguna" ? (
+                    <h2 className="mb-1.5 flex items-center gap-2 text-label uppercase text-muted">
+                      {agrupacion === "estado" ? (
+                        <StatusPill status={grupo.key as TaskStatus} />
+                      ) : (
+                        grupo.label
+                      )}
+                      <span className="rounded-full bg-canvas-deep px-1.5 py-px text-label tabular-nums text-muted">
+                        {grupo.tasks.length}
+                      </span>
+                    </h2>
+                  ) : null}
+                  <div className="overflow-x-auto rounded-panel border border-line-soft bg-surface shadow-rest">
+                    <table className="w-full min-w-[64rem] border-collapse text-left">
+                      <thead>
+                        <tr>
+                          {COLUMNAS.map((columna) => (
+                            <th
+                              key={columna}
+                              scope="col"
+                              aria-sort={
+                                orden.columna === columna
+                                  ? orden.direccion === "asc"
+                                    ? "ascending"
+                                    : "descending"
+                                  : "none"
+                              }
+                              className="border-b border-line px-2.5 py-1.5 text-label uppercase text-muted"
+                            >
+                              <button
+                                type="button"
+                                data-testid={`tareas-orden-${columna}`}
+                                onClick={() => ordenarPor(columna)}
+                                className="press inline-flex items-center gap-1 uppercase text-muted hover:text-ink-2"
+                              >
+                                {COLUMNA_LABELS[columna]}
+                                {orden.columna === columna ? (
+                                  <span aria-hidden="true">{orden.direccion === "asc" ? "↑" : "↓"}</span>
+                                ) : null}
+                              </button>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {grupo.tasks.map((task, index) => (
+                          <TaskRow
+                            key={task.id}
+                            task={task}
+                            ctx={ctx}
+                            selected={cursor === indexBase + index}
+                            onChanged={onChanged}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {!error && visibles.length > 0 && vista === "tablero" ? (
+          <div className="flex gap-2.5 overflow-x-auto pb-2" data-testid="tareas-tablero">
+            {columnasTablero(filtros.cerradas).map((status) => {
+              const columna = visibles.filter((task) => task.status === status);
+              return (
+                <section
+                  key={status}
+                  data-testid={`tareas-columna-${status}`}
+                  className="flex w-64 shrink-0 flex-col gap-1.5 rounded-panel border border-line-soft bg-canvas-deep/60 p-2"
+                >
+                  <h2 className="flex items-center gap-2 px-1 py-0.5">
+                    <StatusPill status={status} />
+                    <span className="text-label tabular-nums text-muted">{columna.length}</span>
+                  </h2>
+                  {columna.length === 0 ? (
+                    <p className="px-1 py-2 text-label text-faint">Nada aquí.</p>
+                  ) : null}
+                  {columna.map((task) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      ctx={ctx}
+                      selected={recorrido[cursor]?.id === task.id}
+                    />
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+
+      <p className="mt-5 flex flex-wrap items-center gap-2 text-small text-muted">
+        <span data-testid="tareas-resumen">
+          {visibles.length} de {total} tareas
+          {projects.length > 0
+            ? ` · ${new Set(visibles.map((t) => t.projectId)).size} proyectos · ${
+                new Set(visibles.map((t) => orgIdOf(t, projects)).filter(Boolean)).size
+              } clientes`
+            : ""}
+        </span>
+        <span className="text-faint">
+          j / k para moverte, Enter abre la ficha, m alterna tus tareas, / busca.
+        </span>
+        <Link to={paths.proyectos()} className="press font-semibold text-link hover:underline">
+          Ver los proyectos
+        </Link>
+      </p>
+
+      {quickProject ? (
+        <CreateTaskDialog
+          open={dialogOpen}
+          onOpenChange={(open) => {
+            setDialogOpen(open);
+            if (!open) void cargar();
+          }}
+          projectId={quickProject}
+          initialTitle={quickTitle}
+          defaultStage={projects.find((p) => p.id === quickProject)?.stage ?? "ENTENDER"}
+        />
+      ) : null}
+    </div>
+  );
+}
