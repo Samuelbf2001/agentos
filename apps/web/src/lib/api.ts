@@ -413,7 +413,7 @@ export const api = {
   /** Artefacto por enlace o texto: no sube binario, sólo referencia. */
   attachArtifact: (
     id: string,
-    body: { kind: string; title: string; content?: string; path?: string },
+    body: { kind: string; title: string; content?: string },
   ) => request<{ artifact: Artifact }>(`/api/tasks/${id}/artifacts`, { method: "POST", body }),
   /**
    * Subida real de archivo. Va por fetch directo y no por `request`: el cuerpo
@@ -452,8 +452,6 @@ export const api = {
     }
     return json as { artifact: Artifact };
   },
-  artifactDownloadUrl: (artifactId: string) => `${API_BASE}/api/artifacts/${artifactId}/download`,
-
   // ── Runs ──────────────────────────────────────────────────────────────────
   runs: (q: { status?: string; agent_id?: string; task_id?: string; project_id?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();

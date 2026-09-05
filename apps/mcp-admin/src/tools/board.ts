@@ -245,6 +245,9 @@ export const boardTools: AdminToolDefinition[] = [
         throw errors.validation("tasks.update con patch vacío: nada que hacer");
       }
       const before = taskAuditFields(task);
+      // Capturado ANTES de reemplazar: si el patch sólo trae `labels`, es la
+      // única forma de que la auditoría registre el cambio (igual que REST).
+      const labelsBefore = args.patch.labels !== undefined ? listTaskLabels(ctx.db, task.id) : undefined;
       const patch: Partial<Task> = {};
       if (args.patch.title !== undefined) patch.title = args.patch.title;
       if (args.patch.description !== undefined) patch.description = args.patch.description;
@@ -266,8 +269,8 @@ export const boardTools: AdminToolDefinition[] = [
         action: "tasks.update",
         entityType: "task",
         entityId: task.id,
-        before,
-        after: taskAuditFields(updated),
+        before: labelsBefore !== undefined ? { ...before, labels: labelsBefore } : before,
+        after: labelsBefore !== undefined ? { ...taskAuditFields(updated), labels } : taskAuditFields(updated),
         reason: args.reason,
       });
       return { ...updated, labels };

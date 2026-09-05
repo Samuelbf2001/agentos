@@ -98,7 +98,11 @@ export function normalizePersonIds(
   return { personIds: unique, primaryPersonId: primary };
 }
 
-/** Valida existencia y pertenencia organizacional antes de mutar. */
+/**
+ * Valida existencia y pertenencia organizacional antes de mutar. Personal
+ * interno (`is_internal`) es asignable a cualquier proyecto sin importar su
+ * organización (I3).
+ */
 export function validatePeopleForProject(
   db: AgentosDb,
   project: Project,
@@ -110,13 +114,16 @@ export function validatePeopleForProject(
   for (const personId of normalized.personIds) {
     const person = getPerson(db, personId);
     if (!person) throw errors.notFound("person", personId);
-    if (person.orgId !== project.orgId) {
-      throw errors.validation("La persona responsable debe pertenecer a la organización del proyecto", {
-        personId,
-        projectId: project.id,
-        projectOrgId: project.orgId,
-        personOrgId: person.orgId,
-      });
+    if (!person.isInternal && person.orgId !== project.orgId) {
+      throw errors.validation(
+        "La persona responsable debe pertenecer a la organización del proyecto o al equipo interno",
+        {
+          personId,
+          projectId: project.id,
+          projectOrgId: project.orgId,
+          personOrgId: person.orgId,
+        },
+      );
     }
     people.push(person);
   }

@@ -23,7 +23,7 @@ import {
   listDocs,
   listArtifacts,
   listLabelCatalog,
-  listPeople,
+  listAssignablePeople,
   listProjects,
   listProjectSources,
   listRunsForTask,
@@ -150,12 +150,17 @@ const AssignBody = z.object({
   person_id: z.string().nullable().optional(),
 });
 
-const ArtifactBody = z.object({
-  kind: z.string().min(1),
-  title: z.string().min(1),
-  content: z.string().optional(),
-  path: z.string().optional(),
-});
+const ArtifactBody = z
+  .object({
+    kind: z.string().min(1),
+    title: z.string().min(1),
+    /** Enlace o texto de referencia; nunca una ruta de servidor (B1: `path` no se acepta desde el body). */
+    content: z.string().optional(),
+  })
+  .refine((body) => body.kind !== "link" || (!!body.content && /^https?:\/\//i.test(body.content)), {
+    message: "Un artefacto de enlace requiere `content` con una URL http(s)://",
+    path: ["content"],
+  });
 
 const DecisionBody = z.object({
   expected_version: z.number().int().positive(),
@@ -235,17 +240,17 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   });
 
   /**
-   * Personas asignables a un proyecto. La regla de aislamiento humano (PRD
-   * §"No puede asignarse una persona de otra organización") se valida en el
-   * repositorio; esta ruta existe para que el selector de la interfaz ofrezca
-   * SÓLO opciones válidas en vez de dejar que el humano elija una que la API
-   * va a rechazar.
+   * Personas asignables a un proyecto: las de su organización más el personal
+   * interno (I3), que puede asignarse a cualquier proyecto. La regla se
+   * valida también en el repositorio; esta ruta existe para que el selector
+   * de la interfaz ofrezca SÓLO opciones válidas en vez de dejar que el
+   * humano elija una que la API va a rechazar.
    */
   app.get("/api/projects/:id/people", async (req) => {
     const { id } = req.params as { id: string };
     const project = getProject(db, id);
     if (!project) throw errors.notFound("project", id);
-    const rows = await listPeople(db, project.orgId);
+    const rows = await listAssignablePeople(db, project.orgId);
     return {
       org_id: project.orgId,
       people: rows.map((person) => ({
@@ -721,7 +726,6 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       kind: body.kind,
       title: body.title,
       content: body.content ?? null,
-      path: body.path ?? null,
       createdBy: personActor(req),
     });
     sink.publish(`board:${task.projectId}`, {
@@ -751,11 +755,18 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     let data: Buffer;
     try {
       data = await upload.toBuffer();
-    } catch {
-      throw errors.validation(
-        `El archivo supera el límite de ${Math.round(maxArtifactBytes() / (1024 * 1024))} MB`,
-        { maxBytes: maxArtifactBytes() },
-      );
+    } catch (err) {
+      // Distingue el límite de tamaño de `@fastify/multipart` (código estable
+      // de la librería) de cualquier otro fallo de lectura del stream.
+      if ((err as { code?: string } | undefined)?.code === "FST_REQ_FILE_TOO_LARGE") {
+        return reply.status(413).send({
+          error: {
+            code: "file_too_large",
+            message: `El archivo supera el límite de ${Math.round(maxArtifactBytes() / (1024 * 1024))} MB`,
+          },
+        });
+      }
+      throw err;
     }
     if (data.byteLength === 0) throw errors.validation("El archivo está vacío");
 
@@ -813,11 +824,18 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     if (!artifact.path) {
       throw errors.validation("Este artefacto no tiene archivo: su contenido es texto", { artifactId: id });
     }
+    // Sólo se sirven binarios que ESTA API escribió bajo la raíz de artefactos
+    // (B1): cualquier otro origen de `path` responde 404 sin revelar rutas.
+    const meta = (artifact.meta ?? {}) as {
+      originalName?: string | null;
+      mimeType?: string | null;
+      storage?: string | null;
+    };
+    if (meta.storage !== "artifacts_root") throw errors.notFound("artifact_file", id);
     const task = getTask(db, artifact.taskId);
     const project = (task ? getProject(db, task.projectId) : null) ?? null;
     const absolute = resolveArtifactPath(artifactsRoot(project), artifact.path);
-    if (!fs.existsSync(absolute)) throw errors.notFound("artifact_file", artifact.path);
-    const meta = (artifact.meta ?? {}) as { originalName?: string | null; mimeType?: string | null };
+    if (!fs.existsSync(absolute)) throw errors.notFound("artifact_file", id);
     const fileName = safeFileName(meta.originalName || artifact.title);
     reply
       .header("content-type", guessContentType(fileName, meta.mimeType ?? null))

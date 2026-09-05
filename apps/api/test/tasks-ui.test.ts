@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createPerson, createTask, getTask } from "@agentos/db";
+import { attachArtifact, createOrganization, createPerson, createProject, createTask, getTask } from "@agentos/db";
 import { makeFixture, type TestFixture } from "./helpers.js";
 
 describe("Tareas — etiquetas, filtros y búsqueda", () => {
@@ -273,6 +273,80 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
     // La tarea no tiene asignado a la persona de la sesión: mine=1 la excluye.
     expect((mineScoped.json() as { hits: unknown[] }).hits).toHaveLength(0);
   });
+
+  it("I3: personal interno se asigna a una tarea de OTRA organización; una persona externa de otra org sigue dando 400", async () => {
+    const fixture = await fx();
+    const otherOrg = createOrganization(fixture.db, { name: "Otra Org S.A.", kind: "client" });
+    const otherOrgProject = createProject(fixture.db, {
+      orgId: otherOrg.id,
+      name: "Proyecto de otra organización",
+      type: "assessment",
+      stage: "ENTENDER",
+      gateState: "pending",
+    });
+
+    // Persona interna (Sixteam), de una organización distinta a la del proyecto.
+    const internalPerson = createPerson(fixture.db, {
+      orgId: fixture.org.id,
+      fullName: "Interno Sixteam",
+      isInternal: true,
+      role: "Consultor",
+    });
+    // Persona externa, también de otra organización que la del proyecto.
+    const externalPerson = createPerson(fixture.db, {
+      orgId: fixture.org.id,
+      fullName: "Externo ACME",
+      isInternal: false,
+      role: "Cliente",
+    });
+
+    const taskForInternal = createTask(fixture.db, {
+      projectId: otherOrgProject.id,
+      title: "Tarea para interno",
+      stage: "ENTENDER",
+      orderKey: "i3-1",
+    });
+    const assignInternal = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${taskForInternal.id}/assign`,
+      headers: fixture.authHeaders,
+      payload: {
+        expected_version: taskForInternal.version,
+        assignee_person_ids: [internalPerson.id],
+        primary_assignee_person_id: internalPerson.id,
+      },
+    });
+    expect(assignInternal.statusCode).toBe(200);
+
+    const taskForExternal = createTask(fixture.db, {
+      projectId: otherOrgProject.id,
+      title: "Tarea para externo",
+      stage: "ENTENDER",
+      orderKey: "i3-2",
+    });
+    const assignExternal = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${taskForExternal.id}/assign`,
+      headers: fixture.authHeaders,
+      payload: {
+        expected_version: taskForExternal.version,
+        assignee_person_ids: [externalPerson.id],
+        primary_assignee_person_id: externalPerson.id,
+      },
+    });
+    expect(assignExternal.statusCode).toBe(400);
+
+    // El selector de personas asignables también debe ofrecer al interno.
+    const people = await fixture.api.app.inject({
+      method: "GET",
+      url: `/api/projects/${otherOrgProject.id}/people`,
+      headers: fixture.authHeaders,
+    });
+    expect(people.statusCode).toBe(200);
+    const peopleIds = (people.json() as { people: Array<{ id: string }> }).people.map((p) => p.id);
+    expect(peopleIds).toContain(internalPerson.id);
+    expect(peopleIds).not.toContain(externalPerson.id);
+  });
 });
 
 describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", () => {
@@ -438,5 +512,113 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
     });
     expect(toDone.statusCode).toBe(200);
     expect(getTask(fixture.db, task.id)!.status).toBe("DONE");
+  });
+
+  it("I4.1: subida con filename de path traversal cae saneada DENTRO de la raíz de artefactos, nunca fuera", async () => {
+    const fixture = await fx();
+    const task = createTask(fixture.db, {
+      projectId: fixture.project.id,
+      title: "Con nombre malicioso",
+      stage: "ENTENDER",
+      orderKey: "art-traversal",
+    });
+
+    const boundary = "----agentosTestTraversal";
+    const res = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/artifacts/upload`,
+      headers: { ...fixture.authHeaders, "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: multipartBody(boundary, "../../evil.txt", "contenido malicioso"),
+    });
+    expect(res.statusCode).toBe(201);
+    const { artifact } = res.json() as { artifact: { id: string; path: string } };
+    expect(artifact.path).not.toContain("..");
+    expect(path.basename(artifact.path)).toBe(`${artifact.id}-evil.txt`);
+
+    const absolute = path.resolve(artifactsDir, artifact.path);
+    expect(absolute.startsWith(path.resolve(artifactsDir) + path.sep)).toBe(true);
+    expect(fs.existsSync(absolute)).toBe(true);
+    // Ningún archivo se escribió fuera de la raíz de artefactos.
+    expect(fs.existsSync(path.resolve(artifactsDir, "..", "evil.txt"))).toBe(false);
+  });
+
+  it("I4.2: content de un artefacto `link` debe ser http(s); la descarga exige meta.storage === 'artifacts_root'", async () => {
+    const fixture = await fx();
+    const task = createTask(fixture.db, {
+      projectId: fixture.project.id,
+      title: "Con enlace",
+      stage: "ENTENDER",
+      orderKey: "art-link",
+    });
+
+    const asPath = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/artifacts`,
+      headers: fixture.authHeaders,
+      payload: { kind: "link", title: "Intento de ruta absoluta", content: "C:\\Windows\\System32\\config\\SAM" },
+    });
+    expect(asPath.statusCode).toBe(400);
+
+    const noScheme = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/artifacts`,
+      headers: fixture.authHeaders,
+      payload: { kind: "link", title: "Sin protocolo", content: "example.com/informe" },
+    });
+    expect(noScheme.statusCode).toBe(400);
+
+    const okLink = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${task.id}/artifacts`,
+      headers: fixture.authHeaders,
+      payload: { kind: "link", title: "Enlace válido", content: "https://example.com/informe" },
+    });
+    expect(okLink.statusCode).toBe(201);
+
+    // Artefacto con `path` en la fila pero sin el meta que la ruta exige
+    // (p.ej. fila heredada o escrita por otro camino que no sea el upload
+    // de esta API): la descarga debe responder 404 sin revelar la ruta.
+    const legacy = attachArtifact(fixture.db, {
+      taskId: task.id,
+      kind: "file",
+      title: "Legado",
+      content: null,
+      path: "algo/legado-secreto.txt",
+    });
+    const download = await fixture.api.app.inject({
+      method: "GET",
+      url: `/api/artifacts/${legacy.id}/download`,
+      headers: fixture.authHeaders,
+    });
+    expect(download.statusCode).toBe(404);
+    const body = download.json() as { error: { code: string; message: string } };
+    expect(body.error.message).not.toMatch(/legado-secreto/);
+  });
+
+  it("I4.3: subida que supera el límite configurado responde 413 con mensaje claro", async () => {
+    const previousMax = process.env.AGENTOS_ARTIFACT_MAX_BYTES;
+    process.env.AGENTOS_ARTIFACT_MAX_BYTES = "10";
+    try {
+      const fixture = await fx();
+      const task = createTask(fixture.db, {
+        projectId: fixture.project.id,
+        title: "Archivo demasiado grande",
+        stage: "ENTENDER",
+        orderKey: "art-limit",
+      });
+      const boundary = "----agentosTestLimit";
+      const res = await fixture.api.app.inject({
+        method: "POST",
+        url: `/api/tasks/${task.id}/artifacts/upload`,
+        headers: { ...fixture.authHeaders, "content-type": `multipart/form-data; boundary=${boundary}` },
+        payload: multipartBody(boundary, "grande.txt", "contenido que supera el limite de diez bytes"),
+      });
+      expect(res.statusCode).toBe(413);
+      const body = res.json() as { error: { code: string; message: string } };
+      expect(body.error.message).toMatch(/límite/i);
+    } finally {
+      if (previousMax === undefined) delete process.env.AGENTOS_ARTIFACT_MAX_BYTES;
+      else process.env.AGENTOS_ARTIFACT_MAX_BYTES = previousMax;
+    }
   });
 });

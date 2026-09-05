@@ -5,7 +5,10 @@
  * destino se resuelve, en este orden:
  *   1. `AGENTOS_ARTIFACTS_DIR` (ruta absoluta configurable en despliegue).
  *   2. `<workspace_path del proyecto>/artifacts`, cuando el proyecto tiene
- *      workspace propio (el runner ya escribe ahí).
+ *      workspace propio Y ese workspace es una ruta absoluta FUERA del
+ *      repositorio (el runner ya escribe ahí). `workspacePath` viene de datos
+ *      de proyecto controlados por el cliente: nunca se usa tal cual como
+ *      raíz de escritura si cae dentro del repo o es relativa.
  *   3. `<repo>/data/artifacts`, junto a la base local — `data/` está en
  *      .gitignore, así que nunca entra en un commit.
  *
@@ -27,12 +30,28 @@ export function maxArtifactBytes(): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_ARTIFACT_BYTES;
 }
 
+/**
+ * `workspacePath` es un dato de proyecto que, en última instancia, puede
+ * llegar a estar bajo control de quien crea/edita el proyecto. Sólo se acepta
+ * como raíz de artefactos si es una ruta absoluta y cae FUERA de este
+ * repositorio (otra unidad en Windows cuenta como "fuera"); si no cumple eso,
+ * se ignora y se cae a los demás niveles — nunca se escribe bajo una ruta
+ * arbitraria dictada por el cliente.
+ */
+function isOutsideRepo(absolute: string): boolean {
+  const relative = path.relative(REPO_ROOT, absolute);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+
 /** Raíz de almacenamiento del proyecto (creada al vuelo, nunca dentro del repo git). */
 export function artifactsRoot(project: Pick<Project, "workspacePath"> | null): string {
   const configured = process.env.AGENTOS_ARTIFACTS_DIR?.trim();
   if (configured) return path.resolve(configured);
   const workspace = project?.workspacePath?.trim();
-  if (workspace) return path.resolve(workspace, "artifacts");
+  if (workspace && path.isAbsolute(workspace)) {
+    const resolvedWorkspace = path.resolve(workspace);
+    if (isOutsideRepo(resolvedWorkspace)) return path.resolve(resolvedWorkspace, "artifacts");
+  }
   return path.resolve(REPO_ROOT, "data", "artifacts");
 }
 
@@ -82,24 +101,27 @@ export function storeArtifactFile(input: {
 }
 
 /**
- * Resuelve una ruta almacenada contra su raíz rechazando cualquier salto fuera
- * de ella. Las rutas absolutas heredadas (artefactos que escribió un runner en
- * el workspace) se aceptan tal cual: no vienen de una petición HTTP.
+ * Resuelve una ruta almacenada SIEMPRE relativa a su raíz — incluida una
+ * `stored` que llegue absoluta, en cuyo caso `path.resolve` la trata como
+ * destino final y el guard de abajo la rechaza si cae fuera de la raíz. Nunca
+ * se confía en una ruta absoluta como válida sólo por serlo.
  */
 export function resolveArtifactPath(root: string, stored: string): string {
-  if (path.isAbsolute(stored)) return stored;
-  const resolved = path.resolve(root, stored);
   const normalizedRoot = path.resolve(root);
+  const resolved = path.resolve(normalizedRoot, stored);
   const relative = path.relative(normalizedRoot, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw errors.validation("La ruta del artefacto sale del directorio de artefactos", { path: stored });
+    throw errors.validation("Artefacto no disponible");
   }
   return resolved;
 }
 
-/** Tipo MIME por extensión; deliberadamente corto y conservador. */
-export function guessContentType(fileName: string, declared?: string | null): string {
-  if (declared && declared !== "application/octet-stream") return declared;
+/**
+ * Tipo MIME por extensión; deliberadamente corto y conservador. Se ignora
+ * cualquier mimetype declarado por el cliente (cabecera de subida): no es de
+ * fiar y no debe decidir cómo el navegador interpreta la descarga.
+ */
+export function guessContentType(fileName: string, _declared?: string | null): string {
   const ext = path.extname(fileName).toLowerCase();
   const map: Record<string, string> = {
     ".pdf": "application/pdf",

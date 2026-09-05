@@ -720,7 +720,7 @@ export const useStore = create<AppStore>()((set, get) => {
     async attachArtifactLink(taskId, input) {
       set({ taskSaving: true });
       try {
-        await api.attachArtifact(taskId, { kind: "link", title: input.title, path: input.url });
+        await api.attachArtifact(taskId, { kind: "link", title: input.title, content: input.url });
         await get().openTask(taskId);
         get().pushToast("ok", "Enlace adjuntado como artefacto");
         return true;
