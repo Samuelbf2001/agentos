@@ -191,6 +191,9 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     startedAt: 1000,
     finishedAt: 2000,
     createdAt: 900,
+    // El fixture ignoraba los overrides: sin esto no se puede fabricar un run
+    // ligado a una tarea concreta.
+    ...overrides,
   };
 }
 

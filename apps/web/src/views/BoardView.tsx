@@ -39,13 +39,10 @@ import {
   StatusPill,
   timeAgo,
 } from "../components/ui";
-import { ProjectPhaseHeader } from "./PhasePanel";
+import { STAGE_LABELS } from "../components/system";
 
-export const STAGE_LABEL: Record<Stage, string> = {
-  ENTENDER: "Entender",
-  CONSTRUIR: "Construir",
-  OPERAR: "Operar",
-};
+/** La etiqueta de etapa vive en un solo sitio; se reexporta por compatibilidad. */
+export const STAGE_LABEL: Record<Stage, string> = STAGE_LABELS;
 
 export const BOARD_FILTER_LABELS: Record<BoardFilter, string> = {
   all: "Todas",
@@ -55,22 +52,22 @@ export const BOARD_FILTER_LABELS: Record<BoardFilter, string> = {
 };
 
 const PULSE_STATUS: Record<TaskStatus, string> = {
-  BACKLOG: "bg-slate-400",
-  READY: "bg-sky-500",
-  IN_PROGRESS: "bg-amber-500",
-  REVIEW: "bg-violet-500",
-  BLOCKED: "bg-rose-600",
-  DONE: "bg-emerald-500",
-  CANCELLED: "bg-slate-300",
+  BACKLOG: "bg-faint",
+  READY: "bg-link",
+  IN_PROGRESS: "bg-work",
+  REVIEW: "bg-decide",
+  BLOCKED: "bg-broken",
+  DONE: "bg-done",
+  CANCELLED: "bg-line",
 };
 
 const PULSE_DUE: Record<ReturnType<typeof taskDueState>, string> = {
   none: "bg-transparent",
-  overdue: "bg-rose-700",
-  today: "bg-orange-600",
-  upcoming: "bg-amber-500",
-  later: "bg-slate-500",
-  complete: "bg-emerald-700",
+  overdue: "bg-broken",
+  today: "bg-work",
+  upcoming: "bg-work",
+  later: "bg-muted",
+  complete: "bg-done",
 };
 
 /** Exportado para el reducer/UI test sin depender de Date.now global. */
@@ -155,8 +152,8 @@ function TaskCard({ task, people, agents }: { task: Task; people: Person[]; agen
           ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 30 }
           : undefined
       }
-      className={`group relative min-w-0 cursor-grab overflow-hidden rounded-lg border border-slate-200 bg-white p-3 pl-4 shadow-sm transition-all hover:-translate-y-px hover:border-slate-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-1 ${
-        isDragging ? "opacity-70 shadow-lg" : ""
+      className={`group relative min-w-0 cursor-grab overflow-hidden rounded-soft border border-line bg-surface p-3 pl-4 shadow-rest transition-all hover:-translate-y-px hover:border-line hover:shadow-raise focus:outline-none focus:ring-2 focus:ring-link focus:ring-offset-1 ${
+        isDragging ? "opacity-70 shadow-float" : ""
       }`}
       data-testid={`task-card-${task.id}`}
       data-status={task.status}
@@ -167,50 +164,50 @@ function TaskCard({ task, people, agents }: { task: Task; people: Person[]; agen
       </span>
       <div className="flex items-start gap-2">
         <PriorityDot priority={task.priority} />
-        <p className="min-w-0 flex-1 text-xs font-semibold leading-snug text-slate-800">{task.title}</p>
+        <p className="min-w-0 flex-1 text-small font-semibold leading-snug text-ink">{task.title}</p>
         <span className="sr-only">Estado canónico: {task.status}</span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <StatusPill status={task.status} />
         <DuePill task={task} />
       </div>
-      <div className="mt-2 flex min-w-0 items-center gap-1.5 border-t border-slate-100 pt-2">
+      <div className="mt-2 flex min-w-0 items-center gap-1.5 border-t border-line-soft pt-2">
         {primary ? (
           <span className="inline-flex min-w-0 items-center gap-1" title={`Responsable: ${personLabel(primaryPerson, primaryId)}`}>
             <PersonAvatar name={personLabel(primaryPerson, primaryId)} size={5} />
-            <span className="max-w-[9rem] truncate text-[10px] text-slate-600">
+            <span className="max-w-[9rem] truncate text-label text-muted">
               {personLabel(primaryPerson, primaryId)}
             </span>
           </span>
         ) : (
-          <span className="text-[10px] font-medium text-slate-400">Sin responsable</span>
+          <span className="text-label font-medium text-faint">Sin responsable</span>
         )}
         {assignees.length > 1 ? (
-          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500">
+          <span className="rounded-full bg-line-soft px-1.5 py-0.5 text-label font-semibold text-muted">
             +{assignees.length - 1}
           </span>
         ) : null}
         {agent ? (
           <span className="ml-auto inline-flex items-center gap-1" title={`Agente: ${agent.name}`}>
             <AgentAvatar name={agent.name} slug={agent.slug} size={5} />
-            <span className="max-w-[6rem] truncate text-[10px] text-slate-500">{agent.name}</span>
+            <span className="max-w-[6rem] truncate text-label text-muted">{agent.name}</span>
           </span>
         ) : null}
       </div>
       {getTaskLabels(task).length > 0 ? (
         <div className="mt-1.5 flex flex-wrap gap-1" data-testid={`card-labels-${task.id}`}>
           {getTaskLabels(task).map((label) => (
-            <span key={label} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-800">
+            <span key={label} className="rounded-full bg-link-bg px-1.5 py-0.5 text-label font-medium text-link">
               {label}
             </span>
           ))}
         </div>
       ) : null}
-      <div className="mt-1 flex items-center gap-1 text-[9px] text-slate-400">
-        {task.requiresApproval ? <span className="rounded bg-violet-50 px-1 py-0.5 text-violet-700">gate</span> : null}
-        {task.externalEffect ? <span className="rounded bg-orange-50 px-1 py-0.5 text-orange-700">efecto externo</span> : null}
+      <div className="mt-1 flex items-center gap-1 text-label text-faint">
+        {task.requiresApproval ? <span className="rounded bg-decide-bg px-1 py-0.5 text-decide">gate</span> : null}
+        {task.externalEffect ? <span className="rounded bg-work-bg px-1 py-0.5 text-work">efecto externo</span> : null}
         {task.blockedReason ? (
-          <span className="rounded bg-rose-50 px-1 py-0.5 text-rose-700">
+          <span className="rounded bg-broken-bg px-1 py-0.5 text-broken">
             {task.blockedReason === "approval" ? "esperando aprobación" : task.blockedReason}
           </span>
         ) : null}
@@ -239,9 +236,9 @@ function Cell({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-16 space-y-2 rounded-md p-1.5 transition-colors ${
-        isOver ? "bg-sky-50 ring-1 ring-sky-300" : ""
-      } ${compact ? "bg-slate-50/70" : ""}`}
+      className={`min-h-16 space-y-2 rounded-tight p-1.5 transition-colors ${
+        isOver ? "bg-link-bg ring-1 ring-link" : ""
+      } ${compact ? "bg-surface-2/70" : ""}`}
       data-testid={`cell-${stage}-${status}`}
     >
       {tasks.map((task) => (
@@ -258,16 +255,16 @@ function DesktopBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>;
       <div className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 px-2">
         <div />
         {TASK_STATUSES.map((status) => (
-          <p key={status} className="px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-            {status}
+          <p key={status} className="px-1 text-label uppercase text-muted">
+            {STATUS_LABELS[status]}
           </p>
         ))}
       </div>
       <div className="space-y-2">
         {STAGES.map((stage) => (
-          <section key={stage} className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 rounded-xl border border-slate-200 bg-white/70 p-2 shadow-sm">
+          <section key={stage} className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 rounded-panel border border-line-soft bg-surface/70 p-2 shadow-rest">
             <div className="flex items-start pt-1">
-              <span className="rounded bg-slate-800 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+              <span className="rounded-tight border border-line bg-canvas-deep px-2 py-1 text-label uppercase text-ink-2">
                 {STAGE_LABEL[stage]}
               </span>
             </div>
@@ -292,19 +289,18 @@ function MobileBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>; 
   return (
     <div className="space-y-4">
       {STAGES.map((stage) => (
-        <section key={stage} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-200 bg-slate-800 px-3 py-2">
-            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white">{STAGE_LABEL[stage]}</span>
-            <span className="text-[10px] text-slate-300">carril operativo</span>
+        <section key={stage} className="overflow-hidden rounded-panel border border-line-soft bg-surface shadow-rest">
+          <div className="flex items-center justify-between border-b border-line-soft bg-canvas-deep px-3 py-2">
+            <span className="text-label uppercase text-ink-2">{STAGE_LABEL[stage]}</span>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-line-soft">
             {TASK_STATUSES.map((status) => {
               const tasks = byCell.get(`${stage}|${status}`) ?? [];
               return (
                 <div key={status} className="p-2">
                   <div className="flex items-center justify-between px-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{status}</span>
-                    <span className="text-[10px] tabular-nums text-slate-400">{tasks.length}</span>
+                    <span className="text-label uppercase text-muted">{STATUS_LABELS[status]}</span>
+                    <span className="text-label tabular-nums text-faint">{tasks.length}</span>
                   </div>
                   <Cell stage={stage} status={status} tasks={tasks} people={people} agents={agents} compact />
                 </div>
@@ -386,8 +382,8 @@ export default function BoardView() {
     return (
       <div className="p-4 sm:p-6">
         <EmptyState
-          title="Sin proyecto activo"
-          hint="Elige un proyecto en el selector del header, o pide a Alex que arranque un engagement desde el chat."
+          title="Entra por un proyecto"
+          hint="El tablero es una lente sobre un proyecto: ábrelo desde la lista de Proyectos y vuelve aquí."
         />
       </div>
     );
@@ -409,46 +405,35 @@ export default function BoardView() {
   };
 
   return (
-    <div className="min-h-full overflow-x-hidden bg-slate-50 p-3 sm:p-4 lg:overflow-auto">
+    <div className="min-h-full overflow-x-hidden bg-surface-2 p-3 sm:p-4 lg:overflow-auto">
       <div className="mx-auto max-w-[1680px]">
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-3 py-3 sm:px-4 sm:py-4">
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Mesa de control / tablero</p>
-                <h1 className="mt-1 truncate text-base font-semibold tracking-tight text-slate-900 sm:text-lg">
-                  {project?.name ?? "Proyecto activo"}
-                </h1>
-                <p className="mt-1 text-xs text-slate-500">
-                  {project ? `${STAGE_LABEL[project.stage]} · Gate 1 ${project.gateState === "approved" ? "aprobado" : project.gateState === "rejected" ? "rechazado" : "pendiente"}` : "Estado del proyecto no disponible"}
-                </p>
+        <div className="rounded-panel border border-line bg-surface shadow-rest">
+          <div className="border-b border-line px-3 py-3 sm:px-4 sm:py-4">
+            {/* Sin cabecera duplicada: el nombre del cliente y la fase viven
+                arriba, en la barra del proyecto. Aquí sólo lo operativo. */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="w-full sm:w-72">
+                <TaskSearchBox projectId={board.projectId ?? undefined} />
               </div>
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                <div className="w-full sm:w-72">
-                  <TaskSearchBox projectId={board.projectId ?? undefined} />
-                </div>
-                <button
-                  type="button"
-                  data-testid="board-new-task"
-                  onClick={() => setCreating(true)}
-                  className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-1"
-                >
-                  ＋ Nueva tarea
-                </button>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5 text-right sm:gap-3">
-                <div className="rounded-lg bg-slate-50 px-2 py-1.5 sm:px-3">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-400">Visibles</p>
-                  <p className="text-sm font-semibold tabular-nums text-slate-800">{counts.visible}<span className="text-[10px] font-normal text-slate-400">/{counts.total}</span></p>
-                </div>
-                <div className="rounded-lg bg-rose-50 px-2 py-1.5 sm:px-3">
-                  <p className="text-[9px] uppercase tracking-wide text-rose-500">Vencidas</p>
-                  <p className="text-sm font-semibold tabular-nums text-rose-700">{counts.due}</p>
-                </div>
-                <div className="rounded-lg bg-amber-50 px-2 py-1.5 sm:px-3">
-                  <p className="text-[9px] uppercase tracking-wide text-amber-600">Sin resp.</p>
-                  <p className="text-sm font-semibold tabular-nums text-amber-700">{counts.unassigned}</p>
-                </div>
+              <button
+                type="button"
+                data-testid="board-new-task"
+                onClick={() => setCreating(true)}
+                className="press inline-flex min-h-9 items-center justify-center gap-1.5 rounded-tight bg-ink px-3 py-1.5 text-small font-semibold text-surface"
+              >
+                Nueva tarea
+              </button>
+              <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-small">
+                <span className="text-muted">
+                  <span className="font-semibold tabular-nums text-ink-2">{counts.visible}</span> de{" "}
+                  {counts.total} visibles
+                </span>
+                <span className={counts.due > 0 ? "text-broken" : "text-muted"}>
+                  <span className="font-semibold tabular-nums">{counts.due}</span> vencidas o próximas
+                </span>
+                <span className={counts.unassigned > 0 ? "text-work" : "text-muted"}>
+                  <span className="font-semibold tabular-nums">{counts.unassigned}</span> sin responsable
+                </span>
               </div>
             </div>
             <fieldset className="mt-4">
@@ -464,14 +449,14 @@ export default function BoardView() {
                       aria-pressed={active}
                       data-testid={`board-filter-${filter}`}
                       onClick={() => setBoardFilter(filter)}
-                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-1 ${
+                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-small font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-link focus:ring-offset-1 ${
                         active
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50"
+                          ? "border-ink bg-ink text-surface"
+                          : "border-line bg-surface text-muted hover:border-faint hover:bg-surface-2"
                       }`}
                     >
                       {BOARD_FILTER_LABELS[filter]}
-                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${active ? "bg-white/15 text-white" : "bg-slate-100 text-slate-500"}`}>
+                      <span className={`rounded-full px-1.5 py-0.5 text-label tabular-nums ${active ? "bg-surface/15 text-surface" : "bg-line-soft text-muted"}`}>
                         {count}
                       </span>
                     </button>
@@ -483,16 +468,16 @@ export default function BoardView() {
               <fieldset className="mt-2">
                 <legend className="sr-only">Filtro por etiqueta</legend>
                 <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Filtro por etiqueta">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Etiquetas</span>
+                  <span className="text-label font-semibold uppercase text-faint">Etiquetas</span>
                   <button
                     type="button"
                     aria-pressed={boardLabelFilter === null}
                     data-testid="board-label-all"
                     onClick={() => setBoardLabelFilter(null)}
-                    className={`inline-flex min-h-8 items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                    className={`inline-flex min-h-8 items-center rounded-full border px-2.5 py-1 text-label font-medium ${
                       boardLabelFilter === null
-                        ? "border-sky-700 bg-sky-700 text-white"
-                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                        ? "border-link bg-link text-surface"
+                        : "border-line bg-surface text-muted hover:border-faint"
                     }`}
                   >
                     Todas
@@ -506,14 +491,14 @@ export default function BoardView() {
                         aria-pressed={active}
                         data-testid={`board-label-${usage.label}`}
                         onClick={() => setBoardLabelFilter(active ? null : usage.label)}
-                        className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                        className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2.5 py-1 text-label font-medium ${
                           active
-                            ? "border-sky-700 bg-sky-700 text-white"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                            ? "border-link bg-link text-surface"
+                            : "border-line bg-surface text-muted hover:border-faint"
                         }`}
                       >
                         {usage.label}
-                        <span className={`tabular-nums ${active ? "text-white/70" : "text-slate-400"}`}>
+                        <span className={`tabular-nums ${active ? "text-surface/70" : "text-faint"}`}>
                           {usage.count}
                         </span>
                       </button>
@@ -523,7 +508,6 @@ export default function BoardView() {
               </fieldset>
             ) : null}
           </div>
-          <ProjectPhaseHeader projectId={activeProjectId} />
           <div className="p-2 sm:p-3">
             {allTasks.length === 0 ? (
               <EmptyState
