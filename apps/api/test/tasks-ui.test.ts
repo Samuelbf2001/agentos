@@ -708,4 +708,37 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
       else process.env.AGENTOS_ARTIFACT_MAX_BYTES = previousMax;
     }
   });
+
+  it("crear con un solo responsable (sin primary_assignee_person_id) permite BACKLOG→READY", async () => {
+    const fixture = await fx();
+    const created = await fixture.api.app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      headers: fixture.authHeaders,
+      payload: {
+        project_id: fixture.project.id,
+        title: "Un responsable sin marcar principal",
+        stage: "ENTENDER",
+        definition_of_done: "Checklist firmado por el cliente",
+        assignee_person_ids: [fixture.person.id],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json() as {
+      task: { id: string; version: number; assigneePersonId: string | null };
+      assignees?: { personId: string; isPrimary: boolean }[];
+    };
+    expect(body.task.assigneePersonId).toBe(fixture.person.id);
+    const assignees = listTaskAssignees(fixture.db, body.task.id);
+    expect(assignees).toMatchObject([{ personId: fixture.person.id, isPrimary: true }]);
+
+    const moved = await fixture.api.app.inject({
+      method: "POST",
+      url: `/api/tasks/${body.task.id}/move`,
+      headers: fixture.authHeaders,
+      payload: { to: "READY", expected_version: body.task.version },
+    });
+    expect(moved.statusCode).toBe(200);
+    expect(getTask(fixture.db, body.task.id)!.status).toBe("READY");
+  });
 });
