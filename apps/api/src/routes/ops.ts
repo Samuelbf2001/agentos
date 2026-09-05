@@ -77,26 +77,28 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
   // ── Agents ────────────────────────────────────────────────────────────────
 
-  app.get("/api/agents", async () => ({ agents: listAgents(db) }));
+  app.get("/api/agents", async () => ({ agents: await listAgents(db) }));
 
   /**
    * Organigrama (Fase 2): árbol agrupado por manager + salud de la cadena de mando
    * de cada agente. Ruta estática: Fastify la prioriza sobre `/api/agents/:ref`.
    */
   app.get("/api/agents/org", async () => ({
-    tree: orgForCompany(db),
-    health: listAgents(db).map((a) => ({
-      id: a.id,
-      slug: a.slug,
-      status: a.status,
-      reports_to: a.reportsTo,
-      chain: computeOrgChainHealth(db, a.id),
-    })),
+    tree: await orgForCompany(db),
+    health: await Promise.all(
+      (await listAgents(db)).map(async (a) => ({
+        id: a.id,
+        slug: a.slug,
+        status: a.status,
+        reports_to: a.reportsTo,
+        chain: await computeOrgChainHealth(db, a.id),
+      })),
+    ),
   }));
 
   app.get("/api/agents/:ref", async (req) => {
     const { ref } = req.params as { ref: string };
-    const agent = getAgent(db, ref) ?? getAgentBySlug(db, ref);
+    const agent = (await getAgent(db, ref)) ?? (await getAgentBySlug(db, ref));
     if (!agent) throw errors.notFound("agent", ref);
     return { agent };
   });
@@ -104,9 +106,9 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
   app.patch("/api/agents/:id", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(UpdateAgentBody, req.body);
-    const before = getAgent(db, id) ?? getAgentBySlug(db, id);
+    const before = (await getAgent(db, id)) ?? (await getAgentBySlug(db, id));
     if (!before) throw errors.notFound("agent", id);
-    const agent = updateAgent(
+    const agent = await updateAgent(
       db,
       before.id,
       {
@@ -118,7 +120,7 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
       },
       body.expected_version,
     );
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "agent.update",
@@ -134,10 +136,10 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
   app.post("/api/agents/:id/status", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(SetStatusBody, req.body);
-    const before = getAgent(db, id) ?? getAgentBySlug(db, id);
+    const before = (await getAgent(db, id)) ?? (await getAgentBySlug(db, id));
     if (!before) throw errors.notFound("agent", id);
-    const agent = updateAgent(db, before.id, { status: body.status }, body.expected_version);
-    appendAudit(db, {
+    const agent = await updateAgent(db, before.id, { status: body.status }, body.expected_version);
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "agent.set_status",
@@ -147,7 +149,7 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
       after: { status: agent.status },
       reason: body.reason ?? null,
     });
-    sink.publish("swarm", {
+    await sink.publish("swarm", {
       type: "agent.status",
       payload: { agentId: agent.id, slug: agent.slug, status: agent.status },
     });
@@ -167,7 +169,7 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
     const status = q.status ? parse(RunStatus, q.status) : undefined;
     const limit = q.limit ? Number(q.limit) : undefined;
     return {
-      runs: listRuns(db, {
+      runs: await listRuns(db, {
         ...(status ? { status } : {}),
         ...(q.task_id ? { taskId: q.task_id } : {}),
         ...(q.project_id ? { projectId: q.project_id } : {}),
@@ -179,24 +181,24 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
   app.get("/api/runs/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const run = getRun(db, id);
+    const run = await getRun(db, id);
     if (!run) throw errors.notFound("run", id);
     return {
       run,
-      spans: listSpans(db, id),
-      tree: listRunsByRoot(db, run.rootRunId),
-      last_seq: ctx.bus.lastSeq(`run:${id}`),
+      spans: await listSpans(db, id),
+      tree: await listRunsByRoot(db, run.rootRunId),
+      last_seq: await ctx.bus.lastSeq(`run:${id}`),
     };
   });
 
   /** Cancelación real vía RunnerPool (US-11 CA-11.3). */
   app.post("/api/runs/:id/cancel", async (req) => {
     const { id } = req.params as { id: string };
-    const before = getRun(db, id);
+    const before = await getRun(db, id);
     if (!before) throw errors.notFound("run", id);
     await pool.cancel(id, `cancelled por ${personActor(req)}`);
-    const run = getRun(db, id)!;
-    appendAudit(db, {
+    const run = (await getRun(db, id))!;
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "run.cancel",
@@ -211,7 +213,7 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
   // ── Approvals (Gate 2: decidir → ejecutar → reanudar) ─────────────────────
 
-  app.get("/api/approvals/pending", async () => ({ approvals: engine.listPendingApprovals() }));
+  app.get("/api/approvals/pending", async () => ({ approvals: await engine.listPendingApprovals() }));
 
   /**
    * Bandeja "Esperando por ti" (US-4 CA-4.2, fix H10): TODO lo que espera a un
@@ -220,16 +222,18 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
    * humano, así que toda tarjeta en REVIEW espera por ti).
    */
   app.get("/api/waiting", async () => ({
-    approvals: engine.listPendingApprovals(),
-    review_tasks: listTasks(db, { status: "REVIEW" }).map((task) => ({
-      task,
-      artifacts: listArtifacts(db, task.id),
-    })),
+    approvals: await engine.listPendingApprovals(),
+    review_tasks: await Promise.all(
+      (await listTasks(db, { status: "REVIEW" })).map(async (task) => ({
+        task,
+        artifacts: await listArtifacts(db, task.id),
+      })),
+    ),
   }));
 
   app.get("/api/approvals/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const approval = getApproval(db, id);
+    const approval = await getApproval(db, id);
     if (!approval) throw errors.notFound("approval", id);
     return { approval };
   });
@@ -243,7 +247,7 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
     // las decisiones tomadas por el MCP admin (fix Q2): ejecutar el efecto del
     // tool_call + encolar la reanudación, o desbloquear la tarjeta de pregunta/
     // entregable. Así ambos caminos —REST y MCP— reconcilian idéntico.
-    engine.decideApproval(id, body.decision, personId, body.note);
+    await engine.decideApproval(id, body.decision, personId, body.note);
     const rec = await dispatcher.reconcileApproval(id);
     return { approval: rec.approval, executed: rec.executed, resume_run_id: rec.resumeRunId };
   });
@@ -252,23 +256,23 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
   app.get("/api/threads", async (req) => {
     const q = req.query as { channel?: string };
-    return { threads: listThreads(db, q.channel) };
+    return { threads: await listThreads(db, q.channel) };
   });
 
   app.get("/api/threads/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const thread = getThread(db, id);
+    const thread = await getThread(db, id);
     if (!thread) throw errors.notFound("thread", id);
-    return { thread, last_seq: ctx.bus.lastSeq(`thread:${id}`) };
+    return { thread, last_seq: await ctx.bus.lastSeq(`thread:${id}`) };
   });
 
   app.get("/api/threads/:id/messages", async (req) => {
     const { id } = req.params as { id: string };
-    const thread = getThread(db, id);
+    const thread = await getThread(db, id);
     if (!thread) throw errors.notFound("thread", id);
     const q = req.query as { limit?: string };
     const limit = q.limit ? Number(q.limit) : undefined;
-    return { messages: listMessages(db, id, Number.isFinite(limit) ? limit : undefined) };
+    return { messages: await listMessages(db, id, Number.isFinite(limit) ? limit : undefined) };
   });
 
   // ── Contexto: knowledge / processes / methodologies (§8b) ─────────────────
@@ -277,7 +281,7 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
     const q = req.query as { org_id?: string; project_id?: string; kind?: string };
     const kind = q.kind ? parse(KnowledgeKind, q.kind) : undefined;
     return {
-      docs: listDocs(db, {
+      docs: await listDocs(db, {
         ...(q.org_id ? { orgId: q.org_id } : {}),
         ...(q.project_id ? { projectId: q.project_id } : {}),
         ...(kind ? { kind } : {}),
@@ -289,19 +293,19 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
     const q = req.query as { q?: string; limit?: string };
     if (!q.q?.trim()) throw errors.validation("Parámetro q obligatorio");
     const limit = q.limit ? Number(q.limit) : undefined;
-    return { hits: searchDocs(db, q.q, Number.isFinite(limit) ? limit : undefined) };
+    return { hits: await searchDocs(db, q.q, Number.isFinite(limit) ? limit : undefined) };
   });
 
   app.get("/api/knowledge/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const doc = getDoc(db, id);
+    const doc = await getDoc(db, id);
     if (!doc) throw errors.notFound("knowledge_doc", id);
     return { doc };
   });
 
   app.put("/api/knowledge", async (req) => {
     const body = parse(UpsertDocBody, req.body);
-    const doc = upsertDoc(db, {
+    const doc = await upsertDoc(db, {
       ...(body.id ? { id: body.id } : {}),
       orgId: body.org_id ?? null,
       projectId: body.project_id ?? null,
@@ -317,42 +321,42 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
   app.get("/api/processes", async (req) => {
     const q = req.query as { org_id?: string };
-    return { processes: listProcesses(db, q.org_id) };
+    return { processes: await listProcesses(db, q.org_id) };
   });
 
   app.get("/api/processes/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const process = getProcess(db, id);
+    const process = await getProcess(db, id);
     if (!process) throw errors.notFound("process", id);
     return { process };
   });
 
-  app.get("/api/methodologies", async () => ({ methodologies: listMethodologies(db) }));
+  app.get("/api/methodologies", async () => ({ methodologies: await listMethodologies(db) }));
 
   app.get("/api/methodologies/:slug", async (req) => {
     const { slug } = req.params as { slug: string };
-    const methodology = getMethodology(db, slug);
+    const methodology = await getMethodology(db, slug);
     if (!methodology) throw errors.notFound("methodology", slug);
     return { methodology };
   });
 
   // ── Config: kill switch / pause_all / resume_all (US-11) ──────────────────
 
-  app.get("/api/config", async () => ({ config: listConfig(db) }));
+  app.get("/api/config", async () => ({ config: await listConfig(db) }));
 
-  app.get("/api/config/kill-switch", async () => ({ active: engine.isKillSwitchActive() }));
+  app.get("/api/config/kill-switch", async () => ({ active: await engine.isKillSwitchActive() }));
 
   async function setKillSwitch(
     active: boolean,
     actor: string,
     reason?: string,
   ): Promise<{ active: boolean }> {
-    engine.setKillSwitch(active, actor, reason);
+    await engine.setKillSwitch(active, actor, reason);
     if (active) {
       // ≤10 s (CA-11.1): no arrancan runs nuevos y los activos se cancelan YA.
       await pool.cancelAll("kill_switch");
     }
-    return { active: engine.isKillSwitchActive() };
+    return { active: await engine.isKillSwitchActive() };
   }
 
   app.put("/api/config/kill-switch", async (req) => {

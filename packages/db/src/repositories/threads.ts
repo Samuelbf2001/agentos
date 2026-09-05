@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { errors, newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { messages, threads } from "../schema.js";
 import type { Message, NewMessage, NewThread, Thread } from "../types.js";
 
@@ -11,17 +11,17 @@ export function buildSessionKey(channel: string, chatId: string, threadId?: stri
   return `${channel}:${chatId}:${threadId ?? "main"}`;
 }
 
-export function getThreadBySessionKey(db: AgentosDb, sessionKey: string): Thread | undefined {
+export function getThreadBySessionKey(db: AgentosSqliteDb, sessionKey: string): Thread | undefined {
   return db.select().from(threads).where(eq(threads.sessionKey, sessionKey)).get();
 }
 
-export function getThread(db: AgentosDb, id: string): Thread | undefined {
+export function getThread(db: AgentosSqliteDb, id: string): Thread | undefined {
   return db.select().from(threads).where(eq(threads.id, id)).get();
 }
 
 /** Idempotente por session_key único: la carrera la resuelve el índice, no el código. */
 export function getOrCreateThread(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewThread, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Thread {
   const existing = getThreadBySessionKey(db, input.sessionKey);
@@ -42,14 +42,14 @@ export function getOrCreateThread(
  * M2 (fuentes del launch — §13.3): asociar un hilo existente al proyecto
  * disparado. El launch resuelve la session_key → thread y fija su projectId.
  */
-export function setThreadProject(db: AgentosDb, threadId: string, projectId: string | null): Thread {
+export function setThreadProject(db: AgentosSqliteDb, threadId: string, projectId: string | null): Thread {
   const existing = getThread(db, threadId);
   if (!existing) throw errors.notFound("thread", threadId);
   db.update(threads).set({ projectId, updatedAt: nowMs() }).where(eq(threads.id, threadId)).run();
   return getThread(db, threadId)!;
 }
 
-export function listThreads(db: AgentosDb, channel?: string): Thread[] {
+export function listThreads(db: AgentosSqliteDb, channel?: string): Thread[] {
   const base = db.select().from(threads);
   const q = channel ? base.where(eq(threads.channel, channel)) : base;
   return q.orderBy(asc(threads.createdAt)).all();
@@ -68,7 +68,7 @@ export interface AppendMessageResult {
  * (thread_id, idempotency_key) reintentado devuelve el mensaje original.
  */
 export function appendMessage(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewMessage, "id" | "createdAt"> & { id?: string },
 ): AppendMessageResult {
   if (input.idempotencyKey) {
@@ -100,7 +100,7 @@ export function appendMessage(
  * cualquier thread del canal?
  */
 export function findChannelMessage(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   channel: string,
   idempotencyKey: string,
 ): Message | undefined {
@@ -115,12 +115,12 @@ export function findChannelMessage(
   return row ? getMessage(db, row.id) : undefined;
 }
 
-export function getMessage(db: AgentosDb, id: string): Message | undefined {
+export function getMessage(db: AgentosSqliteDb, id: string): Message | undefined {
   return db.select().from(messages).where(eq(messages.id, id)).get();
 }
 
 /** Usa el índice messages(thread_id, created_at). */
-export function listMessages(db: AgentosDb, threadId: string, limit = 200): Message[] {
+export function listMessages(db: AgentosSqliteDb, threadId: string, limit = 200): Message[] {
   return db
     .select()
     .from(messages)

@@ -55,7 +55,7 @@ describe("REST", () => {
   });
 
   it("movimiento ilegal → 422 invalid_transition (error de dominio con código)", async () => {
-    const task = createTask(fx.db, {
+    const task = await createTask(fx.db, {
       projectId: fx.project.id,
       title: "Tarea en backlog",
       stage: "ENTENDER",
@@ -70,11 +70,11 @@ describe("REST", () => {
     });
     expect(res.statusCode).toBe(422);
     expect((res.json() as { error: { code: string } }).error.code).toBe("invalid_transition");
-    expect(getTask(fx.db, task.id)!.status).toBe("BACKLOG");
+    expect((await getTask(fx.db, task.id))!.status).toBe("BACKLOG");
   });
 
   it("Gate 1: tarea CONSTRUIR no sale de BACKLOG sin g1_plan → gate_not_passed", async () => {
-    const task = createTask(fx.db, {
+    const task = await createTask(fx.db, {
       projectId: fx.project.id,
       title: "Construir integración",
       definitionOfDone: "Integración desplegada",
@@ -108,11 +108,11 @@ describe("REST", () => {
       payload: { to: "READY", expected_version: 1 },
     });
     expect(retry.statusCode).toBe(200);
-    expect(getTask(fx.db, task.id)!.status).toBe("READY");
+    expect((await getTask(fx.db, task.id))!.status).toBe("READY");
   });
 
   it("version_conflict → 409; board snapshot agrupa stage×status", async () => {
-    const task = createTask(fx.db, {
+    const task = await createTask(fx.db, {
       projectId: fx.project.id,
       title: "Tarea para conflicto",
       stage: "ENTENDER",
@@ -146,7 +146,7 @@ describe("REST", () => {
 
   it("REVIEW→DONE de tarea con requires_approval la cierra un humano, no un agente", async () => {
     // Tarea en REVIEW con artefacto y requires_approval.
-    const task = createTask(fx.db, {
+    const task = await createTask(fx.db, {
       projectId: fx.project.id,
       title: "Informe con gate humano",
       definitionOfDone: "Informe aprobado",
@@ -170,13 +170,13 @@ describe("REST", () => {
       payload: { expected_version: 1, note: "aprobado" },
     });
     expect(approve.statusCode).toBe(200);
-    expect(getTask(fx.db, task.id)!.status).toBe("DONE");
+    expect((await getTask(fx.db, task.id))!.status).toBe("DONE");
   });
 
   // Fix Q4: la firma + expiración del token no bastan — se revalida en cada
   // request que la persona siga existiendo y siendo interna.
   it("token de una persona deprovisionada (ya no interna) deja de valer", async () => {
-    const temp = createPerson(fx.db, {
+    const temp = await createPerson(fx.db, {
       orgId: fx.org.id,
       fullName: "Temporal QA",
       isInternal: true,
@@ -195,7 +195,7 @@ describe("REST", () => {
     expect(ok.statusCode).toBe(200);
 
     // Se desactiva a la persona: el MISMO token deja de valer (fail-closed).
-    updatePerson(fx.db, temp.id, { isInternal: false });
+    await updatePerson(fx.db, temp.id, { isInternal: false });
     const denied = await fx.api.app.inject({ method: "GET", url: "/api/agents", headers });
     expect(denied.statusCode).toBe(401);
     expect((denied.json() as { error: { code: string } }).error.code).toBe("unauthorized");

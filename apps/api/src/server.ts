@@ -35,7 +35,7 @@ export interface Api {
 }
 
 export async function buildApi(options: ApiOptions = {}): Promise<Api> {
-  const ctx = createApiContext(options);
+  const ctx = await createApiContext(options);
   const app = Fastify({ logger: options.logger ?? false });
 
   await app.register(cors, {
@@ -59,7 +59,7 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
       // Q4: la firma+exp del token no bastan — un interno deprovisionado (borrado
       // o desactivado) tras emitirse el token conservaría acceso hasta `exp`.
       // Revalidamos que la persona siga existiendo y siendo interna en cada request.
-      const person = getPerson(ctx.db, session.personId);
+      const person = await getPerson(ctx.db, session.personId);
       if (person?.isInternal) {
         req.session = session;
         return;
@@ -87,7 +87,7 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   registerWs(app, ctx);
 
   app.addHook("onClose", async () => {
-    ctx.close();
+    await ctx.close();
   });
 
   return {

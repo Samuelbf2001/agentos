@@ -35,17 +35,20 @@ export const runTools: AdminToolDefinition[] = [
       limit: z.number().int().positive().max(500).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const limit = args.limit ?? 50;
       let rows: Run[];
       if (args.task_id) {
-        rows = listRunsForTask(ctx.db, args.task_id);
+        rows = await listRunsForTask(ctx.db, args.task_id);
       } else if (args.root_run_id) {
-        rows = listRunsByRoot(ctx.db, args.root_run_id);
+        rows = await listRunsByRoot(ctx.db, args.root_run_id);
       } else if (args.status) {
-        rows = listRunsByStatus(ctx.db, args.status);
+        rows = await listRunsByStatus(ctx.db, args.status);
       } else {
-        rows = RunStatus.options.flatMap((s) => listRunsByStatus(ctx.db, s));
+        const byStatus = await Promise.all(
+          RunStatus.options.map((s) => listRunsByStatus(ctx.db, s)),
+        );
+        rows = byStatus.flat();
       }
       if (args.status) rows = rows.filter((r) => r.status === args.status);
       rows.sort((a, b) => b.createdAt - a.createdAt);
@@ -58,10 +61,10 @@ export const runTools: AdminToolDefinition[] = [
     description: "Devuelve un run con sus spans (observabilidad §10).",
     schema: z.object({ run_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const run = getRun(ctx.db, args.run_id);
+    async handler(ctx, args) {
+      const run = await getRun(ctx.db, args.run_id);
       if (!run) throw errors.notFound("run", args.run_id);
-      return { run, spans: listSpans(ctx.db, run.id) };
+      return { run, spans: await listSpans(ctx.db, run.id) };
     },
   }),
 
@@ -71,8 +74,8 @@ export const runTools: AdminToolDefinition[] = [
       "Marca un run como cancelled (queued/running). La cancelación del proceso vivo la ejecuta la API (B4).",
     schema: z.object({ run_id: z.string().min(1), reason: Reason }),
     readOnly: false,
-    handler(ctx, args) {
-      const run = getRun(ctx.db, args.run_id);
+    async handler(ctx, args) {
+      const run = await getRun(ctx.db, args.run_id);
       if (!run) throw errors.notFound("run", args.run_id);
       if (TERMINAL_RUN_STATUSES.has(run.status)) {
         throw new AgentosError(
@@ -82,12 +85,12 @@ export const runTools: AdminToolDefinition[] = [
         );
       }
       const before = { status: run.status };
-      const updated = updateRun(ctx.db, run.id, {
+      const updated = await updateRun(ctx.db, run.id, {
         status: "cancelled",
         finishedAt: nowMs(),
         error: args.reason ? `cancelled via MCP: ${args.reason}` : "cancelled via MCP",
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "runs.cancel",
         entityType: "run",
         entityId: run.id,
@@ -96,7 +99,7 @@ export const runTools: AdminToolDefinition[] = [
         reason: args.reason,
         runId: run.id,
       });
-      ctx.sink.publish(`run:${run.id}`, {
+      await ctx.sink.publish(`run:${run.id}`, {
         type: "run.cancel_requested",
         payload: { runId: run.id, actor: ctx.actor },
         runId: run.id,
@@ -114,10 +117,10 @@ export const runTools: AdminToolDefinition[] = [
       n: z.number().int().positive().max(500).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const n = args.n ?? 50;
-      const last = lastSeq(ctx.db, args.topic);
-      const events = listEventsSince(ctx.db, args.topic, Math.max(0, last - n), n);
+      const last = await lastSeq(ctx.db, args.topic);
+      const events = await listEventsSince(ctx.db, args.topic, Math.max(0, last - n), n);
       return { topic: args.topic, last_seq: last, events };
     },
   }),

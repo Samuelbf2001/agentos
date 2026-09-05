@@ -10,7 +10,7 @@ import { createAdminServer } from "./server.js";
 
 async function main(): Promise<void> {
   const profile = parseProfile(process.env.AGENTOS_MCP_PROFILE);
-  const ctx = createAdminContext({
+  const ctx = await createAdminContext({
     profile,
     personId: process.env.AGENTOS_MCP_PERSON_ID ?? null,
   });

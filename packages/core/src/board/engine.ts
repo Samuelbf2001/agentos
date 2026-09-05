@@ -17,7 +17,6 @@ import {
   AgentosError,
   ErrorCodes,
   errors,
-  nowMs,
   type ApprovalKind,
   type BlockedReason,
   type TaskPriority,
@@ -30,6 +29,7 @@ import {
   claimTask as repoClaimTask,
   ConfigKeys,
   countArtifacts,
+  countDelegations,
   createApproval,
   createTask as repoCreateTask,
   decideApproval as repoDecideApproval,
@@ -41,10 +41,13 @@ import {
   getProject,
   getTask,
   listPendingApprovals,
+  listTasks,
+  maxOrderKey,
   reapExpiredLeases,
   renewLease as repoRenewLease,
   setConfig,
   setGateState,
+  transitionTaskStatus,
   updateTask,
   type AgentosDb,
   type Approval,
@@ -164,7 +167,7 @@ export interface ApprovalReconcileDeps {
    * resultado es opaco para core (un GatewayResult de @agentos/tools). */
   executeApproved(approval: Approval): Promise<unknown>;
   /** Encola el run de reanudación tras ejecutar el efecto; devuelve runId o null. */
-  enqueueResume(approval: Approval, executed: unknown): string | null;
+  enqueueResume(approval: Approval, executed: unknown): Promise<string | null> | string | null;
 }
 
 export interface ReconcileResult {
@@ -186,17 +189,20 @@ export interface DependencyState {
   satisfied: boolean;
 }
 
-export function dependencyState(db: AgentosDb, taskId: string): DependencyState {
-  const task = getTask(db, taskId);
+export async function dependencyState(db: AgentosDb, taskId: string): Promise<DependencyState> {
+  const task = await getTask(db, taskId);
   if (!task) throw errors.notFound("task", taskId);
   const dependsOn = task.dependsOn ?? [];
-  const unsatisfied = dependsOn.filter((id) => getTask(db, id)?.status !== "DONE");
+  const unsatisfied: string[] = [];
+  for (const id of dependsOn) {
+    if ((await getTask(db, id))?.status !== "DONE") unsatisfied.push(id);
+  }
   return { taskId: task.id, dependsOn, unsatisfied, satisfied: unsatisfied.length === 0 };
 }
 
 export interface BoardEngine {
-  createTask(input: CreateTaskInput, opts: { actor: string; runId?: string | null }): Task;
-  moveTask(input: MoveTaskInput): Task;
+  createTask(input: CreateTaskInput, opts: { actor: string; runId?: string | null }): Promise<Task>;
+  moveTask(input: MoveTaskInput): Promise<Task>;
   /**
    * CA-M2.3 (§13.4): promueve BACKLOG→READY (actor system, por la MISMA máquina,
    * con task_events y eventos de board) las tareas del proyecto con depends_on
@@ -205,18 +211,18 @@ export interface BoardEngine {
    * Devuelve los ids promovidos. Fail-soft por tarea: la que no pueda entrar a
    * READY (DoD vacía, Gate 1 pendiente, carrera) se queda en BACKLOG.
    */
-  promoteUnblockedTasks(projectId: string, ctx?: { runId?: string | null }): string[];
-  claim(input: ClaimInput): { claimed: boolean; task?: Task };
-  renewLease(taskId: string, leaseMs?: number): boolean;
-  reap(): { requeued: string[]; blocked: string[] };
-  approveGate(projectId: string, gate: GateName, personId: string, note?: string): Project;
-  requestApproval(input: RequestApprovalInput): Approval;
+  promoteUnblockedTasks(projectId: string, ctx?: { runId?: string | null }): Promise<string[]>;
+  claim(input: ClaimInput): Promise<{ claimed: boolean; task?: Task }>;
+  renewLease(taskId: string, leaseMs?: number): Promise<boolean>;
+  reap(): Promise<{ requeued: string[]; blocked: string[] }>;
+  approveGate(projectId: string, gate: GateName, personId: string, note?: string): Promise<Project>;
+  requestApproval(input: RequestApprovalInput): Promise<Approval>;
   decideApproval(
     approvalId: string,
     decision: "approved" | "rejected",
     personId: string,
     note?: string,
-  ): DecideApprovalResult;
+  ): Promise<DecideApprovalResult>;
   /**
    * Reconcilia el efecto de una aprobación YA decidida (Gate 2, fix Q2): ejecuta
    * el efecto del tool_call aprobado (vía deps) + encola la reanudación, o
@@ -228,25 +234,25 @@ export interface BoardEngine {
     approvalId: string,
     deps: ApprovalReconcileDeps,
   ): Promise<ReconcileResult>;
-  listPendingApprovals(): Approval[];
-  delegate(input: DelegateInput): Task;
-  isKillSwitchActive(): boolean;
-  setKillSwitch(active: boolean, actor: string, reason?: string): void;
-  isAgentPaused(agentIdOrSlug: string): boolean;
+  listPendingApprovals(): Promise<Approval[]>;
+  delegate(input: DelegateInput): Promise<Task>;
+  isKillSwitchActive(): Promise<boolean>;
+  setKillSwitch(active: boolean, actor: string, reason?: string): Promise<void>;
+  isAgentPaused(agentIdOrSlug: string): Promise<boolean>;
   /** Salud de la cadena de mando del agente (Fase 2). Solo mira a sus ancestros. */
-  orgChainHealth(agentIdOrSlug: string): OrgChainHealth;
+  orgChainHealth(agentIdOrSlug: string): Promise<OrgChainHealth>;
   /**
    * ¿El agente puede tomar trabajo AHORA? true sii está `active` Y su cadena de
    * mando está sana. NO mira el kill switch (global, se comprueba por tick). Guarda
    * silenciosa del despachador: una cadena rota espera igual que un agente pausado.
    */
-  isAgentAssignable(agentIdOrSlug: string): boolean;
+  isAgentAssignable(agentIdOrSlug: string): Promise<boolean>;
   /**
    * Lanza kill_switch_active / policy_denied / agent_not_assignable si el agente
    * no puede correr. La cadena rota (ancestro terminado, manager faltante, ciclo)
    * bloquea la asignación y la ejecución con reason clara (Fase 2).
    */
-  assertAgentCanRun(agentIdOrSlug: string): void;
+  assertAgentCanRun(agentIdOrSlug: string): Promise<void>;
 }
 
 // ── Motor ───────────────────────────────────────────────────────────────────
@@ -260,18 +266,23 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
   const maxDepth = opts.maxDelegationDepth ?? MAX_DELEGATION_DEPTH;
   const maxFanOut = opts.maxFanOutPerRun ?? MAX_FAN_OUT_PER_RUN;
 
-  function publishBoard(projectId: string, type: string, payload: Record<string, unknown>, runId?: string | null): void {
-    sink.publish(`board:${projectId}`, { type, payload, runId: runId ?? null });
+  async function publishBoard(
+    projectId: string,
+    type: string,
+    payload: Record<string, unknown>,
+    runId?: string | null,
+  ): Promise<void> {
+    await sink.publish(`board:${projectId}`, { type, payload, runId: runId ?? null });
   }
 
-  function mustGetTask(taskId: string): Task {
-    const task = getTask(db, taskId);
+  async function mustGetTask(taskId: string): Promise<Task> {
+    const task = await getTask(db, taskId);
     if (!task) throw errors.notFound("task", taskId);
     return task;
   }
 
-  function mustGetProject(projectId: string): Project {
-    const project = getProject(db, projectId);
+  async function mustGetProject(projectId: string): Promise<Project> {
+    const project = await getProject(db, projectId);
     if (!project) throw errors.notFound("project", projectId);
     return project;
   }
@@ -291,8 +302,8 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
    * fluyen. Con el proyecto en ENTENDER esto es EXACTAMENTE el Gate 1 clásico:
    * CONSTRUIR bloqueado hasta aprobar g1_plan.
    */
-  function assertGate1(task: Pick<Task, "stage" | "projectId">): void {
-    const project = mustGetProject(task.projectId);
+  async function assertGate1(task: Pick<Task, "stage" | "projectId">): Promise<void> {
+    const project = await mustGetProject(task.projectId);
     if (STAGE_ORDER[task.stage] <= STAGE_ORDER[project.stage]) return;
     if (project.gateState !== "approved") {
       throw new AgentosError(
@@ -309,54 +320,51 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
    * Clave de orden al FINAL de la columna: estrictamente mayor que el máximo
    * actual, crecimiento acotado (~1 carácter por cada 13 inserciones).
    */
-  function nextOrderKey(projectId: string, status: TaskStatus): string {
-    const row = db.$client
-      .prepare(`SELECT max(order_key) AS mk FROM tasks WHERE project_id = ? AND status = ?`)
-      .get(projectId, status) as { mk: string | null } | undefined;
-    const last = row?.mk;
+  async function nextOrderKey(projectId: string, status: TaskStatus): Promise<string> {
+    const last = await maxOrderKey(db, projectId, status);
     if (!last) return "m";
     const tail = last.charCodeAt(last.length - 1);
     if (tail < "z".charCodeAt(0)) return last.slice(0, -1) + String.fromCharCode(tail + 1);
     return `${last}m`;
   }
 
-  function resolveAgent(idOrSlug: string) {
-    return getAgent(db, idOrSlug) ?? getAgentBySlug(db, idOrSlug);
+  async function resolveAgent(idOrSlug: string) {
+    return (await getAgent(db, idOrSlug)) ?? (await getAgentBySlug(db, idOrSlug));
   }
 
   // ── Kill switch y pausado ─────────────────────────────────────────────────
 
-  function isKillSwitchActive(): boolean {
-    const value = getConfig(db, ConfigKeys.KILL_SWITCH);
+  async function isKillSwitchActive(): Promise<boolean> {
+    const value = await getConfig(db, ConfigKeys.KILL_SWITCH);
     if (value === true || value === "on" || value === 1) return true;
     if (typeof value === "object" && value !== null && (value as { active?: unknown }).active === true) return true;
     return false;
   }
 
-  function isAgentPaused(agentIdOrSlug: string): boolean {
-    const agent = resolveAgent(agentIdOrSlug);
+  async function isAgentPaused(agentIdOrSlug: string): Promise<boolean> {
+    const agent = await resolveAgent(agentIdOrSlug);
     if (!agent) throw errors.notFound("agent", agentIdOrSlug);
     return agent.status !== "active";
   }
 
-  function orgChainHealth(agentIdOrSlug: string): OrgChainHealth {
-    const agent = resolveAgent(agentIdOrSlug);
+  async function orgChainHealth(agentIdOrSlug: string): Promise<OrgChainHealth> {
+    const agent = await resolveAgent(agentIdOrSlug);
     if (!agent) throw errors.notFound("agent", agentIdOrSlug);
     return computeOrgChainHealth(db, agent.id);
   }
 
-  function isAgentAssignable(agentIdOrSlug: string): boolean {
-    const agent = resolveAgent(agentIdOrSlug);
+  async function isAgentAssignable(agentIdOrSlug: string): Promise<boolean> {
+    const agent = await resolveAgent(agentIdOrSlug);
     if (!agent) throw errors.notFound("agent", agentIdOrSlug);
     if (agent.status !== "active") return false;
-    return computeOrgChainHealth(db, agent.id).status === "healthy";
+    return (await computeOrgChainHealth(db, agent.id)).status === "healthy";
   }
 
-  function assertAgentCanRun(agentIdOrSlug: string): void {
-    if (isKillSwitchActive()) {
+  async function assertAgentCanRun(agentIdOrSlug: string): Promise<void> {
+    if (await isKillSwitchActive()) {
       throw new AgentosError(ErrorCodes.KILL_SWITCH_ACTIVE, "Kill switch activo: no arrancan trabajos nuevos");
     }
-    const agent = resolveAgent(agentIdOrSlug);
+    const agent = await resolveAgent(agentIdOrSlug);
     if (!agent) throw errors.notFound("agent", agentIdOrSlug);
     if (agent.status !== "active") {
       throw new AgentosError(
@@ -367,7 +375,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
     // Fase 2: la salud de la cadena de mando gobierna la asignabilidad. Un agente
     // activo pero con ancestro terminado/faltante o en ciclo NO es asignable.
-    const health = computeOrgChainHealth(db, agent.id);
+    const health = await computeOrgChainHealth(db, agent.id);
     if (health.status !== "healthy") {
       throw errors.notAssignable(agent.slug, health.status, {
         agentId: agent.id,
@@ -378,15 +386,15 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
 
   // ── Crear tarea ───────────────────────────────────────────────────────────
 
-  function createTask(input: CreateTaskInput, ctx: { actor: string; runId?: string | null }): Task {
+  async function createTask(input: CreateTaskInput, ctx: { actor: string; runId?: string | null }): Promise<Task> {
     if (!input.title.trim()) throw errors.validation("title es obligatorio");
-    mustGetProject(input.projectId);
+    await mustGetProject(input.projectId);
     // Política determinista: el llamador puede SUBIR el control, nunca bajarlo.
     const requiresApproval =
       computeRequiresApproval({ externalEffect: input.externalEffect, activityType: input.activityType }) ||
       input.requiresApproval === true;
 
-    const task = repoCreateTask(db, {
+    const task = await repoCreateTask(db, {
       projectId: input.projectId,
       parentTaskId: input.parentTaskId ?? null,
       title: input.title,
@@ -400,9 +408,9 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       assigneePersonId: input.assigneePersonId ?? null,
       requiresApproval,
       externalEffect: input.externalEffect ?? false,
-      orderKey: nextOrderKey(input.projectId, "BACKLOG"),
+      orderKey: await nextOrderKey(input.projectId, "BACKLOG"),
     });
-    appendTaskEvent(db, {
+    await appendTaskEvent(db, {
       taskId: task.id,
       runId: ctx.runId ?? null,
       kind: "created",
@@ -410,14 +418,19 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       actor: ctx.actor,
       payload: { requiresApproval },
     });
-    publishBoard(task.projectId, "task.created", { taskId: task.id, status: task.status, actor: ctx.actor }, ctx.runId);
+    await publishBoard(
+      task.projectId,
+      "task.created",
+      { taskId: task.id, status: task.status, actor: ctx.actor },
+      ctx.runId,
+    );
     return task;
   }
 
   // ── Transición ────────────────────────────────────────────────────────────
 
-  function moveTask(input: MoveTaskInput, internal?: { viaClaim?: boolean }): Task {
-    const task = mustGetTask(input.taskId);
+  async function moveTask(input: MoveTaskInput, internal?: { viaClaim?: boolean }): Promise<Task> {
+    const task = await mustGetTask(input.taskId);
     const from = task.status;
     const to = input.to;
     const kind: ActorKind = actorKind(input.actor);
@@ -435,7 +448,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
 
     // 3. Gate 1: salir de BACKLOG (salvo cancelación humana) exige g1 aprobado en CONSTRUIR.
-    if (from === "BACKLOG" && to !== "CANCELLED") assertGate1(task);
+    if (from === "BACKLOG" && to !== "CANCELLED") await assertGate1(task);
 
     // 4. BACKLOG→READY: solo orquestador-o-humano-o-sistema, y exige DoD + asignado.
     let dependencyOverride: string[] | null = null;
@@ -453,7 +466,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       // 4b. Guard de dependencias (§13.4, fail-closed): con depends_on sin
       // cerrar, system y agent RECHAZAN; el humano puede forzar (override) y
       // queda auditado como tal (audit_log, mismo helper que el resto).
-      const deps = dependencyState(db, task.id);
+      const deps = await dependencyState(db, task.id);
       if (!deps.satisfied) {
         if (kind !== "human") {
           throw new AgentosError(
@@ -483,7 +496,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
 
     // 6. Regla anti-teatro: a REVIEW/DONE solo con ≥1 artefacto.
-    if ((to === "REVIEW" || to === "DONE") && countArtifacts(db, task.id) < 1) {
+    if ((to === "REVIEW" || to === "DONE") && (await countArtifacts(db, task.id)) < 1) {
       throw new AgentosError(
         ErrorCodes.MISSING_ARTIFACT,
         `No se llega a ${to} sin al menos un artefacto adjunto (regla anti-teatro)`,
@@ -497,35 +510,22 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
 
     // 8. UPDATE atómico con expected_version + estado origen (jamás last-write-wins).
-    const now = nowMs();
     const blockedReason = to === "BLOCKED" ? (input.blockedReason ?? "manual") : null;
     const resetAttempts = from === "BLOCKED" && to === "READY";
-    const res = db.$client
-      .prepare(
-        `UPDATE tasks
-         SET status = @to,
-             blocked_reason = @blockedReason,
-             lease_until = NULL,
-             attempts = CASE WHEN @resetAttempts = 1 THEN 0 ELSE attempts END,
-             version = version + 1,
-             updated_at = @now
-         WHERE id = @taskId AND version = @expectedVersion AND status = @from`,
-      )
-      .run({
-        taskId: task.id,
-        to,
-        from,
-        blockedReason,
-        resetAttempts: resetAttempts ? 1 : 0,
-        expectedVersion: input.expectedVersion,
-        now,
-      });
-    if (res.changes === 0) {
-      if (!getTask(db, task.id)) throw errors.notFound("task", task.id);
+    const ok = await transitionTaskStatus(db, {
+      taskId: task.id,
+      from,
+      to,
+      blockedReason,
+      resetAttempts,
+      expectedVersion: input.expectedVersion,
+    });
+    if (!ok) {
+      if (!(await getTask(db, task.id))) throw errors.notFound("task", task.id);
       throw errors.versionConflict("task", task.id, input.expectedVersion);
     }
 
-    appendTaskEvent(db, {
+    await appendTaskEvent(db, {
       taskId: task.id,
       runId: input.runId ?? null,
       kind: "moved",
@@ -540,7 +540,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     });
     // Override humano del guard de dependencias: queda auditado como tal (§13.4).
     if (dependencyOverride) {
-      appendAudit(db, {
+      await appendAudit(db, {
         actor: input.actor,
         source: "ui",
         action: "task.dependency_override",
@@ -552,11 +552,11 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
         runId: input.runId ?? null,
       });
     }
-    publishBoard(task.projectId, "task.moved", { taskId: task.id, from, to, actor: input.actor }, input.runId);
+    await publishBoard(task.projectId, "task.moved", { taskId: task.id, from, to, actor: input.actor }, input.runId);
     // H10: la bandeja "Esperando por ti" incluye entregables en REVIEW; avisar
     // por el topic approvals para que la UI refresque el badge en vivo.
     if (to === "REVIEW" || from === "REVIEW") {
-      sink.publish("approvals", {
+      await sink.publish("approvals", {
         type: "review.changed",
         payload: { taskId: task.id, from, to },
         runId: input.runId ?? null,
@@ -567,15 +567,15 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     // por aquí) — al cerrar, promover dependientes en el mismo flujo secuencial
     // inmediato (el motor no abre transacciones; SQL crudo suelto como siempre).
     if (to === "DONE") {
-      promoteUnblockedTasks(task.projectId, { runId: input.runId ?? null });
+      await promoteUnblockedTasks(task.projectId, { runId: input.runId ?? null });
       // Hook de cadencia (CA-M3.4 — M6a): si la tarea cerrada es una instancia
       // de plantilla `cadence` CONFIRMADA en el recibo de su launch, nace la
       // SIGUIENTE instancia. Mismo patrón fail-soft que la promoción: un fallo
       // de la cadencia jamás tumba el DONE que la disparó.
       try {
-        const respawned = respawnCadenceInstance(db, task.id, { runId: input.runId ?? null });
+        const respawned = await respawnCadenceInstance(db, task.id, { runId: input.runId ?? null });
         if (respawned) {
-          publishBoard(
+          await publishBoard(
             task.projectId,
             "task.created",
             { taskId: respawned.id, status: respawned.status, actor: "system:cadence", cadence: true },
@@ -586,25 +586,31 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
         /* fail-soft: la instancia siguiente la crea un humano o el próximo cierre */
       }
     }
-    return getTask(db, task.id)!;
+    return (await getTask(db, task.id))!;
   }
 
   /** Ver doc en la interfaz BoardEngine (CA-M2.3). */
-  function promoteUnblockedTasks(projectId: string, ctx?: { runId?: string | null }): string[] {
-    const rows = db.$client
-      .prepare(`SELECT id FROM tasks WHERE project_id = ? AND status = 'BACKLOG' ORDER BY order_key`)
-      .all(projectId) as { id: string }[];
+  async function promoteUnblockedTasks(projectId: string, ctx?: { runId?: string | null }): Promise<string[]> {
+    // Ya viene ordenado por (status, order_key).
+    const rows = await listTasks(db, { projectId, status: "BACKLOG" });
     const promoted: string[] = [];
     for (const row of rows) {
-      const task = getTask(db, row.id);
+      const task = await getTask(db, row.id);
       if (!task || task.status !== "BACKLOG") continue;
       const deps = task.dependsOn ?? [];
       // Sin depends_on no hay auto-promoción: BACKLOG "a secas" es decisión
       // humana (despriorizada o recién creada) y el sistema no la pisa.
       if (deps.length === 0) continue;
-      if (deps.some((id) => getTask(db, id)?.status !== "DONE")) continue;
+      let allDone = true;
+      for (const id of deps) {
+        if ((await getTask(db, id))?.status !== "DONE") {
+          allDone = false;
+          break;
+        }
+      }
+      if (!allDone) continue;
       try {
-        moveTask({
+        await moveTask({
           taskId: task.id,
           to: "READY",
           expectedVersion: task.version,
@@ -624,19 +630,19 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
 
   // ── Claim / lease / reaper ────────────────────────────────────────────────
 
-  function claim(input: ClaimInput): { claimed: boolean; task?: Task } {
-    const agent = resolveAgent(input.agentId);
+  async function claim(input: ClaimInput): Promise<{ claimed: boolean; task?: Task }> {
+    const agent = await resolveAgent(input.agentId);
     if (!agent) throw errors.notFound("agent", input.agentId);
-    assertAgentCanRun(agent.id);
+    await assertAgentCanRun(agent.id);
 
-    const task = mustGetTask(input.taskId);
+    const task = await mustGetTask(input.taskId);
     // Una tarea asignada a otro agente no se roba: carrera perdida, no error.
     if (task.assigneeAgentId && task.assigneeAgentId !== agent.id) {
       return { claimed: false };
     }
 
     // UPDATE condicional ya validado en packages/db (changes=0 = carrera perdida).
-    const result = repoClaimTask(db, {
+    const result = await repoClaimTask(db, {
       taskId: input.taskId,
       agentId: agent.slug,
       leaseMs: input.leaseMs ?? defaultLeaseMs,
@@ -646,9 +652,9 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
 
     let claimed = result.task;
     if (!claimed.assigneeAgentId) {
-      claimed = updateTask(db, claimed.id, { assigneeAgentId: agent.id }, claimed.version);
+      claimed = await updateTask(db, claimed.id, { assigneeAgentId: agent.id }, claimed.version);
     }
-    publishBoard(
+    await publishBoard(
       claimed.projectId,
       "task.claimed",
       { taskId: claimed.id, agent: agent.slug, leaseUntil: claimed.leaseUntil },
@@ -657,16 +663,16 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     return { claimed: true, task: claimed };
   }
 
-  function renewLease(taskId: string, leaseMs?: number): boolean {
+  async function renewLease(taskId: string, leaseMs?: number): Promise<boolean> {
     return repoRenewLease(db, taskId, leaseMs ?? defaultLeaseMs);
   }
 
-  function reap(): { requeued: string[]; blocked: string[] } {
-    const result = reapExpiredLeases(db, maxAttempts);
+  async function reap(): Promise<{ requeued: string[]; blocked: string[] }> {
+    const result = await reapExpiredLeases(db, maxAttempts);
     for (const id of [...result.requeued, ...result.blocked]) {
-      const task = getTask(db, id);
+      const task = await getTask(db, id);
       if (task) {
-        publishBoard(task.projectId, "task.reaped", {
+        await publishBoard(task.projectId, "task.reaped", {
           taskId: id,
           to: task.status,
           blockedReason: task.blockedReason,
@@ -679,14 +685,14 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
 
   // ── Gates ─────────────────────────────────────────────────────────────────
 
-  function approveGate(projectId: string, gate: GateName, personId: string, note?: string): Project {
+  async function approveGate(projectId: string, gate: GateName, personId: string, note?: string): Promise<Project> {
     if (gate !== GATE_G1_PLAN) {
       throw errors.validation(`Gate desconocido: "${gate}" (el MVP solo tiene ${GATE_G1_PLAN})`);
     }
-    const project = mustGetProject(projectId);
+    const project = await mustGetProject(projectId);
     const before = { gateState: project.gateState };
-    const updated = setGateState(db, projectId, "approved", project.version);
-    appendAudit(db, {
+    const updated = await setGateState(db, projectId, "approved", project.version);
+    await appendAudit(db, {
       actor: `person:${personId}`,
       source: "ui",
       action: "gate.approve",
@@ -696,15 +702,15 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       after: { gateState: updated.gateState, gate },
       reason: note ?? null,
     });
-    publishBoard(projectId, "gate.approved", { gate, by: personId });
+    await publishBoard(projectId, "gate.approved", { gate, by: personId });
     return updated;
   }
 
   // ── Gate 2: approvals (payload literal + digest) ──────────────────────────
 
-  function requestApproval(input: RequestApprovalInput): Approval {
+  async function requestApproval(input: RequestApprovalInput): Promise<Approval> {
     try {
-      const approval = createApproval(db, {
+      const approval = await createApproval(db, {
         kind: input.kind,
         payload: input.payload,
         runId: input.runId ?? null,
@@ -712,7 +718,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
         projectId: input.projectId ?? null,
         requestedBy: input.requestedBy ?? null,
       });
-      sink.publish("approvals", {
+      await sink.publish("approvals", {
         type: "approval.requested",
         payload: { approvalId: approval.id, kind: approval.kind, taskId: approval.taskId },
         runId: input.runId ?? null,
@@ -723,22 +729,21 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       // idempotente — se devuelve la aprobación existente, no se duplica.
       if (err instanceof Error && /UNIQUE constraint failed/i.test(err.message) && input.runId) {
         const digest = digestPayload(input.payload);
-        const existing = listPendingApprovals(db).find(
-          (a) => a.actionDigest === digest && a.runId === input.runId,
-        );
+        const pending = await listPendingApprovals(db);
+        const existing = pending.find((a) => a.actionDigest === digest && a.runId === input.runId);
         if (existing) return existing;
       }
       throw err;
     }
   }
 
-  function decideApproval(
+  async function decideApproval(
     approvalId: string,
     decision: "approved" | "rejected",
     personId: string,
     note?: string,
-  ): DecideApprovalResult {
-    const approval = getApproval(db, approvalId);
+  ): Promise<DecideApprovalResult> {
+    const approval = await getApproval(db, approvalId);
     if (!approval) throw errors.notFound("approval", approvalId);
     if (approval.status !== "pending") {
       throw new AgentosError(
@@ -758,12 +763,12 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
 
     const before = { status: approval.status };
-    const updated = repoDecideApproval(db, approvalId, {
+    const updated = await repoDecideApproval(db, approvalId, {
       status: decision,
       decidedByPersonId: personId,
       note,
     });
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: `person:${personId}`,
       source: "ui",
       action: `approval.${decision}`,
@@ -774,7 +779,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       reason: note ?? null,
       runId: updated.runId ?? null,
     });
-    sink.publish("approvals", {
+    await sink.publish("approvals", {
       type: `approval.${decision}`,
       payload: { approvalId, kind: updated.kind, taskId: updated.taskId },
       runId: updated.runId ?? null,
@@ -800,7 +805,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     approvalId: string,
     deps: ApprovalReconcileDeps,
   ): Promise<ReconcileResult> {
-    const approval = getApproval(db, approvalId);
+    const approval = await getApproval(db, approvalId);
     if (!approval) throw errors.notFound("approval", approvalId);
     // Aún pendiente (no decidida): nada que reconciliar.
     if (approval.status === "pending") {
@@ -808,9 +813,9 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
     // Reclamo atómico exactamente-una-vez: si ya la reconcilió otro (REST o un
     // tick del despachador), no repetir el efecto externo.
-    if (!claimApprovalReconciliation(db, approvalId)) {
+    if (!(await claimApprovalReconciliation(db, approvalId))) {
       return {
-        approval: getApproval(db, approvalId) ?? approval,
+        approval: (await getApproval(db, approvalId)) ?? approval,
         executed: null,
         resumeRunId: null,
         reconciled: false,
@@ -823,12 +828,12 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     const decidedActor = approval.decidedByPersonId
       ? `person:${approval.decidedByPersonId}`
       : "system:approvals";
-    const task = approval.taskId ? getTask(db, approval.taskId) : undefined;
+    const task = approval.taskId ? await getTask(db, approval.taskId) : undefined;
 
     // Comentario en el timeline: un tool_call APROBADO no comenta aquí — su
     // resultado se lo cuenta al agente el run de reanudación.
     if (task && !(approved && isToolCall)) {
-      appendTaskEvent(db, {
+      await appendTaskEvent(db, {
         taskId: task.id,
         runId: approval.runId ?? null,
         kind: "comment",
@@ -846,12 +851,12 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       // La PLATAFORMA ejecuta el efecto (digest verificado en el gateway) y encola
       // el run de reanudación con resume_of_run_id (que desbloquea y reclama).
       executed = await deps.executeApproved(approval);
-      resumeRunId = deps.enqueueResume(approval, executed);
+      resumeRunId = await deps.enqueueResume(approval, executed);
     } else if (task && !isToolCall && task.status === "BLOCKED" && task.blockedReason === "approval") {
       // Pregunta/entregable decidido: la tarjeta vuelve a la cola con la respuesta
       // visible en su timeline (mismo comportamiento que tenía el route REST).
       try {
-        moveTask({
+        await moveTask({
           taskId: task.id,
           to: "READY",
           expectedVersion: task.version,
@@ -864,7 +869,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     }
 
     return {
-      approval: getApproval(db, approvalId) ?? approval,
+      approval: (await getApproval(db, approvalId)) ?? approval,
       executed,
       resumeRunId,
       reconciled: true,
@@ -873,18 +878,18 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
 
   // ── Delegación ────────────────────────────────────────────────────────────
 
-  function delegationDepth(taskId: string): number {
+  async function delegationDepth(taskId: string): Promise<number> {
     let depth = 0;
-    let current = getTask(db, taskId);
+    let current = await getTask(db, taskId);
     while (current?.parentTaskId) {
       depth += 1;
       if (depth > 32) throw errors.validation("Ciclo de parent_task_id detectado");
-      current = getTask(db, current.parentTaskId);
+      current = await getTask(db, current.parentTaskId);
     }
     return depth;
   }
 
-  function delegate(input: DelegateInput): Task {
+  async function delegate(input: DelegateInput): Promise<Task> {
     const parsed = DelegationPayload.safeParse(input.payload);
     if (!parsed.success) {
       throw errors.validation(
@@ -893,10 +898,10 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       );
     }
     const payload = parsed.data;
-    const parent = mustGetTask(input.parentTaskId);
+    const parent = await mustGetTask(input.parentTaskId);
 
     // Depth máx 3: la hija quedaría a depth(parent)+1. Se rechaza, no se trunca.
-    const childDepth = delegationDepth(parent.id) + 1;
+    const childDepth = (await delegationDepth(parent.id)) + 1;
     if (childDepth > maxDepth) {
       throw new AgentosError(
         ErrorCodes.DELEGATION_LIMIT,
@@ -909,33 +914,27 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
     // Fan-out máx 4 por run: se cuentan las delegaciones YA hechas desde esta
     // tarea por este run (task_events kind='delegated').
     const runId = input.runId ?? null;
-    const fanOutRow = db.$client
-      .prepare(
-        `SELECT count(*) AS n FROM task_events
-         WHERE task_id = ? AND kind = 'delegated'
-           AND ((run_id IS NULL AND ? IS NULL) OR run_id = ?)`,
-      )
-      .get(parent.id, runId, runId) as { n: number };
-    if (fanOutRow.n >= maxFanOut) {
+    const fanOut = await countDelegations(db, parent.id, runId);
+    if (fanOut >= maxFanOut) {
       throw new AgentosError(
         ErrorCodes.DELEGATION_LIMIT,
-        `Delegación rechazada: fan-out ${fanOutRow.n + 1} supera el máximo ${maxFanOut} por run. ` +
+        `Delegación rechazada: fan-out ${fanOut + 1} supera el máximo ${maxFanOut} por run. ` +
           "Consolida subtareas o espera a que terminen las delegadas.",
-        { parentTaskId: parent.id, fanOut: fanOutRow.n + 1, maxFanOut },
+        { parentTaskId: parent.id, fanOut: fanOut + 1, maxFanOut },
       );
     }
 
-    const assignee = resolveAgent(input.assignee);
+    const assignee = await resolveAgent(input.assignee);
     if (!assignee) throw errors.notFound("agent", input.assignee);
 
     // La hija hereda stage: si es CONSTRUIR sin G1 aprobado, fail-closed.
-    assertGate1({ stage: parent.stage, projectId: parent.projectId });
+    await assertGate1({ stage: parent.stage, projectId: parent.projectId });
 
     const limites = Array.isArray(payload.limites) ? payload.limites.join("; ") : payload.limites;
     const requiresApproval = computeRequiresApproval({ externalEffect: false, activityType: "delegation" });
     // Nace directamente en READY: la delegación garantiza por construcción el
     // invariante de READY (DoD = forma de buena respuesta + asignado).
-    const child = repoCreateTask(db, {
+    const child = await repoCreateTask(db, {
       projectId: parent.projectId,
       parentTaskId: parent.id,
       title: payload.tarea.length > 140 ? `${payload.tarea.slice(0, 137)}...` : payload.tarea,
@@ -948,10 +947,10 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       assigneeAgentId: assignee.id,
       requiresApproval,
       externalEffect: false,
-      orderKey: nextOrderKey(parent.projectId, "READY"),
+      orderKey: await nextOrderKey(parent.projectId, "READY"),
     });
 
-    appendTaskEvent(db, {
+    await appendTaskEvent(db, {
       taskId: child.id,
       runId,
       kind: "created",
@@ -959,14 +958,14 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       actor: input.actor,
       payload: { delegated: true, parentTaskId: parent.id, limites },
     });
-    appendTaskEvent(db, {
+    await appendTaskEvent(db, {
       taskId: parent.id,
       runId,
       kind: "delegated",
       actor: input.actor,
       payload: { childTaskId: child.id, assignee: assignee.slug },
     });
-    publishBoard(
+    await publishBoard(
       parent.projectId,
       "task.delegated",
       { parentTaskId: parent.id, childTaskId: child.id, assignee: assignee.slug, actor: input.actor },
@@ -977,10 +976,10 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
 
   // ── Kill switch (setter) ──────────────────────────────────────────────────
 
-  function setKillSwitch(active: boolean, actor: string, reason?: string): void {
-    const before = { active: isKillSwitchActive() };
-    setConfig(db, ConfigKeys.KILL_SWITCH, active);
-    appendAudit(db, {
+  async function setKillSwitch(active: boolean, actor: string, reason?: string): Promise<void> {
+    const before = { active: await isKillSwitchActive() };
+    await setConfig(db, ConfigKeys.KILL_SWITCH, active);
+    await appendAudit(db, {
       actor,
       source: actorKind(actor) === "human" ? "ui" : "system",
       action: active ? "kill_switch.on" : "kill_switch.off",
@@ -990,7 +989,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       after: { active },
       reason: reason ?? null,
     });
-    sink.publish("swarm", { type: active ? "kill_switch.on" : "kill_switch.off", payload: { actor } });
+    await sink.publish("swarm", { type: active ? "kill_switch.on" : "kill_switch.off", payload: { actor } });
   }
 
   return {

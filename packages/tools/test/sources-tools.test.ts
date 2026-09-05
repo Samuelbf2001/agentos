@@ -104,26 +104,26 @@ interface Fx {
   connector: ReturnType<typeof mockConnector>;
 }
 
-function fixture(opts: MockOpts = {}, withConnector = true): Fx {
+async function fixture(opts: MockOpts = {}, withConnector = true): Promise<Fx> {
   const db = openDb(":memory:");
   runMigrations(db);
-  const org = createOrganization(db, { name: "ACME S.A.", kind: "client" });
-  const project = createProject(db, { orgId: org.id, name: "Assessment ACME", type: "assessment" });
-  const sam = createAgent(db, {
+  const org = await createOrganization(db, { name: "ACME S.A.", kind: "client" });
+  const project = await createProject(db, { orgId: org.id, name: "Assessment ACME", type: "assessment" });
+  const sam = await createAgent(db, {
     slug: "sam",
     name: "Sam",
     layer: "consultoria",
     runtime: "ai_sdk",
     toolsAllowlist: ["sources.list", "sources.ingest", "knowledge.list"],
   });
-  const quinn = createAgent(db, {
+  const quinn = await createAgent(db, {
     slug: "quinn",
     name: "Quinn",
     layer: "meta",
     runtime: "ai_sdk",
     toolsAllowlist: ["tasks.list"],
   });
-  const run = createRun(db, { trigger: "manual", runtime: "ai_sdk", agentId: sam.id });
+  const run = await createRun(db, { trigger: "manual", runtime: "ai_sdk", agentId: sam.id });
   const sink = recordingEventSink();
   const engine = createBoardEngine({ db, sink });
   const connector = mockConnector(opts);
@@ -144,8 +144,8 @@ function fixture(opts: MockOpts = {}, withConnector = true): Fx {
   return { db, runtime, projectId: project.id, ctx, denyCtx, connector };
 }
 
-function linkMeeting(fx: Fx): ProjectSource {
-  return createProjectSource(fx.db, {
+async function linkMeeting(fx: Fx): Promise<ProjectSource> {
+  return await createProjectSource(fx.db, {
     projectId: fx.projectId,
     kind: "meeting",
     externalRef: { system: "whatsapphub", meetingId: "m-1", title: "Kickoff ACME" },
@@ -156,18 +156,18 @@ function linkMeeting(fx: Fx): ProjectSource {
 
 describe("sources.ingest (gateway)", () => {
   it("asociar→ingerir crea un doc tipado 'interview' con sourceRefs completos", async () => {
-    const fx = fixture({ isInternal: false });
-    const source = linkMeeting(fx);
+    const fx = await fixture({ isInternal: false });
+    const source = await linkMeeting(fx);
     const res = await fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id });
     expect(res.status).toBe("ok");
 
-    const after = getProjectSource(fx.db, source.id)!;
+    const after = (await getProjectSource(fx.db, source.id))!;
     expect(after.status).toBe("ingested");
     expect(after.knowledgeDocId).toBeTruthy();
     expect(after.lastIngestedAt).toBeTypeOf("number");
     expect(after.lastError).toBeNull();
 
-    const doc = getDoc(fx.db, after.knowledgeDocId!)!;
+    const doc = (await getDoc(fx.db, after.knowledgeDocId!))!;
     expect(doc.kind).toBe("interview"); // reunión con cliente (is_internal=false)
     expect(doc.projectId).toBe(fx.projectId);
     expect(doc.bodyMd).toContain("Kickoff ACME");
@@ -180,74 +180,74 @@ describe("sources.ingest (gateway)", () => {
   });
 
   it("reunión interna (is_internal=true) se ingesta como 'evidence'", async () => {
-    const fx = fixture({ isInternal: true });
-    const source = linkMeeting(fx);
+    const fx = await fixture({ isInternal: true });
+    const source = await linkMeeting(fx);
     await fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id });
-    const after = getProjectSource(fx.db, source.id)!;
-    expect(getDoc(fx.db, after.knowledgeDocId!)!.kind).toBe("evidence");
+    const after = (await getProjectSource(fx.db, source.id))!;
+    expect((await getDoc(fx.db, after.knowledgeDocId!))!.kind).toBe("evidence");
   });
 
   it("hilo de WhatsApp se ingesta como 'evidence' con contact_id en sourceRefs", async () => {
-    const fx = fixture();
-    const source = createProjectSource(fx.db, {
+    const fx = await fixture();
+    const source = await createProjectSource(fx.db, {
       projectId: fx.projectId,
       kind: "whatsapp_thread",
       externalRef: { system: "whatsapphub", contactId: "c-9", title: "Hilo Gerente ACME" },
       status: "linked",
     });
     await fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id });
-    const after = getProjectSource(fx.db, source.id)!;
-    const doc = getDoc(fx.db, after.knowledgeDocId!)!;
+    const after = (await getProjectSource(fx.db, source.id))!;
+    const doc = (await getDoc(fx.db, after.knowledgeDocId!))!;
     expect(doc.kind).toBe("evidence");
     expect(doc.bodyMd).toContain("Transcript");
     expect((doc.sourceRefs![0] as Record<string, unknown>).contact_id).toBe("c-9");
   });
 
   it("re-ingerir actualiza el MISMO doc, no duplica", async () => {
-    const fx = fixture();
-    const source = linkMeeting(fx);
+    const fx = await fixture();
+    const source = await linkMeeting(fx);
     await fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id });
-    const docId1 = getProjectSource(fx.db, source.id)!.knowledgeDocId!;
+    const docId1 = (await getProjectSource(fx.db, source.id))!.knowledgeDocId!;
 
     await fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id });
-    const after = getProjectSource(fx.db, source.id)!;
+    const after = (await getProjectSource(fx.db, source.id))!;
     expect(after.knowledgeDocId).toBe(docId1);
-    expect(listDocs(fx.db, { projectId: fx.projectId })).toHaveLength(1);
+    expect(await listDocs(fx.db, { projectId: fx.projectId })).toHaveLength(1);
   });
 
   it("fallo del conector → status 'error' legible SIN doc huérfano", async () => {
-    const fx = fixture({ failMarkdown: true });
-    const source = linkMeeting(fx);
+    const fx = await fixture({ failMarkdown: true });
+    const source = await linkMeeting(fx);
     await expect(
       fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id }),
     ).rejects.toSatisfy((err) => isAgentosError(err, ErrorCodes.PROVIDER_ERROR));
 
-    const after = getProjectSource(fx.db, source.id)!;
+    const after = (await getProjectSource(fx.db, source.id))!;
     expect(after.status).toBe("error");
     expect(after.lastError).toContain("no respondió");
     expect(after.knowledgeDocId).toBeNull();
-    expect(listDocs(fx.db, { projectId: fx.projectId })).toHaveLength(0);
+    expect(await listDocs(fx.db, { projectId: fx.projectId })).toHaveLength(0);
     // La denegación/fallo deja huella en audit (segunda fila del gateway).
-    const audit = queryAudit(fx.db, { entityType: "tool" });
+    const audit = await queryAudit(fx.db, { entityType: "tool" });
     expect(audit.some((a) => a.action === "tool.error" && a.entityId === "sources.ingest")).toBe(true);
   });
 
   it("sin conector configurado → provider_not_configured (falla legible, no cuelga)", async () => {
-    const fx = fixture({}, false);
-    const source = linkMeeting(fx);
+    const fx = await fixture({}, false);
+    const source = await linkMeeting(fx);
     await expect(
       fx.runtime.execute(fx.ctx, "sources.ingest", { source_id: source.id }),
     ).rejects.toSatisfy((err) => isAgentosError(err, ErrorCodes.PROVIDER_NOT_CONFIGURED));
     // Falla ANTES de tocar la fuente: sigue 'linked' y reintentable al configurar.
-    expect(getProjectSource(fx.db, source.id)!.status).toBe("linked");
-    expect(listDocs(fx.db, { projectId: fx.projectId })).toHaveLength(0);
+    expect((await getProjectSource(fx.db, source.id))!.status).toBe("linked");
+    expect(await listDocs(fx.db, { projectId: fx.projectId })).toHaveLength(0);
   });
 });
 
 describe("sources.list y política (gateway fail-closed)", () => {
   it("sources.list devuelve las fuentes del proyecto del run", async () => {
-    const fx = fixture();
-    linkMeeting(fx);
+    const fx = await fixture();
+    await linkMeeting(fx);
     const res = await fx.runtime.execute(fx.ctx, "sources.list", {});
     expect(res.status).toBe("ok");
     const rows = (res as { result: ProjectSource[] }).result;
@@ -256,14 +256,14 @@ describe("sources.list y política (gateway fail-closed)", () => {
   });
 
   it("agente sin sources.* en allowlist es rechazado (policy_denied)", async () => {
-    const fx = fixture();
-    const source = linkMeeting(fx);
+    const fx = await fixture();
+    const source = await linkMeeting(fx);
     await expect(fx.runtime.execute(fx.denyCtx, "sources.list", {})).rejects.toSatisfy((err) =>
       isAgentosError(err, ErrorCodes.POLICY_DENIED),
     );
     await expect(
       fx.runtime.execute(fx.denyCtx, "sources.ingest", { source_id: source.id }),
     ).rejects.toSatisfy((err) => isAgentosError(err, ErrorCodes.POLICY_DENIED));
-    expect(getProjectSource(fx.db, source.id)!.status).toBe("linked");
+    expect((await getProjectSource(fx.db, source.id))!.status).toBe("linked");
   });
 });

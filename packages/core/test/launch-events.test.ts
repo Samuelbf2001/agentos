@@ -6,10 +6,10 @@ import { describe, expect, it } from "vitest";
 import { openDb, runMigrations, seed, type AgentosDb } from "@agentos/db";
 import { launchModuleWithEvents, recordingEventSink } from "../src/index.js";
 
-function seededDb(): AgentosDb {
+async function seededDb(): Promise<AgentosDb> {
   const db = openDb(":memory:");
   runMigrations(db);
-  seed(db, { env: {} });
+  await seed(db, { env: {} });
   return db;
 }
 
@@ -26,10 +26,10 @@ const INPUTS = {
 };
 
 describe("launchModuleWithEvents", () => {
-  it("publica los pendingEvents tras el commit: task.created×N + module.launched", () => {
-    const db = seededDb();
+  it("publica los pendingEvents tras el commit: task.created×N + module.launched", async () => {
+    const db = await seededDb();
     const sink = recordingEventSink();
-    const r = launchModuleWithEvents(db, sink, {
+    const r = await launchModuleWithEvents(db, sink, {
       moduleSlug: "consultoria",
       org: { name: "Nova Manufactura S.A." },
       inputs: INPUTS,
@@ -48,7 +48,7 @@ describe("launchModuleWithEvents", () => {
     expect(last.event.payload?.["launchId"]).toBe(r.launch.id);
 
     // Retorno idempotente: nada nuevo → nada re-publicado.
-    const again = launchModuleWithEvents(db, sink, {
+    const again = await launchModuleWithEvents(db, sink, {
       moduleSlug: "consultoria",
       org: { name: "Nova Manufactura S.A." },
       inputs: INPUTS,

@@ -51,7 +51,7 @@ export function registerWs(app: FastifyInstance, ctx: ApiContext): void {
       });
     };
 
-    function subscribe(topic: string, sinceSeq: number | undefined): void {
+    async function subscribe(topic: string, sinceSeq: number | undefined): Promise<void> {
       if (!isValidTopic(topic)) {
         send({ type: "error", code: "invalid_topic", topic });
         return;
@@ -60,11 +60,11 @@ export function registerWs(app: FastifyInstance, ctx: ApiContext): void {
       subs.delete(topic);
 
       // Sin since_seq: solo en vivo desde el último seq persistido.
-      let lastSent = sinceSeq ?? ctx.bus.lastSeq(topic);
+      let lastSent = sinceSeq ?? (await ctx.bus.lastSeq(topic));
 
-      // 1) Hueco primero (síncrono: nada puede intercalarse en un solo proceso).
+      // 1) Hueco primero (nada puede intercalarse mientras no cedemos el hilo).
       if (sinceSeq !== undefined) {
-        for (const event of ctx.bus.getSince(topic, sinceSeq)) {
+        for (const event of await ctx.bus.getSince(topic, sinceSeq)) {
           sendEvent(event);
           lastSent = event.seq;
         }
@@ -95,7 +95,7 @@ export function registerWs(app: FastifyInstance, ctx: ApiContext): void {
           }
           const since =
             typeof msg.since_seq === "number" && msg.since_seq >= 0 ? msg.since_seq : undefined;
-          subscribe(msg.topic, since);
+          void subscribe(msg.topic, since);
           return;
         }
         case "unsubscribe": {

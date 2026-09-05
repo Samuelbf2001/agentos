@@ -71,7 +71,7 @@ const indexOf = (events: AgUiEvent[], predicate: (e: AgUiEvent) => boolean) => e
 describe("AiSdkRunner", () => {
   it("loop completo con tool call: eventos AG-UI en orden, runs y spans escritos, coste calculado", async () => {
     const db = makeDb();
-    const profile = makeProfile(db);
+    const profile = await makeProfile(db);
     const model = new MockLanguageModelV3({
       modelId: "mock-model",
       doStream: [toolCallStep(100, 20), textStep("La suma es 5", 50, 10)],
@@ -113,14 +113,14 @@ describe("AiSdkRunner", () => {
     expect(events.filter((e) => e.type === "TOOL_CALL_START")).toHaveLength(1);
 
     // Fila runs: succeeded, tokens sumados de ambos pasos, coste por tarifas.
-    const run = getRun(db, ctx.runId)!;
+    const run = (await getRun(db, ctx.runId))!;
     expect(run.status).toBe("succeeded");
     expect(run.tokensIn).toBe(150);
     expect(run.tokensOut).toBe(30);
     expect(run.costUsd).toBeCloseTo((150 / 1e6) * 3 + (30 / 1e6) * 15, 10);
 
     // Spans estilo OTel GenAI: 2 llamadas LLM + 1 tool.
-    const spans = listSpans(db, ctx.runId);
+    const spans = (await listSpans(db, ctx.runId));
     const llmSpans = spans.filter((s) => s.kind === "llm");
     const toolSpans = spans.filter((s) => s.kind === "tool");
     expect(llmSpans).toHaveLength(2);
@@ -144,7 +144,7 @@ describe("AiSdkRunner", () => {
 
   it("presupuesto excedido corta DURO: no hay paso 2, run failed budget_exceeded", async () => {
     const db = makeDb();
-    const profile = makeProfile(db);
+    const profile = await makeProfile(db);
     const model = new MockLanguageModelV3({
       modelId: "mock-model",
       doStream: [toolCallStep(100, 20), textStep("nunca debería llegar", 50, 10)],
@@ -169,16 +169,16 @@ describe("AiSdkRunner", () => {
     expect(last.type).toBe("RUN_ERROR");
     expect(last.type === "RUN_ERROR" && last.code).toBe("budget_exceeded");
 
-    const run = getRun(db, ctx.runId)!;
+    const run = (await getRun(db, ctx.runId))!;
     expect(run.status).toBe("failed");
     expect(run.error).toBe("budget_exceeded");
     // Solo el primer paso llegó a ejecutarse.
-    expect(listSpans(db, ctx.runId).filter((s) => s.kind === "llm")).toHaveLength(1);
+    expect((await listSpans(db, ctx.runId)).filter((s) => s.kind === "llm")).toHaveLength(1);
   });
 
   it("presupuesto en USD también corta (tarifas del perfil)", async () => {
     const db = makeDb();
-    const profile = makeProfile(db); // 3 / 15 USD por Mtok
+    const profile = await makeProfile(db); // 3 / 15 USD por Mtok
     const model = new MockLanguageModelV3({
       modelId: "mock-model",
       doStream: [toolCallStep(1_000_000, 100_000), textStep("no", 1, 1)],
@@ -201,12 +201,12 @@ describe("AiSdkRunner", () => {
     );
     const last = events[events.length - 1]!;
     expect(last.type === "RUN_ERROR" && last.code).toBe("budget_exceeded");
-    expect(getRun(db, ctx.runId)!.status).toBe("failed");
+    expect((await getRun(db, ctx.runId))!.status).toBe("failed");
   });
 
   it("cierra tool-calls huérfanos con NO_ANSWER_CAME (tool sin execute = queda sin respuesta)", async () => {
     const db = makeDb();
-    const profile = makeProfile(db);
+    const profile = await makeProfile(db);
     const model = new MockLanguageModelV3({
       modelId: "mock-model",
       doStream: [toolCallStep(10, 5)],
@@ -239,12 +239,12 @@ describe("AiSdkRunner", () => {
     // El cierre sintético llega ANTES del evento final del run.
     const iSynthetic = events.indexOf(synthetic!);
     expect(iSynthetic).toBeLessThan(events.length - 1);
-    expect(getRun(db, ctx.runId)!.status).toBe("succeeded");
+    expect((await getRun(db, ctx.runId))!.status).toBe("succeeded");
   });
 
   it("tokens null cuando el proveedor no los reporta (nunca cero inferido)", async () => {
     const db = makeDb();
-    const profile = makeProfile(db);
+    const profile = await makeProfile(db);
     const model = new MockLanguageModelV3({
       modelId: "mock-model",
       doStream: [
@@ -282,7 +282,7 @@ describe("AiSdkRunner", () => {
         ctx,
       ),
     );
-    const run = getRun(db, ctx.runId)!;
+    const run = (await getRun(db, ctx.runId))!;
     expect(run.status).toBe("succeeded");
     expect(run.tokensIn).toBeNull();
     expect(run.tokensOut).toBeNull();

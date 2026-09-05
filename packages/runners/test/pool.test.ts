@@ -47,23 +47,23 @@ class FakeRunner implements AgentRunner {
   async *run(input: RunInput, ctx: RunTraceContext): AsyncIterable<AgUiEvent> {
     this.started.push(ctx.runId);
     this.inputs.set(ctx.runId, input);
-    updateRun(this.db, ctx.runId, { status: "running", startedAt: nowMs() });
+    await updateRun(this.db, ctx.runId, { status: "running", startedAt: nowMs() });
     yield { type: "RUN_STARTED", timestamp: nowMs(), runId: ctx.runId };
     await this.gate(ctx.runId).promise;
     if (this.cancelledRuns.has(ctx.runId)) {
-      updateRun(this.db, ctx.runId, { status: "cancelled", error: "cancelled", finishedAt: nowMs() });
+      await updateRun(this.db, ctx.runId, { status: "cancelled", error: "cancelled", finishedAt: nowMs() });
       yield { type: "RUN_ERROR", timestamp: nowMs(), runId: ctx.runId, code: "cancelled", message: "cancelado" };
       return;
     }
-    updateRun(this.db, ctx.runId, { status: "succeeded", finishedAt: nowMs() });
+    await updateRun(this.db, ctx.runId, { status: "succeeded", finishedAt: nowMs() });
     yield { type: "RUN_FINISHED", timestamp: nowMs(), runId: ctx.runId };
   }
 }
 
-function setup(poolOptions: Partial<ConstructorParameters<typeof RunnerPool>[0]> = {}) {
+async function setup(poolOptions: Partial<ConstructorParameters<typeof RunnerPool>[0]> = {}) {
   const db = makeDb();
   const bus = new EventBus(db);
-  const profile = makeProfile(db);
+  const profile = await makeProfile(db);
   const fake = new FakeRunner(db);
   const pool = new RunnerPool({
     db,
@@ -89,23 +89,23 @@ function setup(poolOptions: Partial<ConstructorParameters<typeof RunnerPool>[0]>
 
 describe("RunnerPool", () => {
   it("semáforo respeta el límite y la cola es FIFO y visible (estado queued + eventos)", async () => {
-    const { db, bus, fake, pool, submission } = setup({ limits: { ai_sdk: 2 } });
+    const { db, bus, fake, pool, submission } = await setup({ limits: { ai_sdk: 2 } });
     const [s1, s2, s3, s4] = [submission(), submission(), submission(), submission()];
-    const h1 = pool.submit(s1);
-    const h2 = pool.submit(s2);
-    const h3 = pool.submit(s3);
-    const h4 = pool.submit(s4);
+    const h1 = await pool.submit(s1);
+    const h2 = await pool.submit(s2);
+    const h3 = await pool.submit(s3);
+    const h4 = await pool.submit(s4);
     await tick();
 
     // Solo 2 corren; el resto espera en cola FIFO.
     expect(fake.started).toEqual([s1.ctx.runId, s2.ctx.runId]);
-    expect(getRun(db, s3.ctx.runId)!.status).toBe("queued");
-    expect(getRun(db, s4.ctx.runId)!.status).toBe("queued");
+    expect((await getRun(db, s3.ctx.runId))!.status).toBe("queued");
+    expect((await getRun(db, s4.ctx.runId))!.status).toBe("queued");
     expect(pool.snapshot().queued.ai_sdk).toEqual([s3.ctx.runId, s4.ctx.runId]);
     // Estado 'queued' consultable vía repositorio (cola visible).
-    expect(listRunsByStatus(db, "queued").map((r) => r.id)).toEqual([s3.ctx.runId, s4.ctx.runId]);
+    expect((await listRunsByStatus(db, "queued")).map((r) => r.id)).toEqual([s3.ctx.runId, s4.ctx.runId]);
     // Evento RUN_QUEUED con posición publicado al bus.
-    const swarm = bus.getSince(SWARM_TOPIC, 0);
+    const swarm = await bus.getSince(SWARM_TOPIC, 0);
     const queuedEvents = swarm.filter((e) => e.type === "RUN_QUEUED");
     expect(queuedEvents.map((e) => (e.payload as { runId: string; position: number }).position)).toEqual([1, 2]);
 
@@ -114,7 +114,7 @@ describe("RunnerPool", () => {
     await h1.done;
     await tick();
     expect(fake.started).toEqual([s1.ctx.runId, s2.ctx.runId, s3.ctx.runId]);
-    const dequeued = bus.getSince(SWARM_TOPIC, 0).filter((e) => e.type === "RUN_DEQUEUED");
+    const dequeued = (await bus.getSince(SWARM_TOPIC, 0)).filter((e) => e.type === "RUN_DEQUEUED");
     expect(dequeued.map((e) => (e.payload as { runId: string }).runId)).toEqual([s3.ctx.runId]);
 
     fake.release(s2.ctx.runId);
@@ -126,27 +126,24 @@ describe("RunnerPool", () => {
     expect(run4.status).toBe("succeeded");
   });
 
-  it("kill switch: no arranca nuevos (submit rechaza)", () => {
-    const { db, pool, submission } = setup();
-    setConfig(db, "agents_enabled", false);
-    try {
-      pool.submit(submission());
-      expect.unreachable();
-    } catch (err) {
-      expect(isAgentosError(err, ErrorCodes.KILL_SWITCH_ACTIVE)).toBe(true);
-    }
+  it("kill switch: no arranca nuevos (submit rechaza)", async () => {
+    const { db, pool, submission } = await setup();
+    await setConfig(db, "agents_enabled", false);
+    await expect(pool.submit(submission())).rejects.toSatisfy((err) =>
+      isAgentosError(err, ErrorCodes.KILL_SWITCH_ACTIVE),
+    );
   });
 
   it("kill switch: cancela activos y cola al refrescar", async () => {
-    const { db, fake, pool, submission } = setup({ limits: { ai_sdk: 1 } });
+    const { db, fake, pool, submission } = await setup({ limits: { ai_sdk: 1 } });
     const s1 = submission();
     const s2 = submission();
-    const h1 = pool.submit(s1);
-    const h2 = pool.submit(s2); // queda en cola
+    const h1 = await pool.submit(s1);
+    const h2 = await pool.submit(s2); // queda en cola
     await tick();
     expect(fake.started).toEqual([s1.ctx.runId]);
 
-    setConfig(db, "agents_enabled", false);
+    await setConfig(db, "agents_enabled", false);
     const acted = await pool.refreshKillSwitch();
     expect(acted).toBe(true);
 
@@ -158,16 +155,16 @@ describe("RunnerPool", () => {
   });
 
   it("timeout duro mata el run (cancelación vía runner)", async () => {
-    const { pool, submission } = setup({ defaultTimeoutMs: 30 });
-    const handle = pool.submit(submission());
+    const { pool, submission } = await setup({ defaultTimeoutMs: 30 });
+    const handle = await pool.submit(submission());
     const run = await handle.done; // el timer cancela sin que nadie libere
     expect(run.status).toBe("cancelled");
   });
 
-  it("presupuesto por día: si ya se gastó el tope, submit rechaza budget_exceeded", () => {
-    const { db, pool, submission } = setup({ maxUsdPerDay: 1 });
+  it("presupuesto por día: si ya se gastó el tope, submit rechaza budget_exceeded", async () => {
+    const { db, pool, submission } = await setup({ maxUsdPerDay: 1 });
     const prevId = newId();
-    createRun(db, {
+    await createRun(db, {
       id: prevId,
       rootRunId: prevId,
       trigger: "manual",
@@ -175,19 +172,16 @@ describe("RunnerPool", () => {
       status: "succeeded",
       costUsd: 2,
     });
-    try {
-      pool.submit(submission());
-      expect.unreachable();
-    } catch (err) {
-      expect(isAgentosError(err, ErrorCodes.BUDGET_EXCEEDED)).toBe(true);
-    }
+    await expect(pool.submit(submission())).rejects.toSatisfy((err) =>
+      isAgentosError(err, ErrorCodes.BUDGET_EXCEEDED),
+    );
   });
 
   it("presupuesto por run: el tope global recorta el budget.maxUsd del input", async () => {
-    const { fake, pool, submission } = setup({ maxUsdPerRun: 0.5 });
+    const { fake, pool, submission } = await setup({ maxUsdPerRun: 0.5 });
     const s = submission();
     s.input.budget = { maxUsd: 2 };
-    const handle = pool.submit(s);
+    const handle = await pool.submit(s);
     await tick();
     expect(fake.inputs.get(s.ctx.runId)?.budget?.maxUsd).toBe(0.5);
     fake.release(s.ctx.runId);
@@ -195,11 +189,11 @@ describe("RunnerPool", () => {
   });
 
   it("cancelación individual de un run en cola", async () => {
-    const { db, fake, pool, submission } = setup({ limits: { ai_sdk: 1 } });
+    const { db, fake, pool, submission } = await setup({ limits: { ai_sdk: 1 } });
     const s1 = submission();
     const s2 = submission();
-    const h1 = pool.submit(s1);
-    const h2 = pool.submit(s2);
+    const h1 = await pool.submit(s1);
+    const h2 = await pool.submit(s2);
     await tick();
 
     await pool.cancel(s2.ctx.runId, "ya no hace falta");
@@ -210,25 +204,25 @@ describe("RunnerPool", () => {
     // El activo sigue vivo y termina normal.
     fake.release(s1.ctx.runId);
     expect((await h1.done).status).toBe("succeeded");
-    expect(getRun(db, s1.ctx.runId)!.status).toBe("succeeded");
+    expect((await getRun(db, s1.ctx.runId))!.status).toBe("succeeded");
   });
 
   it("runner que LANZA (en vez de emitir RUN_ERROR) no deja la fila colgada", async () => {
     const db = makeDb();
     const bus = new EventBus(db);
-    const profile = makeProfile(db);
+    const profile = await makeProfile(db);
     const explosivo: AgentRunner = {
       runtime: "ai_sdk",
       // eslint-disable-next-line require-yield
       async *run(_input, ctx) {
-        updateRun(db, ctx.runId, { status: "running" });
+        await updateRun(db, ctx.runId, { status: "running" });
         throw new Error("bum");
       },
       async cancel() {},
     };
     const pool = new RunnerPool({ db, bus, runners: { ai_sdk: explosivo } });
     const ctx = makeCtx();
-    const handle = pool.submit({
+    const handle = await pool.submit({
       runtime: "ai_sdk",
       input: { agent: { slug: "x" }, systemPrompt: "", messages: [], provider: profile },
       ctx,

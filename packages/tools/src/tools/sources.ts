@@ -68,9 +68,9 @@ export async function ingestProjectSource(
   sourceId: string,
   actor: string,
 ): Promise<IngestResult> {
-  const source = getProjectSource(db, sourceId);
+  const source = await getProjectSource(db, sourceId);
   if (!source) throw errors.notFound("project_source", sourceId);
-  const project = getProject(db, source.projectId);
+  const project = await getProject(db, source.projectId);
   if (!project) throw errors.notFound("project", source.projectId);
 
   try {
@@ -131,7 +131,7 @@ export async function ingestProjectSource(
     }
 
     // Re-ingerir actualiza el MISMO doc (id existente), nunca duplica.
-    const doc = upsertDoc(db, {
+    const doc = await upsertDoc(db, {
       ...(source.knowledgeDocId ? { id: source.knowledgeDocId } : {}),
       orgId: project.orgId,
       projectId: source.projectId,
@@ -143,7 +143,7 @@ export async function ingestProjectSource(
       createdBy: actor,
     });
 
-    const updated = updateProjectSource(db, source.id, {
+    const updated = await updateProjectSource(db, source.id, {
       status: "ingested",
       knowledgeDocId: doc.id,
       lastIngestedAt: now,
@@ -154,7 +154,7 @@ export async function ingestProjectSource(
     const message = readableConnectorMessage(err);
     // Fallo → estado 'error' legible y reintentable. knowledge_doc_id no se toca:
     // si había doc de una ingesta previa se conserva; si no, NO se crea huérfano.
-    updateProjectSource(db, source.id, { status: "error", lastError: message });
+    await updateProjectSource(db, source.id, { status: "error", lastError: message });
     if (err instanceof AgentosError) throw err;
     throw new AgentosError(ErrorCodes.PROVIDER_ERROR, message, {
       source_id: sourceId,

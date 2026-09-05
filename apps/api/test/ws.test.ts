@@ -49,9 +49,9 @@ describe("WebSocket multiplexado", () => {
   it("subscribe con since_seq sirve el hueco y sigue en vivo sin duplicar", async () => {
     const topic = `board:${fx.project.id}`;
     // Tres eventos ANTES de conectar (el "hueco").
-    publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 1 } });
-    publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 2 } });
-    publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 3 } });
+    await publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 1 } });
+    await publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 2 } });
+    await publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 3 } });
 
     const socket = await connect(fx.token);
     const received = collect(socket);
@@ -64,7 +64,7 @@ describe("WebSocket multiplexado", () => {
       expect(backlog.map((m) => m.seq)).toEqual([2, 3]);
 
       // Evento nuevo en vivo.
-      publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 4 } });
+      await publishRaw(fx.api.ctx.bus, topic, { type: "task.moved", payload: { n: 4 } });
       await waitFor(() => received.filter((m) => m.type === "event").length === 3, {
         label: "evento en vivo",
       });
@@ -89,7 +89,7 @@ describe("WebSocket multiplexado", () => {
       socket.send(JSON.stringify({ type: "unsubscribe", topic }));
       await waitFor(() => received.some((m) => m.type === "unsubscribed"));
 
-      publishRaw(fx.api.ctx.bus, topic, { type: "message.inbound", payload: {} });
+      await publishRaw(fx.api.ctx.bus, topic, { type: "message.inbound", payload: {} });
       await new Promise((r) => setTimeout(r, 100));
       expect(received.filter((m) => m.type === "event")).toHaveLength(0);
     } finally {

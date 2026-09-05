@@ -21,9 +21,9 @@ describe("computeRequiresApproval (política determinista)", () => {
 });
 
 describe("aplicación al crear (el agente no puede rebajarla)", () => {
-  it("createTask ignora requires_approval=false si la política dice true", () => {
-    const f = fixture();
-    const task = f.engine.createTask(
+  it("createTask ignora requires_approval=false si la política dice true", async () => {
+    const f = await fixture();
+    const task = await f.engine.createTask(
       {
         projectId: f.project.id,
         title: "Enviar informe al cliente",
@@ -36,9 +36,9 @@ describe("aplicación al crear (el agente no puede rebajarla)", () => {
     expect(task.requiresApproval).toBe(true);
   });
 
-  it("el llamador sí puede SUBIR el control", () => {
-    const f = fixture();
-    const task = f.engine.createTask(
+  it("el llamador sí puede SUBIR el control", async () => {
+    const f = await fixture();
+    const task = await f.engine.createTask(
       {
         projectId: f.project.id,
         title: "Notas internas",
@@ -53,8 +53,8 @@ describe("aplicación al crear (el agente no puede rebajarla)", () => {
 
 // ── Q1: los entregables que Quinn revisa exigen gate humano (no van a DONE por un agente) ──
 
-function inProgressTask(f: Fixture, activityType: string) {
-  const t = f.engine.createTask(
+async function inProgressTask(f: Fixture, activityType: string) {
+  const t = await f.engine.createTask(
     {
       projectId: f.project.id,
       title: `Entregable ${activityType}`,
@@ -68,12 +68,12 @@ function inProgressTask(f: Fixture, activityType: string) {
   f.db.$client
     .prepare(`UPDATE tasks SET status = 'IN_PROGRESS', version = version + 1 WHERE id = ?`)
     .run(t.id);
-  return getTask(f.db, t.id)!;
+  return (await getTask(f.db, t.id))!;
 }
 
-function moveCode(fn: () => unknown): string | undefined {
+async function moveCode(fn: () => unknown): Promise<string | undefined> {
   try {
-    fn();
+    await fn();
     return undefined;
   } catch (err) {
     if (isAgentosError(err)) return err.code;
@@ -92,31 +92,33 @@ describe("Q1: entregables revisados por Quinn ⇒ requires_approval (lista únic
     }
   });
 
-  it("un agente NO puede llevar a DONE ningún tipo sensible → human_approval_required", () => {
+  it("un agente NO puede llevar a DONE ningún tipo sensible → human_approval_required", async () => {
     for (const at of ["org_profile", "process_map", "leak_analysis", "iso_gap", "report", "roadmap", "code"]) {
-      const f = fixture();
-      const t = inProgressTask(f, at);
+      const f = await fixture();
+      const t = await inProgressTask(f, at);
       expect(t.requiresApproval).toBe(true);
       expect(
-        moveCode(() =>
+        await moveCode(() =>
           f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" }),
         ),
       ).toBe(ErrorCodes.HUMAN_APPROVAL_REQUIRED);
       // A REVIEW sí llega (con artefacto): de ahí lo cierra un humano.
-      attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "borrador" });
+      await attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "borrador" });
       expect(
-        f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }).status,
+        (await f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }))
+          .status,
       ).toBe("REVIEW");
     }
   });
 
-  it("un tipo NO sensible (research) sí puede ir directo a DONE por el agente", () => {
-    const f = fixture();
-    const t = inProgressTask(f, "research");
+  it("un tipo NO sensible (research) sí puede ir directo a DONE por el agente", async () => {
+    const f = await fixture();
+    const t = await inProgressTask(f, "research");
     expect(t.requiresApproval).toBe(false);
-    attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "notas" });
+    await attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "notas" });
     expect(
-      f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" }).status,
+      (await f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" }))
+        .status,
     ).toBe("DONE");
   });
 });

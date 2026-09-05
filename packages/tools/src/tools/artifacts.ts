@@ -36,10 +36,10 @@ export const artifactTools: ToolDefinition[] = [
       title: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const task = getTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await getTask(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
-      const project = getProject(ctx.db, task.projectId);
+      const project = await getProject(ctx.db, task.projectId);
       if (!project) throw errors.notFound("project", task.projectId);
 
       const base = project.workspacePath ?? path.join(ctx.workspaceRoot, project.id);
@@ -48,7 +48,7 @@ export const artifactTools: ToolDefinition[] = [
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
       fs.writeFileSync(fullPath, args.content, "utf8");
 
-      const artifact = attachArtifact(ctx.db, {
+      const artifact = await attachArtifact(ctx.db, {
         taskId: task.id,
         runId: ctx.run_id ?? null,
         kind: args.kind ?? "file",
@@ -56,7 +56,7 @@ export const artifactTools: ToolDefinition[] = [
         path: fullPath,
         createdBy: ctx.actor,
       });
-      ctx.sink.publish(`board:${task.projectId}`, {
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.artifact_attached",
         payload: { taskId: task.id, artifactId: artifact.id, path: fullPath },
         runId: ctx.run_id ?? null,

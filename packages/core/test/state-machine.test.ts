@@ -4,9 +4,9 @@ import { attachArtifact, getTask, listTaskEvents } from "@agentos/db";
 import { actorKind, isTransitionAllowed } from "../src/index.js";
 import { fixture, seedTask } from "./helpers.js";
 
-function codeOf(fn: () => unknown): string | undefined {
+async function codeOf(fn: () => unknown): Promise<string | undefined> {
   try {
-    fn();
+    await fn();
     return undefined;
   } catch (err) {
     if (isAgentosError(err)) return err.code;
@@ -56,30 +56,30 @@ describe("matriz de transiciones (pura)", () => {
 });
 
 describe("moveTask por actor", () => {
-  it("humano BACKLOG→READY con DoD+asignada funciona y escribe task_events", () => {
-    const f = fixture();
-    const t = seedTask(f);
-    const moved = f.engine.moveTask({
+  it("humano BACKLOG→READY con DoD+asignada funciona y escribe task_events", async () => {
+    const f = await fixture();
+    const t = await seedTask(f);
+    const moved = await f.engine.moveTask({
       taskId: t.id,
       to: "READY",
       expectedVersion: t.version,
       actor: `person:${f.person.id}`,
     });
     expect(moved.status).toBe("READY");
-    const events = listTaskEvents(f.db, t.id);
+    const events = await listTaskEvents(f.db, t.id);
     const move = events.find((e) => e.kind === "moved")!;
     expect(move.fromStatus).toBe("BACKLOG");
     expect(move.toStatus).toBe("READY");
     expect(move.actor).toBe(`person:${f.person.id}`);
   });
 
-  it("humano despriorizar READY→BACKLOG funciona; un agente no puede (H7)", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "READY" });
-    expect(() =>
+  it("humano despriorizar READY→BACKLOG funciona; un agente no puede (H7)", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "READY" });
+    await expect(
       f.engine.moveTask({ taskId: t.id, to: "BACKLOG", expectedVersion: t.version, actor: "agent:sam" }),
-    ).toThrowError(/no permitida/);
-    const moved = f.engine.moveTask({
+    ).rejects.toThrowError(/no permitida/);
+    const moved = await f.engine.moveTask({
       taskId: t.id,
       to: "BACKLOG",
       expectedVersion: t.version,
@@ -89,15 +89,15 @@ describe("moveTask por actor", () => {
     expect(moved.status).toBe("BACKLOG");
   });
 
-  it("agente no-orquestador NO puede BACKLOG→READY; el orquestador sí", () => {
-    const f = fixture();
-    const t1 = seedTask(f);
+  it("agente no-orquestador NO puede BACKLOG→READY; el orquestador sí", async () => {
+    const f = await fixture();
+    const t1 = await seedTask(f);
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({ taskId: t1.id, to: "READY", expectedVersion: t1.version, actor: "agent:sam" }),
       ),
     ).toBe(ErrorCodes.INVALID_TRANSITION);
-    const moved = f.engine.moveTask({
+    const moved = await f.engine.moveTask({
       taskId: t1.id,
       to: "READY",
       expectedVersion: t1.version,
@@ -106,17 +106,17 @@ describe("moveTask por actor", () => {
     expect(moved.status).toBe("READY");
   });
 
-  it("BACKLOG→READY sin DoD o sin asignado se rechaza", () => {
-    const f = fixture();
-    const sinDod = seedTask(f, { definitionOfDone: null });
+  it("BACKLOG→READY sin DoD o sin asignado se rechaza", async () => {
+    const f = await fixture();
+    const sinDod = await seedTask(f, { definitionOfDone: null });
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({ taskId: sinDod.id, to: "READY", expectedVersion: sinDod.version, actor: "agent:alex" }),
       ),
     ).toBe(ErrorCodes.VALIDATION_ERROR);
-    const sinDueno = seedTask(f, { assignee: null });
+    const sinDueno = await seedTask(f, { assignee: null });
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({
           taskId: sinDueno.id,
           to: "READY",
@@ -127,15 +127,15 @@ describe("moveTask por actor", () => {
     ).toBe(ErrorCodes.VALIDATION_ERROR);
   });
 
-  it("agente no mueve READY→IN_PROGRESS con move (solo claim); humano sí puede", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "READY" });
+  it("agente no mueve READY→IN_PROGRESS con move (solo claim); humano sí puede", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "READY" });
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({ taskId: t.id, to: "IN_PROGRESS", expectedVersion: t.version, actor: "agent:sam" }),
       ),
     ).toBe(ErrorCodes.INVALID_TRANSITION);
-    const moved = f.engine.moveTask({
+    const moved = await f.engine.moveTask({
       taskId: t.id,
       to: "IN_PROGRESS",
       expectedVersion: t.version,
@@ -144,14 +144,16 @@ describe("moveTask por actor", () => {
     expect(moved.status).toBe("IN_PROGRESS");
   });
 
-  it("agente REVIEW→DONE se rechaza siempre; humano cierra", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "REVIEW" });
-    attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "informe" });
+  it("agente REVIEW→DONE se rechaza siempre; humano cierra", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "REVIEW" });
+    await attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "informe" });
     expect(
-      codeOf(() => f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" })),
+      await codeOf(() =>
+        f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" }),
+      ),
     ).toBe(ErrorCodes.INVALID_TRANSITION);
-    const moved = f.engine.moveTask({
+    const moved = await f.engine.moveTask({
       taskId: t.id,
       to: "DONE",
       expectedVersion: t.version,
@@ -160,16 +162,21 @@ describe("moveTask por actor", () => {
     expect(moved.status).toBe("DONE");
   });
 
-  it("rechazo de REVIEW exige nota y vuelve a IN_PROGRESS", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "REVIEW" });
-    attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "informe" });
+  it("rechazo de REVIEW exige nota y vuelve a IN_PROGRESS", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "REVIEW" });
+    await attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "informe" });
     expect(
-      codeOf(() =>
-        f.engine.moveTask({ taskId: t.id, to: "IN_PROGRESS", expectedVersion: t.version, actor: `person:${f.person.id}` }),
+      await codeOf(() =>
+        f.engine.moveTask({
+          taskId: t.id,
+          to: "IN_PROGRESS",
+          expectedVersion: t.version,
+          actor: `person:${f.person.id}`,
+        }),
       ),
     ).toBe(ErrorCodes.VALIDATION_ERROR);
-    const moved = f.engine.moveTask({
+    const moved = await f.engine.moveTask({
       taskId: t.id,
       to: "IN_PROGRESS",
       expectedVersion: t.version,
@@ -177,19 +184,19 @@ describe("moveTask por actor", () => {
       note: "Falta la fuente del dato de fugas",
     });
     expect(moved.status).toBe("IN_PROGRESS");
-    const rejection = listTaskEvents(f.db, t.id).find((e) => e.kind === "moved")!;
+    const rejection = (await listTaskEvents(f.db, t.id)).find((e) => e.kind === "moved")!;
     expect(rejection.payload).toMatchObject({ note: "Falta la fuente del dato de fugas" });
   });
 
-  it("agente no cancela; humano cancela desde cualquier estado", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "IN_PROGRESS" });
+  it("agente no cancela; humano cancela desde cualquier estado", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "IN_PROGRESS" });
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({ taskId: t.id, to: "CANCELLED", expectedVersion: t.version, actor: "agent:sam" }),
       ),
     ).toBe(ErrorCodes.INVALID_TRANSITION);
-    const moved = f.engine.moveTask({
+    const moved = await f.engine.moveTask({
       taskId: t.id,
       to: "CANCELLED",
       expectedVersion: t.version,
@@ -198,10 +205,10 @@ describe("moveTask por actor", () => {
     expect(moved.status).toBe("CANCELLED");
   });
 
-  it("expected_version desactualizada → version_conflict (nunca last-write-wins)", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "IN_PROGRESS" });
-    const ok = f.engine.moveTask({
+  it("expected_version desactualizada → version_conflict (nunca last-write-wins)", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "IN_PROGRESS" });
+    const ok = await f.engine.moveTask({
       taskId: t.id,
       to: "BLOCKED",
       expectedVersion: t.version,
@@ -210,44 +217,51 @@ describe("moveTask por actor", () => {
     });
     expect(ok.status).toBe("BLOCKED");
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({ taskId: t.id, to: "READY", expectedVersion: t.version, actor: "agent:sam" }),
       ),
     ).toBe(ErrorCodes.VERSION_CONFLICT);
     // Releyendo la versión actual, la transición procede.
-    const fresh = getTask(f.db, t.id)!;
+    const fresh = (await getTask(f.db, t.id))!;
     expect(
-      f.engine.moveTask({ taskId: t.id, to: "READY", expectedVersion: fresh.version, actor: "agent:sam" }).status,
+      (await f.engine.moveTask({ taskId: t.id, to: "READY", expectedVersion: fresh.version, actor: "agent:sam" }))
+        .status,
     ).toBe("READY");
   });
 
-  it("agente IN_PROGRESS→DONE con requires_approval → human_approval_required", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "IN_PROGRESS", requiresApproval: true });
-    attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "informe" });
+  it("agente IN_PROGRESS→DONE con requires_approval → human_approval_required", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "IN_PROGRESS", requiresApproval: true });
+    await attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "informe" });
     expect(
-      codeOf(() => f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" })),
+      await codeOf(() =>
+        f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: "agent:sam" }),
+      ),
     ).toBe(ErrorCodes.HUMAN_APPROVAL_REQUIRED);
     // A REVIEW sí puede llegar.
     expect(
-      f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }).status,
+      (await f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }))
+        .status,
     ).toBe("REVIEW");
   });
 
-  it("regla anti-teatro: REVIEW/DONE sin artefacto → missing_artifact", () => {
-    const f = fixture();
-    const t = seedTask(f, { status: "IN_PROGRESS" });
+  it("regla anti-teatro: REVIEW/DONE sin artefacto → missing_artifact", async () => {
+    const f = await fixture();
+    const t = await seedTask(f, { status: "IN_PROGRESS" });
     expect(
-      codeOf(() => f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" })),
+      await codeOf(() =>
+        f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }),
+      ),
     ).toBe(ErrorCodes.MISSING_ARTIFACT);
     expect(
-      codeOf(() =>
+      await codeOf(() =>
         f.engine.moveTask({ taskId: t.id, to: "DONE", expectedVersion: t.version, actor: `person:${f.person.id}` }),
       ),
     ).toBe(ErrorCodes.MISSING_ARTIFACT);
-    attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "evidencia" });
+    await attachArtifact(f.db, { taskId: t.id, kind: "doc", title: "evidencia" });
     expect(
-      f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }).status,
+      (await f.engine.moveTask({ taskId: t.id, to: "REVIEW", expectedVersion: t.version, actor: "agent:sam" }))
+        .status,
     ).toBe("REVIEW");
   });
 });

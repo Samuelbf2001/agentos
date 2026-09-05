@@ -105,16 +105,16 @@ export class RunnerPool {
   // ── Estado consultable ────────────────────────────────────────────────────
 
   /** ¿Kill switch activo? (app_config.agents_enabled=false o kill_switch=true). */
-  killSwitchActive(): boolean {
-    const enabled = getConfig<boolean>(this.db, PoolConfigKeys.AGENTS_ENABLED);
+  async killSwitchActive(): Promise<boolean> {
+    const enabled = await getConfig<boolean>(this.db, PoolConfigKeys.AGENTS_ENABLED);
     if (enabled === false) return true;
-    const killSwitch = getConfig<boolean>(this.db, ConfigKeys.KILL_SWITCH);
+    const killSwitch = await getConfig<boolean>(this.db, ConfigKeys.KILL_SWITCH);
     return killSwitch === true;
   }
 
   /** Límite efectivo del semáforo: app_config > override del constructor > default. */
-  limitFor(runtime: AgentRuntime): number {
-    const fromConfig = getConfig<number>(this.db, PoolConfigKeys.limitFor(runtime));
+  async limitFor(runtime: AgentRuntime): Promise<number> {
+    const fromConfig = await getConfig<number>(this.db, PoolConfigKeys.limitFor(runtime));
     if (typeof fromConfig === "number" && fromConfig >= 0) return fromConfig;
     return this.limitOverrides[runtime] ?? DEFAULT_RUNNER_LIMITS[runtime];
   }
@@ -133,18 +133,18 @@ export class RunnerPool {
   }
 
   /** Coste ya gastado en el día del instante `at` (suma de runs.cost_usd). */
-  spentTodayUsd(at: number = this.now()): number {
+  async spentTodayUsd(at: number = this.now()): Promise<number> {
     const dayStart = new Date(at);
     dayStart.setHours(0, 0, 0, 0);
-    return sumRunCostBetween(this.db, dayStart.getTime(), dayStart.getTime() + DAY_MS);
+    return await sumRunCostBetween(this.db, dayStart.getTime(), dayStart.getTime() + DAY_MS);
   }
 
   // ── Ciclo de vida ─────────────────────────────────────────────────────────
 
-  submit(submission: PoolSubmission): PoolHandle {
+  async submit(submission: PoolSubmission): Promise<PoolHandle> {
     const { runtime, ctx } = submission;
 
-    if (this.killSwitchActive()) {
+    if (await this.killSwitchActive()) {
       throw new AgentosError(
         ErrorCodes.KILL_SWITCH_ACTIVE,
         "Kill switch activo (app_config.agents_enabled=false): no se arrancan runs nuevos",
@@ -158,9 +158,9 @@ export class RunnerPool {
 
     // Presupuesto por día (NFR-5): si ya se gastó el tope, no arranca.
     const maxUsdPerDay =
-      this.maxUsdPerDay ?? getConfig<number>(this.db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD);
+      this.maxUsdPerDay ?? (await getConfig<number>(this.db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD));
     if (typeof maxUsdPerDay === "number") {
-      const spent = this.spentTodayUsd();
+      const spent = await this.spentTodayUsd();
       if (spent >= maxUsdPerDay) {
         throw new AgentosError(
           ErrorCodes.BUDGET_EXCEEDED,
@@ -172,7 +172,7 @@ export class RunnerPool {
 
     // Presupuesto por run: gana el tope más restrictivo.
     const maxUsdPerRun =
-      this.maxUsdPerRun ?? getConfig<number>(this.db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD);
+      this.maxUsdPerRun ?? (await getConfig<number>(this.db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD));
     let input = submission.input;
     if (typeof maxUsdPerRun === "number") {
       const requested = input.budget?.maxUsd;
@@ -181,8 +181,8 @@ export class RunnerPool {
     }
 
     // Fila runs en 'queued' ANTES de decidir si arranca: estado consultable.
-    if (!getRun(this.db, ctx.runId)) {
-      createRun(this.db, {
+    if (!(await getRun(this.db, ctx.runId))) {
+      await createRun(this.db, {
         id: ctx.runId,
         rootRunId: ctx.rootRunId,
         parentRunId: ctx.parentRunId ?? null,
@@ -210,8 +210,11 @@ export class RunnerPool {
       resolve,
     };
 
+    // El límite se resuelve ANTES de contar: con `await` en medio, el conteo
+    // que se compara podría ser de antes de que otro submit arrancase.
+    const limit = await this.limitFor(runtime);
     const runningCount = this.runningCount(runtime);
-    if (runningCount < this.limitFor(runtime)) {
+    if (runningCount < limit) {
       this.start(job, runner);
     } else {
       const queue = this.queues.get(runtime) ?? [];
@@ -224,8 +227,8 @@ export class RunnerPool {
         runtime,
         position: queue.length,
       };
-      this.bus.publish(runTopic(ctx.runId), event);
-      this.bus.publish(SWARM_TOPIC, event);
+      await this.bus.publish(runTopic(ctx.runId), event);
+      await this.bus.publish(SWARM_TOPIC, event);
     }
 
     return { runId: ctx.runId, done };
@@ -242,15 +245,15 @@ export class RunnerPool {
       const index = queue.findIndex((j) => j.runId === runId);
       if (index === -1) continue;
       const [job] = queue.splice(index, 1);
-      const run = updateRun(this.db, runId, { error: reason, status: "cancelled", finishedAt: this.now() });
+      const run = await updateRun(this.db, runId, { error: reason, status: "cancelled", finishedAt: this.now() });
       const event = {
         type: "RUN_CANCELLED" as const,
         timestamp: this.now(),
         runId,
         reason,
       };
-      this.bus.publish(runTopic(runId), event);
-      this.bus.publish(SWARM_TOPIC, event);
+      await this.bus.publish(runTopic(runId), event);
+      await this.bus.publish(SWARM_TOPIC, event);
       job!.resolve(run);
       void runtime;
       return;
@@ -272,7 +275,7 @@ export class RunnerPool {
    * cola. Devuelve true si actuó. (El caller decide la cadencia de polling.)
    */
   async refreshKillSwitch(): Promise<boolean> {
-    if (!this.killSwitchActive()) return false;
+    if (!(await this.killSwitchActive())) return false;
     await this.cancelAll("kill_switch");
     return true;
   }
@@ -309,39 +312,45 @@ export class RunnerPool {
   private async drive(active: ActiveJob, job: QueuedJob): Promise<void> {
     try {
       for await (const event of active.runner.run(job.input, job.ctx)) {
-        this.bus.publish(runTopic(job.runId), event);
+        await this.bus.publish(runTopic(job.runId), event);
       }
     } catch (error) {
       // Un runner que LANZA (en vez de emitir RUN_ERROR) no debe dejar la fila colgada.
-      const current = getRun(this.db, job.runId);
+      const current = await getRun(this.db, job.runId);
       if (current && (current.status === "running" || current.status === "queued")) {
         const message = error instanceof Error ? error.message : String(error);
-        updateRun(this.db, job.runId, { status: "failed", error: message, finishedAt: this.now() });
+        await updateRun(this.db, job.runId, { status: "failed", error: message, finishedAt: this.now() });
       }
     } finally {
       if (active.timer) clearTimeout(active.timer);
       this.running.delete(job.runId);
-      const finalRun = getRun(this.db, job.runId);
+      const finalRun = await getRun(this.db, job.runId);
       if (finalRun) job.resolve(finalRun);
-      this.pump(job.runtime);
+      await this.pump(job.runtime);
     }
   }
 
-  private pump(runtime: AgentRuntime): void {
+  private async pump(runtime: AgentRuntime): Promise<void> {
     const runner = this.runners[runtime];
     if (!runner) return;
     const queue = this.queues.get(runtime);
     if (!queue || queue.length === 0) return;
-    while (queue.length > 0 && this.runningCount(runtime) < this.limitFor(runtime)) {
-      const job = queue.shift()!;
+    // El límite se lee UNA sola vez, FUERA de la condición: un `await` entre el
+    // chequeo de longitud y el `shift()` deja que otro `pump()` concurrente (el
+    // de un run que acaba de terminar) vacíe la cola en medio, y `shift()`
+    // devolvería undefined. Por eso además se comprueba el `job`.
+    const limit = await this.limitFor(runtime);
+    while (this.runningCount(runtime) < limit) {
+      const job = queue.shift();
+      if (!job) break;
       const event = {
         type: "RUN_DEQUEUED" as const,
         timestamp: this.now(),
         runId: job.runId,
         runtime,
       };
-      this.bus.publish(runTopic(job.runId), event);
-      this.bus.publish(SWARM_TOPIC, event);
+      await this.bus.publish(runTopic(job.runId), event);
+      await this.bus.publish(SWARM_TOPIC, event);
       this.start(job, runner);
     }
   }

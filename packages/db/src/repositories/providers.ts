@@ -1,11 +1,11 @@
 import { eq } from "drizzle-orm";
 import { newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { providerProfiles } from "../schema.js";
 import type { NewProviderProfile, ProviderProfile } from "../types.js";
 
 export function upsertProviderProfile(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewProviderProfile, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): ProviderProfile {
   const now = nowMs();
@@ -27,22 +27,22 @@ export function upsertProviderProfile(
   return getProviderProfile(db, row.id!)!;
 }
 
-export function getProviderProfile(db: AgentosDb, id: string): ProviderProfile | undefined {
+export function getProviderProfile(db: AgentosSqliteDb, id: string): ProviderProfile | undefined {
   return db.select().from(providerProfiles).where(eq(providerProfiles.id, id)).get();
 }
 
 export function getProviderProfileBySlug(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   slug: string,
 ): ProviderProfile | undefined {
   return db.select().from(providerProfiles).where(eq(providerProfiles.slug, slug)).get();
 }
 
-export function listProviderProfiles(db: AgentosDb): ProviderProfile[] {
+export function listProviderProfiles(db: AgentosSqliteDb): ProviderProfile[] {
   return db.select().from(providerProfiles).all();
 }
 
-export function getDefaultProviderProfile(db: AgentosDb): ProviderProfile | undefined {
+export function getDefaultProviderProfile(db: AgentosSqliteDb): ProviderProfile | undefined {
   return db.select().from(providerProfiles).where(eq(providerProfiles.isDefault, true)).get();
 }
 

@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DAY_MS, isAgentosError, type ErrorCode } from "@agentos/shared";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { seed } from "../src/seed.js";
 import {
@@ -32,16 +32,18 @@ import { getTask, listTaskEvents, listTasks } from "../src/repositories/tasks.js
 
 const NOW = Date.parse("2026-08-28T00:00:00.000Z");
 
-function seededDb(): AgentosDb {
+// seed() ahora es asíncrono (packages/db/src convertido a async).
+async function seededDb(): Promise<AgentosSqliteDb> {
   const db = openDb(":memory:");
   runMigrations(db);
-  seed(db, { env: {} });
+  await seed(db, { env: {} });
   return db;
 }
 
-function catchError(fn: () => unknown): unknown {
+// launchModule/previewLaunch son asíncronos: catchError espera y captura el rechazo.
+async function catchErrorAsync(fn: () => Promise<unknown>): Promise<unknown> {
   try {
-    fn();
+    await fn();
   } catch (err) {
     return err;
   }
@@ -54,7 +56,10 @@ function expectDomainError(err: unknown, code: ErrorCode): void {
 
 const OPS_INPUTS = { cliente: "Nova", objetivo: "Operar la promesa mes a mes." };
 
-function launchOps(db: AgentosDb, over: Partial<LaunchModuleInput> = {}): LaunchModuleResult {
+async function launchOps(
+  db: AgentosSqliteDb,
+  over: Partial<LaunchModuleInput> = {},
+): Promise<LaunchModuleResult> {
   return launchModule(db, {
     moduleSlug: "operacion",
     org: { name: "Nova Ops S.A." },
@@ -66,7 +71,7 @@ function launchOps(db: AgentosDb, over: Partial<LaunchModuleInput> = {}): Launch
   });
 }
 
-function launchConsultoriaNova(db: AgentosDb): LaunchModuleResult {
+async function launchConsultoriaNova(db: AgentosSqliteDb): Promise<LaunchModuleResult> {
   return launchModule(db, {
     moduleSlug: "consultoria",
     org: { name: "Nova Manufactura S.A.", kind: "client", industria: "manufactura" },
@@ -89,9 +94,9 @@ function launchConsultoriaNova(db: AgentosDb): LaunchModuleResult {
 // ── Cadencia (CA-M3.4) ──────────────────────────────────────────────────────
 
 describe("launchModule — cadencia consent-first (M6a)", () => {
-  it("cadences_confirmed=['reporte_semanal']: nace SOLO esa, READY y con due", () => {
-    const db = seededDb();
-    const r = launchOps(db, { cadencesConfirmed: ["reporte_semanal"] });
+  it("cadences_confirmed=['reporte_semanal']: nace SOLO esa, READY y con due", async () => {
+    const db = await seededDb();
+    const r = await launchOps(db, { cadencesConfirmed: ["reporte_semanal"] });
 
     // 5 plantillas normales + 1 cadencia confirmada; sprint y check-in fuera.
     const result = r.launch.result as Record<string, any>;
@@ -117,9 +122,9 @@ describe("launchModule — cadencia consent-first (M6a)", () => {
     expect(created.payload?.["launch_id"]).toBe(r.launch.id);
   });
 
-  it("sin confirmar: comportamiento actual (ninguna cadencia nace) y el recibo lo dice", () => {
-    const db = seededDb();
-    const r = launchOps(db);
+  it("sin confirmar: comportamiento actual (ninguna cadencia nace) y el recibo lo dice", async () => {
+    const db = await seededDb();
+    const r = await launchOps(db);
     const result = r.launch.result as Record<string, any>;
     expect(result["cadences_confirmed"]).toEqual([]);
     expect((result["cadence_excluded"] as string[]).sort()).toEqual([
@@ -130,9 +135,9 @@ describe("launchModule — cadencia consent-first (M6a)", () => {
     expect(r.tasks).toHaveLength(5);
   });
 
-  it("previewLaunch expone cadence_proposals con título renderizado y periodo", () => {
-    const db = seededDb();
-    const preview = previewLaunch(db, {
+  it("previewLaunch expone cadence_proposals con título renderizado y periodo", async () => {
+    const db = await seededDb();
+    const preview = await previewLaunch(db, {
       moduleSlug: "operacion",
       inputs: OPS_INPUTS,
       now: NOW,
@@ -150,7 +155,7 @@ describe("launchModule — cadencia consent-first (M6a)", () => {
     expect(byKey.get("checkin_cliente")!.periodDays).toBe(14);
     expect(byKey.get("checkin_cliente")!.title).toBe("Check-in con Nova");
     // Confirmando en el preview, la instancia aparece en el plan del dry-run.
-    const confirmed = previewLaunch(db, {
+    const confirmed = await previewLaunch(db, {
       moduleSlug: "operacion",
       inputs: OPS_INPUTS,
       cadencesConfirmed: ["reporte_semanal"],
@@ -160,9 +165,9 @@ describe("launchModule — cadencia consent-first (M6a)", () => {
     expect(confirmed.plan!.cadencesConfirmed).toEqual(["reporte_semanal"]);
   });
 
-  it("clave confirmada desconocida → launch rechazado fail-closed", () => {
-    const db = seededDb();
-    const err = catchError(() => launchOps(db, { cadencesConfirmed: ["no_existe"] }));
+  it("clave confirmada desconocida → launch rechazado fail-closed", async () => {
+    const db = await seededDb();
+    const err = await catchErrorAsync(() => launchOps(db, { cadencesConfirmed: ["no_existe"] }));
     expectDomainError(err, "validation_error");
   });
 });
@@ -170,9 +175,9 @@ describe("launchModule — cadencia consent-first (M6a)", () => {
 // ── Encadenado (US-M3 / CA-M3.3) ────────────────────────────────────────────
 
 describe("launchModule — encadenado de fases (M6a)", () => {
-  it("previousLaunchId: la fase nueva cae sobre el MISMO proyecto — stage avanza, gate a pending, Context Hub intacto", () => {
-    const db = seededDb();
-    const first = launchConsultoriaNova(db);
+  it("previousLaunchId: la fase nueva cae sobre el MISMO proyecto — stage avanza, gate a pending, Context Hub intacto", async () => {
+    const db = await seededDb();
+    const first = await launchConsultoriaNova(db);
     expect(first.project.stage).toBe("ENTENDER");
 
     // Cierre humano de la fase: gate aprobado (habilita disparar la siguiente).
@@ -188,7 +193,7 @@ describe("launchModule — encadenado de fases (M6a)", () => {
     const docsBefore = listDocs(db, { projectId: first.project.id }).length;
     const tasksBefore = listTasks(db, { projectId: first.project.id }).length;
 
-    const impl = launchModule(db, {
+    const impl = await launchModule(db, {
       moduleSlug: "implementacion",
       org: { orgId: first.organization.id },
       inputs: {
@@ -238,18 +243,18 @@ describe("launchModule — encadenado de fases (M6a)", () => {
     ).toBe(true);
   });
 
-  it("previousLaunchId inexistente → not_found (y nada se escribe)", () => {
-    const db = seededDb();
-    const err = catchError(() =>
+  it("previousLaunchId inexistente → not_found (y nada se escribe)", async () => {
+    const db = await seededDb();
+    const err = await catchErrorAsync(() =>
       launchOps(db, { previousLaunchId: "launch-fantasma", idempotencyKey: "launch:test:m6:x" }),
     );
     expectDomainError(err, "not_found");
   });
 
-  it("previousLaunchId de OTRA organización → validation_error (el encadenado no cruza clientes)", () => {
-    const db = seededDb();
-    const first = launchConsultoriaNova(db);
-    const err = catchError(() =>
+  it("previousLaunchId de OTRA organización → validation_error (el encadenado no cruza clientes)", async () => {
+    const db = await seededDb();
+    const first = await launchConsultoriaNova(db);
+    const err = await catchErrorAsync(() =>
       launchModule(db, {
         moduleSlug: "implementacion",
         org: { name: "Otra Empresa S.A." },
@@ -268,10 +273,10 @@ describe("launchModule — encadenado de fases (M6a)", () => {
     expectDomainError(err, "validation_error");
   });
 
-  it("misma fase vía previousLaunchId → conflict phase_already_launched", () => {
-    const db = seededDb();
-    const first = launchConsultoriaNova(db);
-    const err = catchError(() =>
+  it("misma fase vía previousLaunchId → conflict phase_already_launched", async () => {
+    const db = await seededDb();
+    const first = await launchConsultoriaNova(db);
+    const err = await catchErrorAsync(() =>
       launchModule(db, {
         moduleSlug: "consultoria",
         org: { orgId: first.organization.id },
@@ -294,8 +299,8 @@ describe("launchModule — encadenado de fases (M6a)", () => {
     expect((err as { details?: { code?: string } }).details?.code).toBe("phase_already_launched");
   });
 
-  it("reutilización por (org, nombre igual): stage avanza y previous_launch_id se auto-completa", () => {
-    const db = seededDb();
+  it("reutilización por (org, nombre igual): stage avanza y previous_launch_id se auto-completa", async () => {
+    const db = await seededDb();
     // Dos módulos sintéticos con el MISMO name_tpl: fase ENTENDER y CONSTRUIR.
     const base = {
       schema_version: 1,
@@ -349,7 +354,7 @@ describe("launchModule — encadenado de fases (M6a)", () => {
       templates: mkTemplate("CONSTRUIR"),
     });
 
-    const a = launchModule(db, {
+    const a = await launchModule(db, {
       moduleSlug: "sintetico-a",
       org: { name: "Encadenada S.A." },
       inputs: { empresa: "Encadenada S.A." },
@@ -357,7 +362,7 @@ describe("launchModule — encadenado de fases (M6a)", () => {
       idempotencyKey: "launch:test:m6:sint-a",
       now: NOW,
     });
-    const b = launchModule(db, {
+    const b = await launchModule(db, {
       moduleSlug: "sintetico-b",
       org: { name: "Encadenada S.A." },
       inputs: { empresa: "Encadenada S.A." },

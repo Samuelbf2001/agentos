@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { AgentosError, ErrorCodes, errors, newId, nowMs, type ApprovalStatus } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { approvals } from "../schema.js";
 import type { Approval, NewApproval } from "../types.js";
 
@@ -30,7 +30,7 @@ function canonicalJson(value: unknown): string {
  * unique(action_digest, run_id) impide duplicar la misma acción en el mismo run.
  */
 export function createApproval(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewApproval, "id" | "createdAt" | "actionDigest" | "status"> & { id?: string },
 ): Approval {
   const row: NewApproval = {
@@ -44,11 +44,11 @@ export function createApproval(
   return getApproval(db, row.id!)!;
 }
 
-export function getApproval(db: AgentosDb, id: string): Approval | undefined {
+export function getApproval(db: AgentosSqliteDb, id: string): Approval | undefined {
   return db.select().from(approvals).where(eq(approvals.id, id)).get();
 }
 
-export function listPendingApprovals(db: AgentosDb): Approval[] {
+export function listPendingApprovals(db: AgentosSqliteDb): Approval[] {
   return db
     .select()
     .from(approvals)
@@ -68,7 +68,7 @@ export function listPendingApprovals(db: AgentosDb): Approval[] {
  * (NFR-12: aprobaciones transaccionales e idempotentes).
  */
 export function decideApproval(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   decision: {
     status: Exclude<ApprovalStatus, "pending">;
@@ -110,7 +110,7 @@ export function verifyApprovalDigest(approval: Approval, payload: unknown): bool
  * efecto del tool_call y/o desbloquear la tarea. Incluye las decididas por el
  * MCP admin (que solo fija el estado y no puede ejecutar el efecto).
  */
-export function listReconcilableApprovals(db: AgentosDb): Approval[] {
+export function listReconcilableApprovals(db: AgentosSqliteDb): Approval[] {
   return db
     .select()
     .from(approvals)
@@ -126,7 +126,7 @@ export function listReconcilableApprovals(db: AgentosDb): Approval[] {
  * ejecutar el efecto externo; `false` = ya la reconcilió otro (REST o un tick del
  * despachador) — garantiza ejecución exactamente-una-vez del efecto.
  */
-export function claimApprovalReconciliation(db: AgentosDb, id: string): boolean {
+export function claimApprovalReconciliation(db: AgentosSqliteDb, id: string): boolean {
   const res = db
     .update(approvals)
     .set({ reconciledAt: nowMs() })

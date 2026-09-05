@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isAgentosError } from "@agentos/shared";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import {
   createOrganization,
@@ -51,14 +51,14 @@ import { getMethodology, upsertMethodology } from "../src/repositories/methodolo
 import { getConfig, setConfig } from "../src/repositories/config.js";
 import { searchMessages } from "../src/search.js";
 
-function freshDb(): AgentosDb {
+function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
   runMigrations(db);
   return db;
 }
 
 /** Fixture mínima: org + proyecto + agente. */
-function fixture(db: AgentosDb) {
+function fixture(db: AgentosSqliteDb) {
   const org = createOrganization(db, { name: "Org Test", kind: "client" });
   const project = createProject(db, {
     orgId: org.id,
@@ -364,7 +364,7 @@ describe("unicidad e idempotencia", () => {
 });
 
 describe("claim atómico a nivel SQL (patrón de B3, CA-3.2)", () => {
-  function readyTask(db: AgentosDb) {
+  function readyTask(db: AgentosSqliteDb) {
     const { project, agent } = fixture(db);
     const task = createTask(db, {
       projectId: project.id,

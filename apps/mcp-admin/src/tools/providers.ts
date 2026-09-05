@@ -59,8 +59,8 @@ export const providerTools: AdminToolDefinition[] = [
       "Lista perfiles de proveedor LLM (kind, base_url, nombre de env var y costes). Nunca expone valores de claves.",
     schema: z.object({}),
     readOnly: true,
-    handler(ctx) {
-      return listProviderProfiles(ctx.db);
+    async handler(ctx) {
+      return await listProviderProfiles(ctx.db);
     },
   }),
 
@@ -82,7 +82,7 @@ export const providerTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       if (typeof args.api_key_env === "string") {
         if (looksLikeSecret(args.api_key_env)) {
           throw errors.validation(
@@ -107,8 +107,8 @@ export const providerTools: AdminToolDefinition[] = [
           );
         }
       }
-      const existing = getProviderProfileBySlug(ctx.db, args.slug);
-      const profile = upsertProviderProfile(ctx.db, {
+      const existing = await getProviderProfileBySlug(ctx.db, args.slug);
+      const profile = await upsertProviderProfile(ctx.db, {
         slug: args.slug,
         name: args.name,
         kind: args.kind,
@@ -119,7 +119,7 @@ export const providerTools: AdminToolDefinition[] = [
         capabilities: args.capabilities ?? existing?.capabilities ?? null,
         isDefault: args.is_default ?? existing?.isDefault ?? false,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "providers.upsert",
         entityType: "provider_profile",
         entityId: profile.id,
@@ -138,8 +138,8 @@ export const providerTools: AdminToolDefinition[] = [
       "devuelve configured true/false SIN el valor.",
     schema: z.object({ provider: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const profile = resolveProviderRef(ctx.db, args.provider);
+    async handler(ctx, args) {
+      const profile = await resolveProviderRef(ctx.db, args.provider);
       return {
         slug: profile.slug,
         kind: profile.kind,

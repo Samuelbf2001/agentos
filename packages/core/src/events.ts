@@ -11,7 +11,12 @@ export interface DomainEvent {
 }
 
 export interface EventSink {
-  publish(topic: string, event: DomainEvent): void;
+  /**
+   * Puede ser síncrona (sinks de test) o asíncrona (el bus real, que persiste
+   * en la DB antes de emitir). Los llamantes hacen `await`: con SQLite la
+   * promesa ya está resuelta y no cuesta nada; con Postgres garantiza el orden.
+   */
+  publish(topic: string, event: DomainEvent): void | Promise<void>;
 }
 
 /** Sink por defecto: descarta todo (tests y usos sin bus). */

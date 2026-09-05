@@ -12,12 +12,12 @@ import {
   type ProjectSourceKind,
   type ProjectSourceStatus,
 } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { projectSources } from "../schema.js";
 import type { NewProjectSource, ProjectSource } from "../types.js";
 
 export function createProjectSource(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewProjectSource, "id" | "createdAt"> & { id?: string },
 ): ProjectSource {
   const row: NewProjectSource = { ...input, id: input.id ?? newId(), createdAt: nowMs() };
@@ -25,12 +25,12 @@ export function createProjectSource(
   return getProjectSource(db, row.id!)!;
 }
 
-export function getProjectSource(db: AgentosDb, id: string): ProjectSource | undefined {
+export function getProjectSource(db: AgentosSqliteDb, id: string): ProjectSource | undefined {
   return db.select().from(projectSources).where(eq(projectSources.id, id)).get();
 }
 
 export function listProjectSources(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: { projectId?: string; kind?: ProjectSourceKind; status?: ProjectSourceStatus } = {},
 ): ProjectSource[] {
   const conds = [];
@@ -47,7 +47,7 @@ export function listProjectSources(
  * no se asocia dos veces al mismo proyecto — se devuelve la fila existente.
  */
 export function findProjectSourceByExternalRef(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   projectId: string,
   kind: ProjectSourceKind,
   ref: Pick<ProjectSourceExternalRef, "meetingId" | "contactId">,
@@ -61,7 +61,7 @@ export function findProjectSourceByExternalRef(
 }
 
 export function updateProjectSource(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<
     Pick<ProjectSource, "status" | "knowledgeDocId" | "lastError" | "lastIngestedAt" | "externalRef">

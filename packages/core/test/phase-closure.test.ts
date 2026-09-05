@@ -19,11 +19,11 @@ import {
 import { phaseClosureStatus } from "../src/index.js";
 import { fixture } from "./helpers.js";
 
-function launchedDb(): { db: AgentosDb; r: LaunchModuleResult } {
+async function launchedDb(): Promise<{ db: AgentosDb; r: LaunchModuleResult }> {
   const db = openDb(":memory:");
   runMigrations(db);
-  seed(db, { env: {} });
-  const r = launchModule(db, {
+  await seed(db, { env: {} });
+  const r = await launchModule(db, {
     moduleSlug: "consultoria",
     org: { name: "Nova Manufactura S.A.", kind: "client" },
     inputs: {
@@ -45,9 +45,9 @@ function launchedDb(): { db: AgentosDb; r: LaunchModuleResult } {
 }
 
 describe("phaseClosureStatus (CA-M3.1)", () => {
-  it("proyecto sin launch → {complete:false, items:[], reason:'no_launch'}", () => {
-    const f = fixture(); // proyecto creado a mano, sin module_launches
-    expect(phaseClosureStatus(f.db, f.project.id)).toEqual({
+  it("proyecto sin launch → {complete:false, items:[], reason:'no_launch'}", async () => {
+    const f = await fixture(); // proyecto creado a mano, sin module_launches
+    expect(await phaseClosureStatus(f.db, f.project.id)).toEqual({
       launchId: null,
       complete: false,
       items: [],
@@ -55,9 +55,9 @@ describe("phaseClosureStatus (CA-M3.1)", () => {
     });
   });
 
-  it("recién disparado: incompleto, con required de min_from_input y missing legible", () => {
-    const { db, r } = launchedDb();
-    const status = phaseClosureStatus(db, r.project.id);
+  it("recién disparado: incompleto, con required de min_from_input y missing legible", async () => {
+    const { db, r } = await launchedDb();
+    const status = await phaseClosureStatus(db, r.project.id);
 
     expect(status.launchId).toBe(r.launch.id);
     expect(status.complete).toBe(false);
@@ -83,10 +83,10 @@ describe("phaseClosureStatus (CA-M3.1)", () => {
     expect(byKind.get("process_map")!.missing).toContain("as-is");
   });
 
-  it("progreso parcial: found sube y el missing dice cuánto queda", () => {
-    const { db, r } = launchedDb();
+  it("progreso parcial: found sube y el missing dice cuánto queda", async () => {
+    const { db, r } = await launchedDb();
     for (let i = 0; i < 2; i += 1) {
-      createDoc(db, {
+      await createDoc(db, {
         orgId: r.organization.id,
         projectId: r.project.id,
         kind: "interview",
@@ -94,13 +94,13 @@ describe("phaseClosureStatus (CA-M3.1)", () => {
         bodyMd: "Hallazgos con citas.",
       });
     }
-    const item = phaseClosureStatus(db, r.project.id).items.find((i) => i.kind === "interview")!;
+    const item = (await phaseClosureStatus(db, r.project.id)).items.find((i) => i.kind === "interview")!;
     expect(item.found).toBe(2);
     expect(item.missing).toContain('Falta(n) 1 de 3 "interview"');
   });
 
-  it("con los mínimos reales creados → complete:true y todos los missing en null", () => {
-    const { db, r } = launchedDb();
+  it("con los mínimos reales creados → complete:true y todos los missing en null", async () => {
+    const { db, r } = await launchedDb();
     const doc = (kind: string, title: string) =>
       createDoc(db, {
         orgId: r.organization.id,
@@ -110,41 +110,41 @@ describe("phaseClosureStatus (CA-M3.1)", () => {
         bodyMd: "Contenido con fuente.",
       });
 
-    doc("org_profile", "Perfil organizacional Nova");
-    doc("interview", "Entrevista dirección");
-    doc("interview", "Entrevista operaciones");
-    doc("interview", "Entrevista ventas");
-    doc("finding", "Fugas de valor");
-    doc("iso_clause", "Matriz ISO 9001");
-    createProcess(db, { orgId: r.organization.id, name: "Producción", variant: "as_is" });
-    createProcess(db, { orgId: r.organization.id, name: "Ventas → Facturación", variant: "as_is" });
+    await doc("org_profile", "Perfil organizacional Nova");
+    await doc("interview", "Entrevista dirección");
+    await doc("interview", "Entrevista operaciones");
+    await doc("interview", "Entrevista ventas");
+    await doc("finding", "Fugas de valor");
+    await doc("iso_clause", "Matriz ISO 9001");
+    await createProcess(db, { orgId: r.organization.id, name: "Producción", variant: "as_is" });
+    await createProcess(db, { orgId: r.organization.id, name: "Ventas → Facturación", variant: "as_is" });
 
     const byKey = new Map(
       (r.launch.result as { tasks: { key: string; taskId: string }[] }).tasks.map(
         (t) => [t.key, t.taskId] as const,
       ),
     );
-    attachArtifact(db, { taskId: byKey.get("informe")!, kind: "report", title: "Informe final" });
-    attachArtifact(db, { taskId: byKey.get("roadmap")!, kind: "roadmap", title: "Roadmap" });
+    await attachArtifact(db, { taskId: byKey.get("informe")!, kind: "report", title: "Informe final" });
+    await attachArtifact(db, { taskId: byKey.get("roadmap")!, kind: "roadmap", title: "Roadmap" });
 
-    const status = phaseClosureStatus(db, r.project.id);
+    const status = await phaseClosureStatus(db, r.project.id);
     expect(status.complete).toBe(true);
     expect(status.items.every((i) => i.missing === null)).toBe(true);
     expect(status.items.every((i) => i.found >= i.required)).toBe(true);
   });
 
-  it("docs de OTRO proyecto y procesos to_be no cuentan", () => {
-    const { db, r } = launchedDb();
+  it("docs de OTRO proyecto y procesos to_be no cuentan", async () => {
+    const { db, r } = await launchedDb();
     // Doc del kind correcto pero sin projectId (org-level): no cierra la fase.
-    createDoc(db, {
+    await createDoc(db, {
       orgId: r.organization.id,
       projectId: null,
       kind: "org_profile",
       title: "Perfil suelto",
       bodyMd: "x",
     });
-    createProcess(db, { orgId: r.organization.id, name: "Futuro", variant: "to_be" });
-    const status = phaseClosureStatus(db, r.project.id);
+    await createProcess(db, { orgId: r.organization.id, name: "Futuro", variant: "to_be" });
+    const status = await phaseClosureStatus(db, r.project.id);
     expect(status.items.find((i) => i.kind === "org_profile")!.found).toBe(0);
     expect(status.items.find((i) => i.kind === "process_map")!.found).toBe(0);
   });

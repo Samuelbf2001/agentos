@@ -22,8 +22,8 @@ export const knowledgeTools: ToolDefinition[] = [
     description: "Lee un documento del Context Hub por id.",
     schema: z.object({ doc_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const doc = getDoc(ctx.db, args.doc_id);
+    async handler(ctx, args) {
+      const doc = await getDoc(ctx.db, args.doc_id);
       if (!doc) throw errors.notFound("knowledge_doc", args.doc_id);
       return doc;
     },

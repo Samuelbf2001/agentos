@@ -14,18 +14,18 @@ import type { RunInput, RunTraceContext } from "./types.js";
  * - Si el RunnerPool ya la creó (status 'queued'), la pasa a 'running'.
  * - Si el runner corre standalone, la crea directamente en 'running'.
  */
-export function ensureRunningRun(
+export async function ensureRunningRun(
   db: AgentosDb,
   input: RunInput,
   ctx: RunTraceContext,
   runtime: AgentRuntime,
-): Run {
-  const existing = getRun(db, ctx.runId);
+): Promise<Run> {
+  const existing = await getRun(db, ctx.runId);
   const startedAt = nowMs();
   if (existing) {
-    return updateRun(db, ctx.runId, { status: "running", startedAt });
+    return await updateRun(db, ctx.runId, { status: "running", startedAt });
   }
-  return createRun(db, {
+  return await createRun(db, {
     id: ctx.runId,
     rootRunId: ctx.rootRunId,
     parentRunId: ctx.parentRunId ?? null,
@@ -49,8 +49,8 @@ export interface RunOutcome {
 }
 
 /** Cierra la fila `runs` con el resultado final (tokens/coste null-explicitos). */
-export function finishRunRow(db: AgentosDb, runId: string, outcome: RunOutcome): Run {
-  return updateRun(db, runId, {
+export async function finishRunRow(db: AgentosDb, runId: string, outcome: RunOutcome): Promise<Run> {
+  return await updateRun(db, runId, {
     status: outcome.status,
     tokensIn: outcome.usage.tokensIn,
     tokensOut: outcome.usage.tokensOut,

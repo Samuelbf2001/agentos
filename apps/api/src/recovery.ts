@@ -20,12 +20,12 @@ export interface RecoveryReport {
   requeuedTasks: string[];
 }
 
-export function recoverOnBoot(db: AgentosDb, engine: BoardEngine): RecoveryReport {
+export async function recoverOnBoot(db: AgentosDb, engine: BoardEngine): Promise<RecoveryReport> {
   const report: RecoveryReport = { interruptedRuns: [], requeuedTasks: [] };
-  const zombies = [...listRunsByStatus(db, "running"), ...listRunsByStatus(db, "queued")];
+  const zombies = [...(await listRunsByStatus(db, "running")), ...(await listRunsByStatus(db, "queued"))];
 
   for (const run of zombies) {
-    updateRun(db, run.id, {
+    await updateRun(db, run.id, {
       status: "interrupted",
       error:
         run.status === "running"
@@ -38,11 +38,11 @@ export function recoverOnBoot(db: AgentosDb, engine: BoardEngine): RecoveryRepor
 
   for (const run of zombies) {
     if (!run.taskId) continue;
-    const task = getTask(db, run.taskId);
+    const task = await getTask(db, run.taskId);
     if (!task || task.status !== "IN_PROGRESS") continue;
     if (report.requeuedTasks.includes(task.id)) continue;
     try {
-      engine.moveTask({
+      await engine.moveTask({
         taskId: task.id,
         to: "READY",
         expectedVersion: task.version,

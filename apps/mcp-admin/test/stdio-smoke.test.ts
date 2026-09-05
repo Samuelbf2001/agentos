@@ -31,7 +31,7 @@ beforeAll(async () => {
   dbPath = path.join(tmpDir, "agentos.db");
   const db = openDb(dbPath);
   runMigrations(db);
-  seed(db, { env: {} });
+  await seed(db, { env: {} });
   closeDb(db);
 
   client = new Client({ name: "smoke-client", version: "0.0.1" });
@@ -45,7 +45,7 @@ beforeAll(async () => {
     }),
   });
   await client.connect(transport);
-});
+}, 30_000); // el arranque real (tsx + migraciones + handshake stdio) puede pasar de 10s
 
 afterAll(async () => {
   await client?.close();

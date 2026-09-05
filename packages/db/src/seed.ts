@@ -13,33 +13,34 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProviderCapabilities } from "@agentos/shared";
-import { openDb, resolveDbPath, type AgentosDb } from "./client.js";
-import { runMigrations } from "./migrate.js";
+import { resolveDbPath } from "./client.js";
+import type { AnyDb } from "./facade.js";
+import { applyMigrations, closeAnyDb, openConfiguredDb } from "./open.js";
 import { launchModule } from "./modules/launch.js";
 import { loadAgentSeeds, loadMethodologySeeds, loadModuleSeeds, sha256 } from "./seed-sources.js";
 import {
-  createPromptVersion,
-  getActivePrompt,
-  getAgent,
-  updateAgent,
-  upsertAgentFromSeed,
-} from "./repositories/agents.js";
-import { ConfigKeys, getConfig, setConfig } from "./repositories/config.js";
-import { upsertMethodology } from "./repositories/methodologies.js";
-import { upsertPhaseModuleFromSeed } from "./repositories/modules.js";
-import {
+  ConfigKeys,
+  countDomainTables,
   createOrganization,
   createPerson,
+  createPromptVersion,
+  domainCounts,
+  getActivePrompt,
+  getAgent,
+  getConfig,
   getOrganizationByName,
   getPersonByFullName,
-} from "./repositories/organizations-people.js";
-import { getProjectByName } from "./repositories/projects.js";
-import {
+  getProjectByName,
   getProviderProfileBySlug,
   isProviderConfigured,
+  listTasks,
+  setConfig,
+  updateAgent,
+  upsertAgentFromSeed,
+  upsertMethodology,
+  upsertPhaseModuleFromSeed,
   upsertProviderProfile,
-} from "./repositories/providers.js";
-import { listTasks } from "./repositories/tasks.js";
+} from "./repos.js";
 
 export interface SeedCounts {
   organizations: number;
@@ -164,20 +165,23 @@ const SEED_DEMO_INPUTS: Record<string, unknown> = {
   sistemas_conocidos: "ERP básico, hojas de cálculo, WhatsApp",
 };
 
-export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): SeedCounts {
+export async function seed(
+  db: AnyDb,
+  opts: { env?: NodeJS.ProcessEnv } = {},
+): Promise<SeedCounts> {
   const env = opts.env ?? process.env;
 
   // 1) Proveedores
-  for (const p of PROVIDER_SEEDS) upsertProviderProfile(db, p);
+  for (const p of PROVIDER_SEEDS) await upsertProviderProfile(db, p);
 
   // 2) Organizaciones
   const sixteam =
-    getOrganizationByName(db, "Sixteam") ??
-    createOrganization(db, { name: "Sixteam", kind: "internal" });
+    (await getOrganizationByName(db, "Sixteam")) ??
+    (await createOrganization(db, { name: "Sixteam", kind: "internal" }));
   // La org demo se preserva con sus notas; el launch demo (paso 7) la
   // encuentra por nombre exacto (get-or-create §13.3), no la duplica.
-  if (!getOrganizationByName(db, "ACME S.A.")) {
-    createOrganization(db, {
+  if (!(await getOrganizationByName(db, "ACME S.A."))) {
+    await createOrganization(db, {
       name: "ACME S.A.",
       kind: "client",
       industry: "manufactura",
@@ -188,8 +192,8 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
 
   // 3) Personas internas (nombre completo para asignaciones)
   for (const p of PEOPLE_SEEDS) {
-    if (!getPersonByFullName(db, p.fullName)) {
-      createPerson(db, { orgId: sixteam.id, isInternal: true, ...p });
+    if (!(await getPersonByFullName(db, p.fullName))) {
+      await createPerson(db, { orgId: sixteam.id, isInternal: true, ...p });
     }
   }
 
@@ -197,13 +201,13 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   const agentsFallback: string[] = [];
   const agentIdBySlug = new Map<string, string>();
   for (const seedDef of loadAgentSeeds()) {
-    const desired = getProviderProfileBySlug(db, seedDef.meta.provider_profile);
+    const desired = await getProviderProfileBySlug(db, seedDef.meta.provider_profile);
     let runtime = seedDef.meta.runtime;
     let model = seedDef.meta.model;
     let profile = desired;
     if (!desired || !isProviderConfigured(desired, env)) {
       // Sin credencial → suscripción Claude (runtime claude_code). La UI lo señalará.
-      profile = getProviderProfileBySlug(db, "claude_subscription")!;
+      profile = (await getProviderProfileBySlug(db, "claude_subscription"))!;
       if (seedDef.meta.runtime === "ai_sdk") {
         runtime = "claude_code";
         agentsFallback.push(seedDef.meta.slug);
@@ -215,7 +219,7 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
     }
     // El hash incluye el resultado del fallback: si aparece la credencial, el seed se re-aplica.
     const effectiveHash = sha256(`${seedDef.hash}|${profile!.slug}|${runtime}|${model}`);
-    const { agent, seedChanged } = upsertAgentFromSeed(db, {
+    const { agent, seedChanged } = await upsertAgentFromSeed(db, {
       slug: seedDef.meta.slug,
       name: seedDef.meta.name,
       layer: seedDef.meta.layer,
@@ -235,14 +239,14 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
     // contenido difiere del activo. Si el .md no cambió, las ediciones en
     // caliente por MCP se respetan; un cambio solo de proveedor no crea
     // versiones redundantes.
-    const active = getActivePrompt(db, agent.id);
+    const active = await getActivePrompt(db, agent.id);
     const promptDiffers =
       !active ||
       active.stable !== seedDef.prompt.stable ||
       (active.context ?? "") !== seedDef.prompt.context ||
       (active.volatileTpl ?? "") !== seedDef.prompt.volatile;
     if (!active || (seedChanged && promptDiffers)) {
-      createPromptVersion(db, {
+      await createPromptVersion(db, {
         agentId: agent.id,
         stable: seedDef.prompt.stable,
         context: seedDef.prompt.context,
@@ -272,15 +276,15 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
         );
       }
     }
-    const current = getAgent(db, agentId);
+    const current = await getAgent(db, agentId);
     if (current && current.reportsTo !== desired) {
-      updateAgent(db, current.id, { reportsTo: desired }, current.version);
+      await updateAgent(db, current.id, { reportsTo: desired }, current.version);
     }
   }
 
   // 5) Metodologías desde methodologies/*.md
   for (const m of loadMethodologySeeds()) {
-    upsertMethodology(db, {
+    await upsertMethodology(db, {
       slug: m.slug,
       version: m.version,
       bodyMd: m.bodyMd,
@@ -295,7 +299,7 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   // Idempotente por seed_hash; contenido cambiado sin subir `version` en el
   // archivo LANZA module_version_immutable (las versiones son inmutables).
   for (const m of loadModuleSeeds()) {
-    upsertPhaseModuleFromSeed(db, m);
+    await upsertPhaseModuleFromSeed(db, m);
   }
 
   // 6) Config base (no pisa valores editados a mano). Va ANTES del launch demo
@@ -303,14 +307,14 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   // launch deja tareas en READY y el despachador las arrancaría (gastando
   // suscripción) al boot; con el kill switch ya activo cuando nacen, nada corre
   // hasta que un humano haga resume_all cuando esté listo para observar.
-  if (getConfig(db, ConfigKeys.KILL_SWITCH) === undefined) {
-    setConfig(db, ConfigKeys.KILL_SWITCH, true);
+  if ((await getConfig(db, ConfigKeys.KILL_SWITCH)) === undefined) {
+    await setConfig(db, ConfigKeys.KILL_SWITCH, true);
   }
-  if (getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD) === undefined) {
-    setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD, 2);
+  if ((await getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD)) === undefined) {
+    await setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD, 2);
   }
-  if (getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD) === undefined) {
-    setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD, 10);
+  if ((await getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD)) === undefined) {
+    await setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD, 10);
   }
 
   // 7) Proyecto demo = LAUNCH del módulo consultoria v1 (§13.6): las 12 tareas
@@ -319,8 +323,8 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
   // publica eventos AG-UI. Cinturón y tirantes contra el re-seed: guard por
   // nombre de proyecto + idempotency_key fija (misma key + mismos inputs
   // devuelve lo ya creado sin duplicar — CA-M2.6).
-  if (!getProjectByName(db, "Assessment ACME")) {
-    launchModule(db, {
+  if (!(await getProjectByName(db, "Assessment ACME"))) {
+    await launchModule(db, {
       moduleSlug: "consultoria",
       actor: "system:seed",
       idempotencyKey: "seed:demo:consultoria:acme",
@@ -337,39 +341,24 @@ export function seed(db: AgentosDb, opts: { env?: NodeJS.ProcessEnv } = {}): See
     });
   }
 
-  return collectCounts(db, agentsFallback);
+  return await collectCounts(db, agentsFallback);
 }
 
-function collectCounts(db: AgentosDb, agentsFallback: string[]): SeedCounts {
-  const one = (sql: string): number =>
-    (db.$client.prepare(sql).get() as { n: number }).n;
+async function collectCounts(db: AnyDb, agentsFallback: string[]): Promise<SeedCounts> {
+  const counts = await domainCounts(db);
   return {
-    organizations: one("SELECT count(*) n FROM organizations"),
-    people: one("SELECT count(*) n FROM people"),
-    providerProfiles: one("SELECT count(*) n FROM provider_profiles"),
-    agents: one("SELECT count(*) n FROM agents"),
+    organizations: counts.organizations,
+    people: counts.people,
+    providerProfiles: counts.providerProfiles,
+    agents: counts.agents,
     agentsFallback,
-    promptVersions: one("SELECT count(*) n FROM prompt_versions"),
-    methodologies: one("SELECT count(*) n FROM methodologies"),
-    phaseModules: one("SELECT count(*) n FROM phase_modules"),
-    projects: one("SELECT count(*) n FROM projects"),
-    tasks: one("SELECT count(*) n FROM tasks"),
-    tables: countDomainTables(db),
+    promptVersions: counts.promptVersions,
+    methodologies: counts.methodologies,
+    phaseModules: counts.phaseModules,
+    projects: counts.projects,
+    tasks: counts.tasks,
+    tables: await countDomainTables(db),
   };
-}
-
-/** Tablas de dominio (excluye internas de SQLite, espejos FTS y la de migraciones). */
-export function countDomainTables(db: AgentosDb): number {
-  const row = db.$client
-    .prepare(
-      `SELECT count(*) n FROM sqlite_master
-       WHERE type = 'table'
-         AND name NOT LIKE 'sqlite_%'
-         AND name NOT LIKE '%_fts%'
-         AND name != '__drizzle_migrations'`,
-    )
-    .get() as { n: number };
-  return row.n;
 }
 
 // Ejecutable: `pnpm --filter @agentos/db seed`
@@ -378,17 +367,19 @@ const isMain =
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isMain) {
-  const db = openDb();
-  runMigrations(db);
-  const counts = seed(db);
-  console.log(`Seed aplicado en ${resolveDbPath()}`);
+  const db = await openConfiguredDb();
+  await applyMigrations(db);
+  const counts = await seed(db);
+  console.log(
+    `Seed aplicado en ${process.env.AGENTOS_DB_DRIVER === undefined ? resolveDbPath() : "el backend configurado (" + process.env.AGENTOS_DB_DRIVER + ")"}`,
+  );
   console.log(JSON.stringify(counts, null, 2));
   if (counts.agentsFallback.length > 0) {
     console.log(
       `Fallback de arranque: sin credencial para [${counts.agentsFallback.join(", ")}] → claude_subscription/claude_code (ARCHITECTURE §3).`,
     );
   }
-  const ready = listTasks(db, { status: "READY" }).length;
+  const ready = (await listTasks(db, { status: "READY" })).length;
   console.log(`Tareas READY: ${ready} (única cola del despachador — B3).`);
-  db.$client.close();
+  await closeAnyDb(db);
 }

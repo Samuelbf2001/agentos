@@ -18,15 +18,15 @@ export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): vo
     version: API_VERSION,
     now: Date.now(),
     uptime_ms: Date.now() - ctx.startedAt,
-    kill_switch: ctx.engine.isKillSwitchActive(),
+    kill_switch: await ctx.engine.isKillSwitchActive(),
     recovery: ctx.recovery,
     pool: ctx.pool.snapshot(),
-    counts: healthCounts(ctx.db),
+    counts: await healthCounts(ctx.db),
   }));
 
   /** Personas internas para el selector del login (solo id + nombre + rol). */
   app.get("/api/auth/people", async () => ({
-    people: listPeople(ctx.db)
+    people: (await listPeople(ctx.db))
       .filter((p) => p.isInternal)
       .map((p) => ({ id: p.id, full_name: p.fullName, role: p.role })),
   }));
@@ -36,7 +36,7 @@ export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): vo
     if (!ctx.auth.verifyPassword(body.password)) {
       return reply.status(401).send({ error: { code: "invalid_credentials", message: "Contraseña incorrecta" } });
     }
-    const person = getPerson(ctx.db, body.person_id);
+    const person = await getPerson(ctx.db, body.person_id);
     if (!person || !person.isInternal) {
       throw errors.notFound("person", body.person_id);
     }

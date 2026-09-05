@@ -5,11 +5,12 @@
  */
 import { nowMs, type AgentRuntime, type WhatsAppHubConnector } from "@agentos/shared";
 import {
-  closeDb,
+  applyMigrations,
+  closeAnyDb,
   countDomainTables,
-  openDb,
+  domainCounts,
+  openConfiguredDb,
   type DbDriver,
-  runMigrations,
   seed,
   type AgentosDb,
 } from "@agentos/db";
@@ -86,10 +87,10 @@ export interface ApiContext {
   startedAt: number;
   channelSecret?: string | undefined;
   corsOrigin: string | string[];
-  close(): void;
+  close(): Promise<void>;
 }
 
-export function createApiContext(options: ApiOptions = {}): ApiContext {
+export async function createApiContext(options: ApiOptions = {}): Promise<ApiContext> {
   const sharedPassword =
     options.sharedPassword ?? process.env.AGENTOS_SHARED_PASSWORD ?? "agentos-dev";
   if (!options.sharedPassword && !process.env.AGENTOS_SHARED_PASSWORD) {
@@ -98,11 +99,15 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
     );
   }
 
-  // 1) DB: abrir y migrar si falta (idempotente).
-  const db = openDb(options.dbPath);
-  runMigrations(db);
+  // 1) DB: abrir y migrar según el driver configurado (idempotente).
+  const db = await openConfiguredDb({
+    ...(options.dbDriver ? { driver: options.dbDriver } : {}),
+    ...(options.dbPath ? { dbPath: options.dbPath } : {}),
+    ...(options.pgUrl ? { pgUrl: options.pgUrl } : {}),
+  });
+  await applyMigrations(db);
   if (options.seedOnBoot !== false) {
-    seed(db);
+    await seed(db);
   }
 
   // 2) Bus de eventos (DB = fuente de verdad, ring buffer por topic).
@@ -135,7 +140,7 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
   });
 
   // 4) Recuperación al arrancar (NFR-4) ANTES de despachar nada.
-  const recovery = recoverOnBoot(db, engine);
+  const recovery = await recoverOnBoot(db, engine);
 
   // 5) RunnerPool con los runners reales (o los inyectados por tests).
   const runners: Partial<Record<AgentRuntime, AgentRunner>> =
@@ -153,7 +158,7 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
   });
 
   // 6) Despachador determinista.
-  const dispatcher = createDispatcher({
+  const dispatcher = await createDispatcher({
     db,
     bus,
     engine,
@@ -190,29 +195,29 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
     startedAt: nowMs(),
     channelSecret: options.channelSecret ?? process.env.AGENTOS_CHANNEL_WEB_SECRET,
     corsOrigin: options.corsOrigin ?? DEFAULT_WEB_ORIGIN,
-    close(): void {
+    async close(): Promise<void> {
       if (closed) return;
       closed = true;
       dispatcher.stop();
-      closeDb(db);
+      await closeAnyDb(db);
     },
   };
 }
 
-export function healthCounts(db: AgentosDb): Record<string, number> {
-  const one = (sql: string): number => (db.$client.prepare(sql).get() as { n: number }).n;
+export async function healthCounts(db: AgentosDb): Promise<Record<string, number>> {
+  const counts = await domainCounts(db);
   return {
-    tables: countDomainTables(db),
-    organizations: one("SELECT count(*) n FROM organizations"),
-    projects: one("SELECT count(*) n FROM projects"),
-    tasks: one("SELECT count(*) n FROM tasks"),
-    agents: one("SELECT count(*) n FROM agents"),
-    threads: one("SELECT count(*) n FROM threads"),
-    messages: one("SELECT count(*) n FROM messages"),
-    runs_total: one("SELECT count(*) n FROM runs"),
-    runs_running: one("SELECT count(*) n FROM runs WHERE status = 'running'"),
-    runs_queued: one("SELECT count(*) n FROM runs WHERE status = 'queued'"),
-    approvals_pending: one("SELECT count(*) n FROM approvals WHERE status = 'pending'"),
-    events: one("SELECT count(*) n FROM events"),
+    tables: await countDomainTables(db),
+    organizations: counts.organizations,
+    projects: counts.projects,
+    tasks: counts.tasks,
+    agents: counts.agents,
+    threads: counts.threads,
+    messages: counts.messages,
+    runs_total: counts.runsTotal,
+    runs_running: counts.runsRunning,
+    runs_queued: counts.runsQueued,
+    approvals_pending: counts.approvalsPending,
+    events: counts.events,
   };
 }

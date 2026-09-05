@@ -17,7 +17,7 @@ afterAll(async () => {
 
 describe("kill switch", () => {
   it("pause_all detiene el despachador; resume_all lo reactiva", async () => {
-    const task = makeReadyTask(fx, fx.sam, { title: "Tarea bajo kill switch" });
+    const task = await makeReadyTask(fx, fx.sam, { title: "Tarea bajo kill switch" });
     fx.aiRunner.setBehavior(() => ({ text: "no debería ni arrancar en pausa" }));
 
     // Pausa por REST.
@@ -33,8 +33,8 @@ describe("kill switch", () => {
     const paused = await fx.api.ctx.dispatcher.tick();
     expect(paused.skipped).toBe("kill_switch");
     expect(paused.dispatched).toHaveLength(0);
-    expect(listRuns(fx.db, { taskId: task.id })).toHaveLength(0);
-    expect(getTask(fx.db, task.id)!.status).toBe("READY");
+    expect(await listRuns(fx.db, { taskId: task.id })).toHaveLength(0);
+    expect((await getTask(fx.db, task.id))!.status).toBe("READY");
 
     // El canal web tampoco encola un run (mensaje persistido + warning).
     const chat = await fx.api.app.inject({
@@ -66,6 +66,6 @@ describe("kill switch", () => {
     fx.aiRunner.setBehavior(async () => ({ text: "trabajando de nuevo" }));
     const report = await fx.api.ctx.dispatcher.tick();
     expect(report.dispatched).toHaveLength(1);
-    await waitFor(() => listRuns(fx.db, { taskId: task.id }).length === 1);
+    await waitFor(async () => (await listRuns(fx.db, { taskId: task.id })).length === 1);
   });
 });

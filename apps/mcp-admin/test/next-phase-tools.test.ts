@@ -7,8 +7,8 @@ import { getLaunch, listTasks } from "@agentos/db";
 import { adminFixture, type AdminFixture } from "./helpers.js";
 
 let f: AdminFixture;
-beforeEach(() => {
-  f = adminFixture();
+beforeEach(async () => {
+  f = await adminFixture();
 });
 
 const OPS_INPUTS = { cliente: "ACME", objetivo: "Operación mensual de la promesa." };
@@ -81,11 +81,11 @@ describe("cadencias por MCP (CA-M3.4)", () => {
     })) as { launch: { id: string }; project: { id: string }; tasks_count: number };
 
     expect(res.tasks_count).toBe(6); // 5 del catálogo + 1 cadencia confirmada
-    const receipt = getLaunch(f.db, res.launch.id)!;
+    const receipt = (await getLaunch(f.db, res.launch.id))!;
     expect((receipt.result as { cadences_confirmed?: string[] }).cadences_confirmed).toEqual([
       "reporte_semanal",
     ]);
-    const tasks = listTasks(f.db, { projectId: res.project.id });
+    const tasks = await listTasks(f.db, { projectId: res.project.id });
     const reporte = tasks.find((t) => t.title.startsWith("Reporte semanal"))!;
     expect(reporte.status).toBe("READY");
     expect(tasks.some((t) => t.title.startsWith("Sprint semanal"))).toBe(false);

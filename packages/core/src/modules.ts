@@ -17,6 +17,7 @@ import {
   nowMs,
   renderTemplate,
   validateLaunchInputs,
+  type KnowledgeKind,
   type ModuleBlueprint,
   type PlannedDeliverable,
   type Stage,
@@ -25,7 +26,12 @@ import {
   REDACTED,
   appendAudit,
   appendTaskEvent,
+  countDocs,
+  countOpenTasksByTemplateKey,
+  countProcesses,
+  countProjectArtifactsByKind,
   createTask,
+  findLatestProjectArtifact,
   getActiveModule,
   getLatestLaunchForProject,
   getLaunch,
@@ -34,6 +40,8 @@ import {
   getTask,
   launchModule,
   listPhaseModules,
+  listTaskEvents,
+  maxOrderKey,
   resolveRoleAgainstRoster,
   type AgentosDb,
   type LaunchModuleInput,
@@ -44,14 +52,14 @@ import {
 } from "@agentos/db";
 import type { EventSink } from "./events.js";
 
-export function launchModuleWithEvents(
+export async function launchModuleWithEvents(
   db: AgentosDb,
   sink: EventSink,
   input: LaunchModuleInput,
-): LaunchModuleResult {
-  const result = launchModule(db, input);
+): Promise<LaunchModuleResult> {
+  const result = await launchModule(db, input);
   for (const pending of result.pendingEvents) {
-    sink.publish(pending.topic, pending.event);
+    await sink.publish(pending.topic, pending.event);
   }
   return result;
 }
@@ -87,11 +95,11 @@ const SOURCE_LABEL: Record<PhaseClosureItem["source"], string> = {
  * la organización, y artifacts por kind en tareas del proyecto. El gate de
  * fase no debe aprobarse con faltantes (CA-M3.1).
  */
-export function phaseClosureStatus(db: AgentosDb, projectId: string): PhaseClosureStatus {
-  const project = getProject(db, projectId);
+export async function phaseClosureStatus(db: AgentosDb, projectId: string): Promise<PhaseClosureStatus> {
+  const project = await getProject(db, projectId);
   if (!project) throw errors.notFound("project", projectId);
 
-  const launch = getLatestLaunchForProject(db, projectId);
+  const launch = await getLatestLaunchForProject(db, projectId);
   if (!launch) return { launchId: null, complete: false, items: [], reason: "no_launch" };
 
   const raw = (launch.result as { deliverables?: unknown }).deliverables;
@@ -105,33 +113,22 @@ export function phaseClosureStatus(db: AgentosDb, projectId: string): PhaseClosu
       )
     : [];
 
-  const count = (sql: string, ...params: unknown[]): number =>
-    (db.$client.prepare(sql).get(...params) as { n: number }).n;
-
-  const items: PhaseClosureItem[] = deliverables.map((d) => {
+  // El .map() original pasa a necesitar await por elemento: for…of explícito.
+  const items: PhaseClosureItem[] = [];
+  for (const d of deliverables) {
     const required = typeof d.min === "number" && Number.isFinite(d.min) && d.min > 0 ? d.min : 1;
     let found: number;
     switch (d.source) {
       case "knowledge_doc":
-        found = count(
-          `SELECT count(*) AS n FROM knowledge_docs WHERE project_id = ? AND kind = ?`,
-          projectId,
-          d.kind,
-        );
+        // El deliverable declara el kind como string libre; countDocs lo tipa
+        // fino (KnowledgeKind) pero el SQL original tampoco lo restringía.
+        found = await countDocs(db, { projectId, kind: d.kind as KnowledgeKind });
         break;
       case "process":
-        found = count(
-          `SELECT count(*) AS n FROM processes WHERE org_id = ? AND variant = 'as_is'`,
-          project.orgId,
-        );
+        found = await countProcesses(db, { orgId: project.orgId, variant: "as_is" });
         break;
       case "artifact":
-        found = count(
-          `SELECT count(*) AS n FROM artifacts a JOIN tasks t ON t.id = a.task_id
-           WHERE t.project_id = ? AND a.kind = ?`,
-          projectId,
-          d.kind,
-        );
+        found = await countProjectArtifactsByKind(db, projectId, d.kind);
         break;
     }
     const missing =
@@ -139,8 +136,8 @@ export function phaseClosureStatus(db: AgentosDb, projectId: string): PhaseClosu
         ? null
         : `Falta(n) ${required - found} de ${required} "${d.kind}" — ${SOURCE_LABEL[d.source]}` +
           (d.producedBy ? ` (los produce la plantilla "${d.producedBy}")` : "");
-    return { kind: d.kind, source: d.source, required, found, missing };
-  });
+    items.push({ kind: d.kind, source: d.source, required, found, missing });
+  }
 
   return {
     launchId: launch.id,
@@ -225,19 +222,19 @@ const NON_CARRYOVER_INPUT_KEYS = new Set(["fecha_objetivo", "presupuesto_fase", 
  * contenido no es parseable a lista, quedan vacías para que el humano las
  * pegue — nunca se inventa.
  */
-export function prefillNextPhaseInputs(
+export async function prefillNextPhaseInputs(
   db: AgentosDb,
   projectId: string,
   nextModuleSlug: string,
-): NextPhasePrefill {
-  const project = getProject(db, projectId);
+): Promise<NextPhasePrefill> {
+  const project = await getProject(db, projectId);
   if (!project) throw errors.notFound("project", projectId);
-  const organization = getOrganization(db, project.orgId);
-  const module = getActiveModule(db, nextModuleSlug);
+  const organization = await getOrganization(db, project.orgId);
+  const module = await getActiveModule(db, nextModuleSlug);
   if (!module) throw errors.notFound("phase_module(active)", nextModuleSlug);
   const bp = module.blueprint as ModuleBlueprint;
 
-  const previous = getLatestLaunchForProject(db, projectId);
+  const previous = await getLatestLaunchForProject(db, projectId);
   const prev: Record<string, unknown> = (previous?.inputs as Record<string, unknown>) ?? {};
 
   // Identidad genérica (org + recibo anterior). `cliente` sigue la convención
@@ -264,15 +261,8 @@ export function prefillNextPhaseInputs(
 
     if (input.key === "palancas" && input.type === "list_text") {
       // CA-M3.2: cada palanca priorizada del roadmap APROBADO alimenta CONSTRUIR.
-      const row = db.$client
-        .prepare(
-          `SELECT a.content AS content FROM artifacts a
-           JOIN tasks t ON t.id = a.task_id
-           WHERE t.project_id = ? AND a.kind = 'roadmap' AND t.status = 'DONE'
-           ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
-        )
-        .get(projectId) as { content: string | null } | undefined;
-      const levers = parseRoadmapLevers(row?.content);
+      const artifact = await findLatestProjectArtifact(db, projectId, "roadmap", { taskStatus: "DONE" });
+      const levers = parseRoadmapLevers(artifact?.content);
       const fits =
         levers.length > 0 &&
         levers.length >= (input.min_items ?? 0) &&
@@ -331,17 +321,17 @@ export type NextPhaseStatus =
  * ENTENDER→implementacion, CONSTRUIR→operacion, OPERAR→null (módulo siguiente
  * = el ACTIVO de esa fase). El REST y el MCP exponen esto tal cual.
  */
-export function nextPhaseStatus(db: AgentosDb, projectId: string): NextPhaseStatus {
-  const project = getProject(db, projectId);
+export async function nextPhaseStatus(db: AgentosDb, projectId: string): Promise<NextPhaseStatus> {
+  const project = await getProject(db, projectId);
   if (!project) throw errors.notFound("project", projectId);
 
-  const launch = getLatestLaunchForProject(db, projectId);
+  const launch = await getLatestLaunchForProject(db, projectId);
   if (!launch) return { available: false, reason: "no_launch" };
 
   const nextPhase = NEXT_PHASE[launch.phase];
   if (nextPhase === null) return { available: false, reason: "no_next_phase", next_phase: null };
 
-  const closure = phaseClosureStatus(db, projectId);
+  const closure = await phaseClosureStatus(db, projectId);
   if (!closure.complete) {
     return { available: false, reason: "phase_incomplete", closure, next_phase: nextPhase };
   }
@@ -349,14 +339,13 @@ export function nextPhaseStatus(db: AgentosDb, projectId: string): NextPhaseStat
     return { available: false, reason: "gate_pending", next_phase: nextPhase };
   }
 
-  const nextModule = listPhaseModules(db, { status: "active" }).find(
-    (m: PhaseModule) => m.phase === nextPhase,
-  );
+  const activeModules = await listPhaseModules(db, { status: "active" });
+  const nextModule = activeModules.find((m: PhaseModule) => m.phase === nextPhase);
   if (!nextModule) {
     return { available: false, reason: "no_active_module", next_phase: nextPhase };
   }
 
-  const prefill = prefillNextPhaseInputs(db, projectId, nextModule.slug);
+  const prefill = await prefillNextPhaseInputs(db, projectId, nextModule.slug);
   return {
     available: true,
     next_phase: nextPhase,
@@ -383,67 +372,48 @@ interface CadenceOrigin {
   fanOutValue: string | null;
 }
 
-function cadenceOriginOf(db: AgentosDb, taskId: string): CadenceOrigin | null {
-  const row = db.$client
-    .prepare(
-      `SELECT payload FROM task_events
-       WHERE task_id = ? AND kind = 'created'
-       ORDER BY created_at ASC LIMIT 1`,
-    )
-    .get(taskId) as { payload: string | null } | undefined;
-  if (!row?.payload) return null;
-  try {
-    const payload = JSON.parse(row.payload) as Record<string, unknown>;
-    const launchId = payload["launch_id"];
-    const templateKey = payload["template_key"];
-    if (typeof launchId !== "string" || typeof templateKey !== "string") return null;
-    const fanOutValue = payload["fan_out_value"];
-    return {
-      launchId,
-      templateKey,
-      fanOutValue: typeof fanOutValue === "string" ? fanOutValue : null,
-    };
-  } catch {
-    return null;
-  }
+async function cadenceOriginOf(db: AgentosDb, taskId: string): Promise<CadenceOrigin | null> {
+  // listTaskEvents ya viene ordenado por created_at y con el payload parseado.
+  const events = await listTaskEvents(db, taskId);
+  const created = events.find((e) => e.kind === "created");
+  const payload = created?.payload;
+  if (!payload) return null;
+  const launchId = payload["launch_id"];
+  const templateKey = payload["template_key"];
+  if (typeof launchId !== "string" || typeof templateKey !== "string") return null;
+  const fanOutValue = payload["fan_out_value"];
+  return {
+    launchId,
+    templateKey,
+    fanOutValue: typeof fanOutValue === "string" ? fanOutValue : null,
+  };
 }
 
 /** Guarda-raíl anti-bucle: ¿existe ya una instancia ABIERTA de la plantilla en el proyecto? */
-function hasOpenInstance(db: AgentosDb, projectId: string, templateKey: string): boolean {
-  const row = db.$client
-    .prepare(
-      `SELECT count(*) AS n FROM tasks t
-       JOIN task_events e ON e.task_id = t.id AND e.kind = 'created'
-       WHERE t.project_id = ? AND t.status NOT IN ('DONE', 'CANCELLED')
-         AND json_extract(e.payload, '$.template_key') = ?`,
-    )
-    .get(projectId, templateKey) as { n: number };
-  return row.n > 0;
+async function hasOpenInstance(db: AgentosDb, projectId: string, templateKey: string): Promise<boolean> {
+  return (await countOpenTasksByTemplateKey(db, projectId, templateKey)) > 0;
 }
 
 /** Clave de orden al FINAL de READY (mismo algoritmo que el motor del tablero). */
-function readyOrderKey(db: AgentosDb, projectId: string): string {
-  const row = db.$client
-    .prepare(`SELECT max(order_key) AS mk FROM tasks WHERE project_id = ? AND status = 'READY'`)
-    .get(projectId) as { mk: string | null } | undefined;
-  const last = row?.mk;
+async function readyOrderKey(db: AgentosDb, projectId: string): Promise<string> {
+  const last = await maxOrderKey(db, projectId, "READY");
   if (!last) return "m";
   const tail = last.charCodeAt(last.length - 1);
   if (tail < "z".charCodeAt(0)) return last.slice(0, -1) + String.fromCharCode(tail + 1);
   return `${last}m`;
 }
 
-function skipCadence(
+async function skipCadence(
   db: AgentosDb,
   doneTask: Task,
   origin: CadenceOrigin,
   reason: string,
   details: Record<string, unknown>,
   runId: string | null,
-): null {
+): Promise<null> {
   // Aviso fail-soft (CA-M3.4): la cadencia NO renace, pero queda rastro en el
   // timeline de la instancia cerrada y en audit_log — nadie la pierde en silencio.
-  appendTaskEvent(db, {
+  await appendTaskEvent(db, {
     taskId: doneTask.id,
     runId,
     kind: "comment",
@@ -458,7 +428,7 @@ function skipCadence(
       ...details,
     },
   });
-  appendAudit(db, {
+  await appendAudit(db, {
     actor: "system:cadence",
     source: "system",
     action: "modules.cadence_skipped",
@@ -486,21 +456,21 @@ function skipCadence(
  * instancia ABIERTA (no DONE/CANCELLED) de esa plantilla en el proyecto, no se
  * crea otra. Devuelve la tarea creada o null (nada que hacer / skip avisado).
  */
-export function respawnCadenceInstance(
+export async function respawnCadenceInstance(
   db: AgentosDb,
   doneTaskId: string,
   ctx: { runId?: string | null; now?: number } = {},
-): Task | null {
+): Promise<Task | null> {
   const runId = ctx.runId ?? null;
   const now = ctx.now ?? nowMs();
 
-  const doneTask = getTask(db, doneTaskId);
+  const doneTask = await getTask(db, doneTaskId);
   if (!doneTask || doneTask.status !== "DONE") return null;
 
-  const origin = cadenceOriginOf(db, doneTaskId);
+  const origin = await cadenceOriginOf(db, doneTaskId);
   if (!origin) return null; // tarea sin launch (manual/delegada): no hay cadencia
 
-  const launch: ModuleLaunch | undefined = getLaunch(db, origin.launchId);
+  const launch: ModuleLaunch | undefined = await getLaunch(db, origin.launchId);
   if (!launch || launch.projectId !== doneTask.projectId) return null;
 
   const confirmedRaw = (launch.result as { cadences_confirmed?: unknown }).cadences_confirmed;
@@ -512,7 +482,7 @@ export function respawnCadenceInstance(
   if (!tpl) return null;
 
   // Guarda-raíl anti-bucle: una instancia abierta ya cubre la cadencia.
-  if (hasOpenInstance(db, doneTask.projectId, origin.templateKey)) return null;
+  if (await hasOpenInstance(db, doneTask.projectId, origin.templateKey)) return null;
 
   const period = cadencePeriodDays(tpl);
   if (period === null) {
@@ -522,7 +492,7 @@ export function respawnCadenceInstance(
   // Asignado por rol re-resuelto contra el roster ACTUAL (si cambió, cambia).
   const rosterEntry = bp.roster.find((r) => r.role === tpl.assign.role);
   const assignment = rosterEntry
-    ? resolveRoleAgainstRoster(db, { agentSlug: rosterEntry.agent, layer: rosterEntry.layer })
+    ? await resolveRoleAgainstRoster(db, { agentSlug: rosterEntry.agent, layer: rosterEntry.layer })
     : null;
   if (!assignment) {
     return skipCadence(db, doneTask, origin, "agent_not_assignable", {
@@ -558,7 +528,7 @@ export function respawnCadenceInstance(
     computeRequiresApproval({ externalEffect: false, activityType: tpl.activity_type }) ||
     tpl.gate !== undefined;
 
-  const created = createTask(db, {
+  const created = await createTask(db, {
     projectId: doneTask.projectId,
     title,
     description,
@@ -571,9 +541,9 @@ export function respawnCadenceInstance(
     requiresApproval,
     externalEffect: false,
     dueAt,
-    orderKey: readyOrderKey(db, doneTask.projectId),
+    orderKey: await readyOrderKey(db, doneTask.projectId),
   });
-  appendTaskEvent(db, {
+  await appendTaskEvent(db, {
     taskId: created.id,
     runId,
     kind: "created",

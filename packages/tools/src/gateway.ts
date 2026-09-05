@@ -69,13 +69,13 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
     };
   }
 
-  function audit(
+  async function audit(
     ctx: ToolCallContext,
     action: string,
     toolName: string,
     detail: Record<string, unknown>,
-  ): void {
-    appendAudit(db, {
+  ): Promise<void> {
+    await appendAudit(db, {
       actor: ctx.actor,
       source: auditSourceFor(ctx.actor),
       action,
@@ -87,39 +87,39 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
   }
 
   /** Rechaza auditando SIEMPRE la denegación (la política también deja huella). */
-  function deny(ctx: ToolCallContext, toolName: string, code: (typeof ErrorCodes)[keyof typeof ErrorCodes], message: string): never {
-    audit(ctx, "tool.denied", toolName, { code, message });
+  async function deny(ctx: ToolCallContext, toolName: string, code: (typeof ErrorCodes)[keyof typeof ErrorCodes], message: string): Promise<never> {
+    await audit(ctx, "tool.denied", toolName, { code, message });
     throw new AgentosError(code, message, { tool: toolName });
   }
 
-  function resolveAgent(ref: string): Agent | undefined {
-    return getAgent(db, ref) ?? getAgentBySlug(db, ref);
+  async function resolveAgent(ref: string): Promise<Agent | undefined> {
+    return (await getAgent(db, ref)) ?? (await getAgentBySlug(db, ref));
   }
 
   /** Política previa a TODA ejecución. Devuelve la tool resuelta y el agente. */
-  function checkPolicy(ctx: ToolCallContext, name: string): { tool: ToolDefinition; agent: Agent | null } {
+  async function checkPolicy(ctx: ToolCallContext, name: string): Promise<{ tool: ToolDefinition; agent: Agent | null }> {
     const tool = catalog.get(name);
-    if (!tool) deny(ctx, name, ErrorCodes.POLICY_DENIED, `Tool desconocida: ${name} (fail-closed)`);
+    if (!tool) return await deny(ctx, name, ErrorCodes.POLICY_DENIED, `Tool desconocida: ${name} (fail-closed)`);
 
     // Kill switch global: nada ejecuta.
-    if (engine.isKillSwitchActive()) {
-      deny(ctx, name, ErrorCodes.KILL_SWITCH_ACTIVE, "Kill switch activo: ejecución de tools detenida");
+    if (await engine.isKillSwitchActive()) {
+      await deny(ctx, name, ErrorCodes.KILL_SWITCH_ACTIVE, "Kill switch activo: ejecución de tools detenida");
     }
 
     // Los actores humanos/sistema pasan por gateway con su propia atribución;
     // la allowlist aplica a AGENTES (ARCHITECTURE §4).
     if (actorKind(ctx.actor) !== "agent") return { tool, agent: null };
 
-    const agent = resolveAgent(ctx.agent_id);
+    const agent = await resolveAgent(ctx.agent_id);
     if (!agent) {
-      deny(ctx, name, ErrorCodes.POLICY_DENIED, `Agente desconocido: ${ctx.agent_id} (fail-closed)`);
+      return await deny(ctx, name, ErrorCodes.POLICY_DENIED, `Agente desconocido: ${ctx.agent_id} (fail-closed)`);
     }
     if (agent.status !== "active") {
-      deny(ctx, name, ErrorCodes.POLICY_DENIED, `Agente ${agent.slug} está "${agent.status}": tools bloqueadas`);
+      await deny(ctx, name, ErrorCodes.POLICY_DENIED, `Agente ${agent.slug} está "${agent.status}": tools bloqueadas`);
     }
     const allowlist = agent.toolsAllowlist ?? [];
     if (!allowlist.includes(name)) {
-      deny(
+      await deny(
         ctx,
         name,
         ErrorCodes.POLICY_DENIED,
@@ -131,13 +131,13 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
 
   async function runHandler(ctx: ToolCallContext, tool: ToolDefinition, args: unknown): Promise<GatewayResult> {
     // Audit ANTES de ejecutar (si el proceso muere a mitad, la intención quedó escrita).
-    audit(ctx, "tool.execute", tool.name, { args: args as Record<string, unknown> });
+    await audit(ctx, "tool.execute", tool.name, { args: args as Record<string, unknown> });
     try {
       const result = await tool.handler(execCtx(ctx), args as never);
       return { status: "ok", result };
     } catch (err) {
       // Segunda fila si falla (patrón §4).
-      audit(ctx, "tool.error", tool.name, {
+      await audit(ctx, "tool.error", tool.name, {
         error: err instanceof Error ? err.message : String(err),
         code: err instanceof AgentosError ? err.code : undefined,
       });
@@ -146,7 +146,7 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
   }
 
   async function execute(ctx: ToolCallContext, name: string, rawArgs: unknown): Promise<GatewayResult> {
-    const { tool } = checkPolicy(ctx, name);
+    const { tool } = await checkPolicy(ctx, name);
 
     const parsed = tool.schema.safeParse(rawArgs ?? {});
     if (!parsed.success) {
@@ -155,7 +155,7 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
 
     // Gate 2: tool de efecto externo NO ejecuta — crea approval y cede al humano.
     if (tool.flags.external_effect || tool.flags.requires_approval) {
-      const approval = engine.requestApproval({
+      const approval = await engine.requestApproval({
         kind: "tool_call",
         payload: { tool: name, args: parsed.data },
         runId: ctx.run_id ?? null,
@@ -163,7 +163,7 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
         projectId: ctx.project_id ?? null,
         requestedBy: ctx.actor,
       });
-      audit(ctx, "tool.pending_approval", name, { approvalId: approval.id, args: parsed.data });
+      await audit(ctx, "tool.pending_approval", name, { approvalId: approval.id, args: parsed.data });
       return { status: "pending_approval", approval_id: approval.id };
     }
 
@@ -176,7 +176,7 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
    * coincidiendo — cambiar argumentos invalida la aprobación.
    */
   async function executeApproved(ctx: ToolCallContext, approvalId: string): Promise<GatewayResult> {
-    const approval = getApproval(db, approvalId);
+    const approval = await getApproval(db, approvalId);
     if (!approval) throw errors.notFound("approval", approvalId);
     if (approval.kind !== "tool_call") {
       throw errors.validation(`La aprobación ${approvalId} no es de tipo tool_call`);
@@ -201,18 +201,18 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
     }
     const tool = catalog.get(payload.tool);
     if (!tool) {
-      deny(ctx, payload.tool, ErrorCodes.POLICY_DENIED, `Tool desconocida en aprobación: ${payload.tool}`);
+      return await deny(ctx, payload.tool, ErrorCodes.POLICY_DENIED, `Tool desconocida en aprobación: ${payload.tool}`);
     }
     const parsed = tool.schema.safeParse(payload.args ?? {});
     if (!parsed.success) {
       throw errors.validation(`Argumentos aprobados inválidos para ${payload.tool}`, parsed.error.issues);
     }
-    audit(ctx, "tool.execute_approved", tool.name, { approvalId, args: parsed.data });
+    await audit(ctx, "tool.execute_approved", tool.name, { approvalId, args: parsed.data });
     try {
       const result = await tool.handler(execCtx(ctx), parsed.data as never);
       return { status: "ok", result };
     } catch (err) {
-      audit(ctx, "tool.error", tool.name, {
+      await audit(ctx, "tool.error", tool.name, {
         approvalId,
         error: err instanceof Error ? err.message : String(err),
       });

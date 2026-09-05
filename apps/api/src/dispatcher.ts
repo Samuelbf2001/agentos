@@ -103,9 +103,12 @@ export interface Dispatcher {
   stop(): void;
   /** Un ciclo del despachador (expuesto para tests deterministas). */
   tick(): Promise<TickReport>;
-  reap(): { requeued: string[]; blocked: string[] };
-  enqueueChatRun(params: { threadId: string; text: string }): { runId: string };
-  enqueueApprovalResume(approval: Approval, executed: GatewayResult): { runId: string } | null;
+  reap(): Promise<{ requeued: string[]; blocked: string[] }>;
+  enqueueChatRun(params: { threadId: string; text: string }): Promise<{ runId: string }>;
+  enqueueApprovalResume(
+    approval: Approval,
+    executed: GatewayResult,
+  ): Promise<{ runId: string } | null>;
   /**
    * Reconcilia una aprobación YA decidida (Gate 2, fix Q2): ejecuta el efecto del
    * tool_call + encola la reanudación, o desbloquea la tarjeta de pregunta/
@@ -151,7 +154,7 @@ export function budgetFromLimits(
   return Object.keys(budget).length > 0 ? budget : undefined;
 }
 
-export function createDispatcher(opts: DispatcherOptions): Dispatcher {
+export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatcher> {
   const {
     db,
     bus,
@@ -176,14 +179,14 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   let reaperTimer: ReturnType<typeof setInterval> | undefined;
 
   // Config por defecto de la auto-crítica (editable en caliente por app_config).
-  if (getConfig(db, QUINN_ACTIVITY_TYPES_KEY) === undefined) {
-    setConfig(db, QUINN_ACTIVITY_TYPES_KEY, DEFAULT_QUINN_ACTIVITY_TYPES);
+  if ((await getConfig(db, QUINN_ACTIVITY_TYPES_KEY)) === undefined) {
+    await setConfig(db, QUINN_ACTIVITY_TYPES_KEY, DEFAULT_QUINN_ACTIVITY_TYPES);
   }
 
-  function resolveProvider(agent: Agent): ProviderProfile {
+  async function resolveProvider(agent: Agent): Promise<ProviderProfile> {
     const profile =
-      (agent.providerProfileId ? getProviderProfile(db, agent.providerProfileId) : undefined) ??
-      getDefaultProviderProfile(db);
+      (agent.providerProfileId ? await getProviderProfile(db, agent.providerProfileId) : undefined) ??
+      (await getDefaultProviderProfile(db));
     if (!profile) {
       throw new AgentosError(
         ErrorCodes.PROVIDER_NOT_CONFIGURED,
@@ -205,9 +208,9 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     history?: ModelMessage[];
   }
 
-  function buildRunInput(params: BuildParams): RunInput {
+  async function buildRunInput(params: BuildParams): Promise<RunInput> {
     const { agent, provider } = params;
-    const assembled = assemblePrompt(db, {
+    const assembled = await assemblePrompt(db, {
       agent,
       project: params.projectId ?? null,
       task: params.taskId ?? null,
@@ -225,10 +228,10 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       ...(params.history ?? []),
       { role: "user", content: params.userText },
     ];
-    const project = params.projectId ? getProject(db, params.projectId) : undefined;
+    const project = params.projectId ? await getProject(db, params.projectId) : undefined;
     // Único call site (§13.4): límites del agente + presupuesto del proyecto.
     const projectBudget = params.projectId
-      ? parseProjectBudget(getConfig(db, projectBudgetKey(params.projectId)))
+      ? parseProjectBudget(await getConfig(db, projectBudgetKey(params.projectId)))
       : null;
     const budget = budgetFromLimits(agent.limits, projectBudget);
     return {
@@ -277,9 +280,9 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     return false;
   }
 
-  function afterTaskRun(run: Run, taskId: string): void {
+  async function afterTaskRun(run: Run, taskId: string): Promise<void> {
     inflight.delete(run.id);
-    const task = getTask(db, taskId);
+    const task = await getTask(db, taskId);
     if (!task) return;
     // Si la tool movió la tarea (REVIEW, BLOCKED, DONE, ...), se respeta.
     if (task.status !== "IN_PROGRESS") return;
@@ -289,11 +292,11 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     // → la plataforma la fuerza a BLOCKED(approval). Devolverla a READY haría
     // que el despachador la re-despache y el agente repita la pregunta (run y
     // aprobación duplicados). Convención: pregunta pendiente ⇒ BLOCKED.
-    const pendingApproval = listPendingApprovals(db).find((a) => a.taskId === taskId);
+    const pendingApproval = (await listPendingApprovals(db)).find((a) => a.taskId === taskId);
     // El run terminó sin moverla → soltar lease; intentos agotados → stuck.
     const stuck = !pendingApproval && task.attempts >= maxAttempts;
     try {
-      engine.moveTask({
+      await engine.moveTask({
         taskId,
         to: pendingApproval || stuck ? "BLOCKED" : "READY",
         expectedVersion: task.version,
@@ -313,11 +316,11 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     }
   }
 
-  function releaseClaim(taskId: string, runId: string, note: string): void {
-    const task = getTask(db, taskId);
+  async function releaseClaim(taskId: string, runId: string, note: string): Promise<void> {
+    const task = await getTask(db, taskId);
     if (!task || task.status !== "IN_PROGRESS") return;
     try {
-      engine.moveTask({
+      await engine.moveTask({
         taskId,
         to: "READY",
         expectedVersion: task.version,
@@ -332,18 +335,18 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
 
   // ── (a) despacho de una tarea READY ───────────────────────────────────────
 
-  function dispatchTask(task: Task): string | null {
+  async function dispatchTask(task: Task): Promise<string | null> {
     if (!task.assigneeAgentId) return null;
-    const agent = getAgent(db, task.assigneeAgentId);
+    const agent = await getAgent(db, task.assigneeAgentId);
     // (e) agente pausado/desactivado o con cadena de mando rota (ancestro
     // terminado/faltante, ciclo): su cola espera, no se roba ni se ejecuta.
-    if (!agent || !engine.isAgentAssignable(agent.id)) return null;
+    if (!agent || !(await engine.isAgentAssignable(agent.id))) return null;
 
-    const provider = resolveProvider(agent);
+    const provider = await resolveProvider(agent);
     const runId = newId();
     // La fila `runs` nace ANTES del claim: task_events.run_id tiene FK a runs
     // y el claim queda ligado al run exacto que movió la tarjeta (§10).
-    createRun(db, {
+    await createRun(db, {
       id: runId,
       rootRunId: runId,
       agentId: agent.id,
@@ -356,10 +359,10 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       status: "queued",
     });
 
-    const claim = engine.claim({ taskId: task.id, agentId: agent.id, runId, leaseMs });
+    const claim = await engine.claim({ taskId: task.id, agentId: agent.id, runId, leaseMs });
     if (!claim.claimed) {
       // Carrera perdida: otro tick/proceso ganó; el run nunca corrió.
-      updateRun(db, runId, { status: "cancelled", error: "claim_lost", finishedAt: now() });
+      await updateRun(db, runId, { status: "cancelled", error: "claim_lost", finishedAt: now() });
       return null;
     }
 
@@ -369,7 +372,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
         `Trabájala con tus tools de plataforma (mueve estados con tasks.move, adjunta evidencia ` +
         `con tasks.attach_artifact o artifacts.write). Recuerda: nada llega a REVIEW/DONE sin artefacto, ` +
         `y si tu tarea exige aprobación humana su cierre pasa por REVIEW.`;
-      const base = buildRunInput({
+      const base = await buildRunInput({
         agent,
         provider,
         taskId: task.id,
@@ -387,7 +390,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
         trigger: "dispatcher",
       };
       const input = bindRunInput(base, agent, ctx);
-      const handle = pool.submit({ runtime: agent.runtime, input, ctx });
+      const handle = await pool.submit({ runtime: agent.runtime, input, ctx });
       inflight.set(runId, task.id);
       void handle.done.then((run) => afterTaskRun(run, task.id));
       return runId;
@@ -395,18 +398,18 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       // No se pudo lanzar el run (kill switch, presupuesto, runner ausente):
       // el claim no puede quedarse con la tarea secuestrada.
       const message = err instanceof Error ? err.message : String(err);
-      releaseClaim(task.id, runId, `despacho fallido: ${message}`);
-      const run = getRun(db, runId);
+      await releaseClaim(task.id, runId, `despacho fallido: ${message}`);
+      const run = await getRun(db, runId);
       if (run && (run.status === "queued" || run.status === "running")) {
-        updateRun(db, runId, { status: "cancelled", error: message, finishedAt: now() });
+        await updateRun(db, runId, { status: "cancelled", error: message, finishedAt: now() });
       }
       return null;
     }
   }
 
-  function renewLeases(): void {
+  async function renewLeases(): Promise<void> {
     for (const [, taskId] of inflight) {
-      engine.renewLease(taskId, leaseMs);
+      await engine.renewLease(taskId, leaseMs);
     }
   }
 
@@ -416,12 +419,15 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
    * el proyecto NO recibe despachos nuevos. Cache por tick: un cálculo por
    * proyecto aunque haya varias candidatas.
    */
-  function isPhaseBudgetExhausted(projectId: string, cache: Map<string, boolean>): boolean {
+  async function isPhaseBudgetExhausted(
+    projectId: string,
+    cache: Map<string, boolean>,
+  ): Promise<boolean> {
     const cached = cache.get(projectId);
     if (cached !== undefined) return cached;
-    const budget = parseProjectBudget(getConfig(db, projectBudgetKey(projectId)));
+    const budget = parseProjectBudget(await getConfig(db, projectBudgetKey(projectId)));
     const exhausted =
-      budget?.phaseUsd !== undefined && sumRunCostForProject(db, projectId) >= budget.phaseUsd;
+      budget?.phaseUsd !== undefined && (await sumRunCostForProject(db, projectId)) >= budget.phaseUsd;
     cache.set(projectId, exhausted);
     return exhausted;
   }
@@ -432,19 +438,19 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     try {
       // (e) kill switch: cancela activos si se encendió por fuera y no lanza nada.
       await pool.refreshKillSwitch();
-      if (engine.isKillSwitchActive()) return { skipped: "kill_switch", dispatched: [], errors: [] };
-      renewLeases();
+      if (await engine.isKillSwitchActive()) return { skipped: "kill_switch", dispatched: [], errors: [] };
+      await renewLeases();
       // (c.2) Gate 2: reconcilia aprobaciones decididas por el MCP admin (u otra
       // ruta que solo fijó el estado) antes de despachar — desbloquea sus tareas.
       await reconcilePendingApprovals();
       const dispatched: string[] = [];
       const tickErrors: string[] = [];
       const phaseBudgetCache = new Map<string, boolean>();
-      for (const task of listDispatchableTasks(db, now(), maxDispatchPerTick)) {
+      for (const task of await listDispatchableTasks(db, now(), maxDispatchPerTick)) {
         try {
           // §13.4: fase sin presupuesto restante → sus tareas esperan (ni claim ni run).
-          if (isPhaseBudgetExhausted(task.projectId, phaseBudgetCache)) continue;
-          const runId = dispatchTask(task);
+          if (await isPhaseBudgetExhausted(task.projectId, phaseBudgetCache)) continue;
+          const runId = await dispatchTask(task);
           if (runId) dispatched.push(runId);
         } catch (err) {
           // Kill switch/presupuesto a mitad de bucle: lo reintenta el siguiente tick.
@@ -471,14 +477,14 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
    */
   function attachThreadForwarder(runId: string, thread: Thread, agent: Agent): void {
     const state: StreamState = { text: "", finalized: false };
-    const unsubscribe = bus.subscribe(runTopic(runId), (persisted) => {
+    const unsubscribe = bus.subscribe(runTopic(runId), async (persisted) => {
       const payload = (persisted.payload ?? {}) as Record<string, unknown> & { type?: string };
       const type = persisted.type;
       if (type === "TEXT_MESSAGE_START" || type === "TEXT_MESSAGE_CONTENT" || type === "TEXT_MESSAGE_END") {
         if (type === "TEXT_MESSAGE_CONTENT" && typeof payload.delta === "string") {
           state.text += payload.delta;
         }
-        publishRaw(bus, threadTopic(thread.id), payload as { type: string }, runId);
+        await publishRaw(bus, threadTopic(thread.id), payload as { type: string }, runId);
         return;
       }
       if (type === "RUN_FINISHED" || type === "RUN_ERROR" || type === "RUN_CANCELLED") {
@@ -495,7 +501,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
             ? `El agente no pudo responder (${String(payload.code ?? payload.reason ?? "error")}: ${String(payload.message ?? "run terminado sin texto")})`
             : "(el agente terminó sin texto)";
         }
-        const { message } = appendMessage(db, {
+        const { message } = await appendMessage(db, {
           threadId: thread.id,
           role: "assistant",
           content: text,
@@ -516,30 +522,33 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
             ...(isError ? { error: String(payload.code ?? payload.message ?? "error") } : {}),
           },
         };
-        publishRaw(bus, threadTopic(thread.id), outbound, runId);
-        publishRaw(bus, channelTopic(thread.channel), outbound, runId);
+        await publishRaw(bus, threadTopic(thread.id), outbound, runId);
+        await publishRaw(bus, channelTopic(thread.channel), outbound, runId);
       }
     });
   }
 
-  function enqueueChatRun(params: { threadId: string; text: string }): { runId: string } {
-    const thread = getThread(db, params.threadId);
+  async function enqueueChatRun(params: {
+    threadId: string;
+    text: string;
+  }): Promise<{ runId: string }> {
+    const thread = await getThread(db, params.threadId);
     if (!thread) {
       throw new AgentosError(ErrorCodes.NOT_FOUND, `thread no encontrado: ${params.threadId}`);
     }
-    const agent = getAgentBySlug(db, chatAgentSlug);
+    const agent = await getAgentBySlug(db, chatAgentSlug);
     if (!agent) {
       throw new AgentosError(
         ErrorCodes.RUNNER_UNAVAILABLE,
         `No existe el agente orquestador "${chatAgentSlug}" (¿seed aplicado?)`,
       );
     }
-    engine.assertAgentCanRun(agent.id);
-    const provider = resolveProvider(agent);
+    await engine.assertAgentCanRun(agent.id);
+    const provider = await resolveProvider(agent);
     const runId = newId();
 
     // Historial del hilo (sin el volatile del tablero: es conversación).
-    const history: ModelMessage[] = listMessages(db, thread.id)
+    const history: ModelMessage[] = (await listMessages(db, thread.id))
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
     // El mensaje entrante ya está persistido y es el último del historial.
@@ -547,7 +556,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     const historyWithoutLast =
       last && last.role === "user" && last.content === params.text ? history.slice(0, -1) : history;
 
-    const base = buildRunInput({
+    const base = await buildRunInput({
       agent,
       provider,
       projectId: thread.projectId,
@@ -567,26 +576,30 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     };
     const input = bindRunInput(base, agent, ctx);
     attachThreadForwarder(runId, thread, agent);
-    pool.submit({ runtime: agent.runtime, input, ctx });
+    await pool.submit({ runtime: agent.runtime, input, ctx });
     return { runId };
   }
 
   // ── (c) reanudación tras aprobación (Gate 2) ──────────────────────────────
 
-  function enqueueApprovalResume(approval: Approval, executed: GatewayResult): { runId: string } | null {
-    const originRun = approval.runId ? getRun(db, approval.runId) : undefined;
-    const agentId = originRun?.agentId ?? getTask(db, approval.taskId ?? "")?.assigneeAgentId;
-    const agent = agentId ? getAgent(db, agentId) : undefined;
+  async function enqueueApprovalResume(
+    approval: Approval,
+    executed: GatewayResult,
+  ): Promise<{ runId: string } | null> {
+    const originRun = approval.runId ? await getRun(db, approval.runId) : undefined;
+    const agentId =
+      originRun?.agentId ?? (await getTask(db, approval.taskId ?? ""))?.assigneeAgentId;
+    const agent = agentId ? await getAgent(db, agentId) : undefined;
     // Cadena rota (o agente pausado): la reanudación espera igual que el despacho.
-    if (!agent || !engine.isAgentAssignable(agent.id)) return null;
+    if (!agent || !(await engine.isAgentAssignable(agent.id))) return null;
 
-    const provider = resolveProvider(agent);
+    const provider = await resolveProvider(agent);
     const runId = newId();
     const payload = approval.payload as { tool?: string; args?: unknown };
 
     // Fila runs con resume_of_run_id ANTES del submit (el pool respeta filas
     // pre-creadas): la reanudación es visible y navegable (US-7).
-    createRun(db, {
+    await createRun(db, {
       id: runId,
       parentRunId: approval.runId ?? null,
       ...(originRun ? { rootRunId: originRun.rootRunId } : {}),
@@ -604,10 +617,10 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     // La tarea bloqueada por la aprobación vuelve a manos del agente.
     let claimed = false;
     if (approval.taskId) {
-      const task = getTask(db, approval.taskId);
+      const task = await getTask(db, approval.taskId);
       if (task && task.status === "BLOCKED") {
         try {
-          engine.moveTask({
+          await engine.moveTask({
             taskId: task.id,
             to: "READY",
             expectedVersion: task.version,
@@ -615,7 +628,8 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
             runId,
             note: `aprobación ${approval.id} resuelta`,
           });
-          claimed = engine.claim({ taskId: task.id, agentId: agent.id, runId, leaseMs }).claimed;
+          claimed = (await engine.claim({ taskId: task.id, agentId: agent.id, runId, leaseMs }))
+            .claimed;
         } catch {
           /* otro actor la movió; la reanudación sigue */
         }
@@ -631,7 +645,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       `Continúa la tarea desde donde la dejaste; si ya está completa, muévela con tasks.move y adjunta evidencia.`;
 
     try {
-      const base = buildRunInput({
+      const base = await buildRunInput({
         agent,
         provider,
         taskId: approval.taskId ?? null,
@@ -649,7 +663,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
         trigger: "approval_resume",
       };
       const input = bindRunInput(base, agent, ctx);
-      const handle = pool.submit({ runtime: agent.runtime, input, ctx });
+      const handle = await pool.submit({ runtime: agent.runtime, input, ctx });
       if (approval.taskId) {
         const taskId = approval.taskId;
         void handle.done.then((run) => afterTaskRun(run, taskId));
@@ -658,8 +672,10 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       inflight.delete(runId);
-      if (approval.taskId && claimed) releaseClaim(approval.taskId, runId, `reanudación fallida: ${message}`);
-      updateRun(db, runId, { status: "cancelled", error: message, finishedAt: now() });
+      if (approval.taskId && claimed) {
+        await releaseClaim(approval.taskId, runId, `reanudación fallida: ${message}`);
+      }
+      await updateRun(db, runId, { status: "cancelled", error: message, finishedAt: now() });
       return null;
     }
   }
@@ -671,8 +687,8 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   // función compartida de core, y el drenado (reconcilePendingApprovals) recoge
   // las decisiones que el MCP dejó sin reconciliar — nada queda huérfano.
   const reconcileDeps: ApprovalReconcileDeps = {
-    executeApproved: (approval) => {
-      const originRun = approval.runId ? getRun(db, approval.runId) : undefined;
+    executeApproved: async (approval) => {
+      const originRun = approval.runId ? await getRun(db, approval.runId) : undefined;
       const execCtx: ToolCallContext = {
         run_id: approval.runId ?? null,
         agent_id: originRun?.agentId ?? "system",
@@ -682,8 +698,8 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       };
       return toolRuntime.executeApproved(execCtx, approval.id);
     },
-    enqueueResume: (approval, executed) =>
-      enqueueApprovalResume(approval, executed as GatewayResult)?.runId ?? null,
+    enqueueResume: async (approval, executed) =>
+      (await enqueueApprovalResume(approval, executed as GatewayResult))?.runId ?? null,
   };
 
   function reconcileApproval(approvalId: string): Promise<ReconcileResult> {
@@ -692,7 +708,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
 
   /** Drena las decisiones decididas-pero-sin-reconciliar (típicamente del MCP admin). */
   async function reconcilePendingApprovals(): Promise<void> {
-    for (const approval of listReconcilableApprovals(db)) {
+    for (const approval of await listReconcilableApprovals(db)) {
       try {
         await reconcileApproval(approval.id);
       } catch {
@@ -704,29 +720,29 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
 
   // ── (d) auto-crítica de Quinn al entrar a REVIEW ──────────────────────────
 
-  const unsubscribeCritique = bus.subscribeAll((persisted) => {
+  const unsubscribeCritique = bus.subscribeAll(async (persisted) => {
     if (disposed) return;
     if (persisted.type !== "task.moved") return;
     const p = domainPayload(persisted);
     if (p.to !== "REVIEW" || typeof p.taskId !== "string") return;
-    const task = getTask(db, p.taskId);
+    const task = await getTask(db, p.taskId);
     if (!task?.activityType) return;
-    const list = getConfig<string[]>(db, QUINN_ACTIVITY_TYPES_KEY) ?? [];
+    const list = (await getConfig<string[]>(db, QUINN_ACTIVITY_TYPES_KEY)) ?? [];
     if (!list.includes(task.activityType)) return;
-    const quinn = getAgentBySlug(db, critiqueAgentSlug);
-    if (!quinn || !engine.isAgentAssignable(quinn.id)) return;
+    const quinn = await getAgentBySlug(db, critiqueAgentSlug);
+    if (!quinn || !(await engine.isAgentAssignable(quinn.id))) return;
     if (task.assigneeAgentId === quinn.id) return; // Quinn nunca revisa su propio trabajo
     const key = `${task.id}:${task.version}`;
     if (critiqued.has(key)) return;
     critiqued.add(key);
     try {
-      const provider = resolveProvider(quinn);
+      const provider = await resolveProvider(quinn);
       const runId = newId();
       const userText =
         `La tarea ${task.id} ("${task.title}") entró a REVIEW con activity_type "${task.activityType}". ` +
         `Critícala como adversario: revisa sus artefactos (tasks.get), busca fallos y evidencia faltante. ` +
         `Si encuentras un fallo, crea una tarea hija tipo bug con la reproducción. NUNCA apruebes ni cierres tareas.`;
-      const base = buildRunInput({
+      const base = await buildRunInput({
         agent: quinn,
         provider,
         taskId: task.id,
@@ -744,7 +760,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
         trigger: "system",
       };
       const input = bindRunInput(base, quinn, ctx);
-      pool.submit({ runtime: quinn.runtime, input, ctx });
+      await pool.submit({ runtime: quinn.runtime, input, ctx });
     } catch {
       critiqued.delete(key); // kill switch/presupuesto: reintentable
     }
@@ -758,7 +774,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       void tick();
     }, dispatchIntervalMs);
     reaperTimer = setInterval(() => {
-      engine.reap();
+      void engine.reap();
     }, reaperIntervalMs);
   }
 

@@ -11,7 +11,7 @@ import {
   isAgentosError,
   type ErrorCode,
 } from "@agentos/shared";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { seed } from "../src/seed.js";
 import {
@@ -57,14 +57,18 @@ const DEMO_INPUTS: Record<string, unknown> = {
   notas_comercial: "Presupuesto pre-aprobado por gerencia (confidencial).",
 };
 
-function seededDb(): AgentosDb {
+// seed() ahora es asíncrono (packages/db/src convertido a async).
+async function seededDb(): Promise<AgentosSqliteDb> {
   const db = openDb(":memory:");
   runMigrations(db);
-  seed(db, { env: {} });
+  await seed(db, { env: {} });
   return db;
 }
 
-function launchNova(db: AgentosDb, over: Partial<LaunchModuleInput> = {}): LaunchModuleResult {
+async function launchNova(
+  db: AgentosSqliteDb,
+  over: Partial<LaunchModuleInput> = {},
+): Promise<LaunchModuleResult> {
   return launchModule(db, {
     moduleSlug: "consultoria",
     org: { name: "Nova Manufactura S.A.", kind: "client", industria: "manufactura", employeeCount: 40 },
@@ -88,7 +92,7 @@ const COUNTED_TABLES = [
   "threads",
 ] as const;
 
-function tableCounts(db: AgentosDb): Record<string, number> {
+function tableCounts(db: AgentosSqliteDb): Record<string, number> {
   const out: Record<string, number> = {};
   for (const table of COUNTED_TABLES) {
     out[table] = (db.$client.prepare(`SELECT count(*) n FROM ${table}`).get() as { n: number }).n;
@@ -96,9 +100,10 @@ function tableCounts(db: AgentosDb): Record<string, number> {
   return out;
 }
 
-function catchError(fn: () => unknown): unknown {
+// launchModule es asíncrono: catchError espera y captura el rechazo.
+async function catchErrorAsync(fn: () => Promise<unknown>): Promise<unknown> {
   try {
-    fn();
+    await fn();
   } catch (err) {
     return err;
   }
@@ -137,7 +142,7 @@ function syntheticBlueprint(over: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-function activateSynthetic(db: AgentosDb, bp: Record<string, unknown>): void {
+function activateSynthetic(db: AgentosSqliteDb, bp: Record<string, unknown>): void {
   createModuleVersion(db, {
     slug: bp["slug"] as string,
     version: bp["version"] as number,
@@ -156,9 +161,9 @@ function activateSynthetic(db: AgentosDb, bp: Record<string, unknown>): void {
 // ── NM-1: atomicidad ────────────────────────────────────────────────────────
 
 describe("launchModule — NM-1 atomicidad (CA-M2.2)", () => {
-  it("launch feliz: org + proyecto + 12 tareas + deps + presupuesto + recibo + audit", () => {
-    const db = seededDb();
-    const r = launchNova(db);
+  it("launch feliz: org + proyecto + 12 tareas + deps + presupuesto + recibo + audit", async () => {
+    const db = await seededDb();
+    const r = await launchNova(db);
 
     // Organización get-or-create y proyecto con type/stage/gate del módulo.
     expect(r.organization.name).toBe("Nova Manufactura S.A.");
@@ -281,8 +286,8 @@ describe("launchModule — NM-1 atomicidad (CA-M2.2)", () => {
     expect(r.idempotent).toBe(false);
   });
 
-  it("fallo inyectado a mitad de transacción → CERO filas huérfanas", () => {
-    const db = seededDb();
+  it("fallo inyectado a mitad de transacción → CERO filas huérfanas", async () => {
+    const db = await seededDb();
     // Hilo pre-existente que el launch intentaría asociar al proyecto.
     const thread = getOrCreateThread(db, {
       channel: "whatsapp",
@@ -294,13 +299,13 @@ describe("launchModule — NM-1 atomicidad (CA-M2.2)", () => {
     // previous_launch_id con FK rota: el INSERT del recibo (último paso, tras
     // org+proyecto+12 tareas+eventos+presupuesto+hilos) revienta dentro de la
     // transacción → rollback COMPLETO.
-    expect(() =>
+    await expect(
       launchNova(db, {
         previousLaunchId: "launch-inexistente",
         inputs: { ...DEMO_INPUTS, fuentes: [thread.sessionKey] },
         idempotencyKey: "launch:test:rollback",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
 
     // Ni recibo ni proyecto a medias: conteos idénticos tabla a tabla (NM-1),
     // y el hilo que se habría re-asociado sigue sin proyecto.
@@ -312,18 +317,18 @@ describe("launchModule — NM-1 atomicidad (CA-M2.2)", () => {
 // ── NM-2: duración ≤ 60 s ──────────────────────────────────────────────────
 
 describe("launchModule — NM-2 duración", () => {
-  it("consultoria (12 tareas) dispara en <60s (local: ms)", () => {
-    const db = seededDb();
+  it("consultoria (12 tareas) dispara en <60s (local: ms)", async () => {
+    const db = await seededDb();
     const t0 = Date.now();
-    const r = launchNova(db);
+    const r = await launchNova(db);
     const elapsed = Date.now() - t0;
     console.info(`NM-2 consultoria (12 tareas): ${elapsed}ms medidos, durationMs=${r.durationMs}`);
     expect(elapsed).toBeLessThan(60_000);
     expect(r.launch.durationMs).toBeLessThan(60_000);
   });
 
-  it("blueprint sintético de 40 instancias (tope MAX_LAUNCH_TASKS) en <60s", () => {
-    const db = seededDb();
+  it("blueprint sintético de 40 instancias (tope MAX_LAUNCH_TASKS) en <60s", async () => {
+    const db = await seededDb();
     activateSynthetic(db, {
       ...syntheticBlueprint({ slug: "sintetico40" }),
       inputs: [
@@ -353,7 +358,7 @@ describe("launchModule — NM-2 duración", () => {
     });
     const items = Array.from({ length: 39 }, (_, i) => `item ${i + 1}`);
     const t0 = Date.now();
-    const r = launchModule(db, {
+    const r = await launchModule(db, {
       moduleSlug: "sintetico40",
       org: { name: "Perf S.A." },
       inputs: { empresa: "Perf S.A.", items },
@@ -372,9 +377,9 @@ describe("launchModule — NM-2 duración", () => {
 // ── NM-3: inmutabilidad del recibo ─────────────────────────────────────────
 
 describe("launchModule — NM-3 inmutabilidad", () => {
-  it("editar el módulo (v2 activa) NO toca el proyecto disparado ni el recibo v1", () => {
-    const db = seededDb();
-    const r = launchNova(db);
+  it("editar el módulo (v2 activa) NO toca el proyecto disparado ni el recibo v1", async () => {
+    const db = await seededDb();
+    const r = await launchNova(db);
     const v1 = getModuleVersion(db, "consultoria", 1)!;
     const titlesBefore = r.tasks.map((t) => getTask(db, t.id)!.title);
 
@@ -414,8 +419,8 @@ describe("launchModule — NM-3 inmutabilidad", () => {
 // ── NM-4: solo módulos activos disparan ─────────────────────────────────────
 
 describe("launchModule — NM-4 fail-closed por estado del módulo", () => {
-  it("módulo en draft → module_not_active", () => {
-    const db = seededDb();
+  it("módulo en draft → module_not_active", async () => {
+    const db = await seededDb();
     const bp = syntheticBlueprint({ slug: "borrador" });
     createModuleVersion(db, {
       slug: "borrador",
@@ -429,7 +434,7 @@ describe("launchModule — NM-4 fail-closed por estado del módulo", () => {
       bodyMd: "draft",
       createdBy: "person:test",
     }); // sin activar
-    const err = catchError(() =>
+    const err = await catchErrorAsync(() =>
       launchModule(db, {
         moduleSlug: "borrador",
         org: { name: "X S.A." },
@@ -441,8 +446,8 @@ describe("launchModule — NM-4 fail-closed por estado del módulo", () => {
     expectDomainError(err, "module_not_active");
   });
 
-  it("versión archivada → module_not_active (aunque exista una activa más nueva)", () => {
-    const db = seededDb();
+  it("versión archivada → module_not_active (aunque exista una activa más nueva)", async () => {
+    const db = await seededDb();
     const v1 = getModuleVersion(db, "consultoria", 1)!;
     const v2bp = JSON.parse(JSON.stringify(v1.blueprint));
     v2bp.version = 2;
@@ -458,13 +463,13 @@ describe("launchModule — NM-4 fail-closed por estado del módulo", () => {
       bodyMd: v1.bodyMd,
     });
     activateModuleVersion(db, "consultoria", 2); // archiva la v1
-    const err = catchError(() => launchNova(db, { moduleVersion: 1 }));
+    const err = await catchErrorAsync(() => launchNova(db, { moduleVersion: 1 }));
     expectDomainError(err, "module_not_active");
   });
 
-  it("slug inexistente → not_found", () => {
-    const db = seededDb();
-    const err = catchError(() =>
+  it("slug inexistente → not_found", async () => {
+    const db = await seededDb();
+    const err = await catchErrorAsync(() =>
       launchModule(db, {
         moduleSlug: "no-existe",
         org: { name: "X S.A." },
@@ -480,12 +485,12 @@ describe("launchModule — NM-4 fail-closed por estado del módulo", () => {
 // ── CA-M2.6: idempotencia ───────────────────────────────────────────────────
 
 describe("launchModule — CA-M2.6 idempotencia", () => {
-  it("misma key + mismos inputs → mismo launch, sin duplicar nada", () => {
-    const db = seededDb();
-    const first = launchNova(db);
+  it("misma key + mismos inputs → mismo launch, sin duplicar nada", async () => {
+    const db = await seededDb();
+    const first = await launchNova(db);
     const after = tableCounts(db);
 
-    const second = launchNova(db);
+    const second = await launchNova(db);
     expect(second.idempotent).toBe(true);
     expect(second.launch.id).toBe(first.launch.id);
     expect(second.project.id).toBe(first.project.id);
@@ -494,10 +499,10 @@ describe("launchModule — CA-M2.6 idempotencia", () => {
     expect(tableCounts(db)).toEqual(after); // cero filas nuevas
   });
 
-  it("misma key + inputs DISTINTOS → idempotency_conflict", () => {
-    const db = seededDb();
-    launchNova(db);
-    const err = catchError(() =>
+  it("misma key + inputs DISTINTOS → idempotency_conflict", async () => {
+    const db = await seededDb();
+    await launchNova(db);
+    const err = await catchErrorAsync(() =>
       launchNova(db, { inputs: { ...DEMO_INPUTS, objetivo: "Otro objetivo distinto." } }),
     );
     expectDomainError(err, "idempotency_conflict");
@@ -507,13 +512,13 @@ describe("launchModule — CA-M2.6 idempotencia", () => {
 // ── uq(project_id, phase): una fase por proyecto ────────────────────────────
 
 describe("launchModule — uq(project_id, phase)", () => {
-  it("segundo launch de la misma fase sobre el mismo proyecto → error de dominio limpio", () => {
-    const db = seededDb();
-    launchNova(db);
+  it("segundo launch de la misma fase sobre el mismo proyecto → error de dominio limpio", async () => {
+    const db = await seededDb();
+    await launchNova(db);
     const after = tableCounts(db);
     // Otra idempotency_key, mismos inputs → mismo proyecto (get-or-create por
     // nombre) → la fase ENTENDER ya está disparada.
-    const err = catchError(() => launchNova(db, { idempotencyKey: "launch:test:consultoria:nova-2" }));
+    const err = await catchErrorAsync(() => launchNova(db, { idempotencyKey: "launch:test:consultoria:nova-2" }));
     expectDomainError(err, "conflict");
     expect((err as { details?: { code?: string } }).details?.code).toBe("phase_already_launched");
     expect(tableCounts(db)).toEqual(after); // el rechazo no dejó nada a medias
@@ -523,9 +528,9 @@ describe("launchModule — uq(project_id, phase)", () => {
 // ── Redacción de inputs sensibles ───────────────────────────────────────────
 
 describe("launchModule — redacción (§13.1 + NM-5)", () => {
-  it("recibo con notas_comercial=[redacted]; digest sobre el ORIGINAL; audit sin el valor", () => {
-    const db = seededDb();
-    const r = launchNova(db);
+  it("recibo con notas_comercial=[redacted]; digest sobre el ORIGINAL; audit sin el valor", async () => {
+    const db = await seededDb();
+    const r = await launchNova(db);
 
     const stored = r.launch.inputs as Record<string, unknown>;
     expect(stored["notas_comercial"]).toBe(REDACTED);
@@ -548,9 +553,9 @@ describe("launchModule — redacción (§13.1 + NM-5)", () => {
 // ── CA-M2.5: toggle ISO off ─────────────────────────────────────────────────
 
 describe("launchModule — CA-M2.5 toggle ISO", () => {
-  it("sin iso9001: ni matriz_iso, ni entregable iso_clause, ni metodología add", () => {
-    const db = seededDb();
-    const r = launchNova(db, { toggles: { iso9001: false } });
+  it("sin iso9001: ni matriz_iso, ni entregable iso_clause, ni metodología add", async () => {
+    const db = await seededDb();
+    const r = await launchNova(db, { toggles: { iso9001: false } });
 
     expect(r.tasks).toHaveLength(11);
     const result = r.launch.result as Record<string, any>;
@@ -574,12 +579,12 @@ describe("launchModule — CA-M2.5 toggle ISO", () => {
 // ── Resolución de asignaciones (capa/rol → roster real) ────────────────────
 
 describe("launchModule — asignación por capa/rol (§13.5)", () => {
-  it("agente preferido pausado → cae a la capa (agente asignable restante)", () => {
-    const db = seededDb();
+  it("agente preferido pausado → cae a la capa (agente asignable restante)", async () => {
+    const db = await seededDb();
     const sam = getAgentBySlug(db, "sam")!;
     updateAgent(db, sam.id, { status: "paused" }, sam.version);
 
-    const r = launchNova(db);
+    const r = await launchNova(db);
     const alex = getAgentBySlug(db, "alex")!;
     const result = r.launch.result as { tasks: { key: string; taskId: string; assigneeSlug: string }[] };
     const perfil = result.tasks.find((t) => t.key === "perfil_org")!;
@@ -589,8 +594,8 @@ describe("launchModule — asignación por capa/rol (§13.5)", () => {
     expect(result.tasks.find((t) => t.key === "entrevista:direccion")!.assigneeSlug).toBe("alex");
   });
 
-  it("fallback por capa: MENOS tareas abiertas, desempate determinista por slug", () => {
-    const db = seededDb();
+  it("fallback por capa: MENOS tareas abiertas, desempate determinista por slug", async () => {
+    const db = await seededDb();
     // Preferida sally (pausada) → capa implementacion: debbie y vinnie, ambos
     // con 0 abiertas. t1 → debbie (desempate por slug); la carga en memoria
     // sube y t2 → vinnie (menos abiertas).
@@ -620,7 +625,7 @@ describe("launchModule — asignación por capa/rol (§13.5)", () => {
         },
       ],
     });
-    const r = launchModule(db, {
+    const r = await launchModule(db, {
       moduleSlug: "balanceo",
       org: { name: "Balanceo S.A." },
       inputs: { empresa: "Balanceo S.A." },
@@ -633,14 +638,14 @@ describe("launchModule — asignación por capa/rol (§13.5)", () => {
     expect(result.tasks.find((t) => t.key === "t2")!.assigneeSlug).toBe("vinnie");
   });
 
-  it("capa entera inasignable (manager pausado rompe la cadena) → agent_not_assignable", () => {
-    const db = seededDb();
+  it("capa entera inasignable (manager pausado rompe la cadena) → agent_not_assignable", async () => {
+    const db = await seededDb();
     // Pausar a alex: él mismo queda fuera y TODO su subárbol (sam, clara, …)
     // pierde la cadena de mando sana → ningún rol de consultoria resuelve.
     const alex = getAgentBySlug(db, "alex")!;
     updateAgent(db, alex.id, { status: "paused" }, alex.version);
     const before = tableCounts(db);
-    const err = catchError(() => launchNova(db));
+    const err = await catchErrorAsync(() => launchNova(db));
     expectDomainError(err, "agent_not_assignable");
     expect(tableCounts(db)).toEqual(before); // el launch entero se rechazó
   });
@@ -649,14 +654,14 @@ describe("launchModule — asignación por capa/rol (§13.5)", () => {
 // ── Fuentes: session_key → thread.projectId ────────────────────────────────
 
 describe("launchModule — fuentes (source_refs → threads)", () => {
-  it("asocia hilos existentes al proyecto y anota los enlazados en el recibo", () => {
-    const db = seededDb();
+  it("asocia hilos existentes al proyecto y anota los enlazados en el recibo", async () => {
+    const db = await seededDb();
     const thread = getOrCreateThread(db, {
       channel: "whatsapp",
       sessionKey: buildSessionKey("whatsapp", "nova-sponsor"),
       title: "Sponsor Nova",
     });
-    const r = launchNova(db, {
+    const r = await launchNova(db, {
       inputs: {
         ...DEMO_INPUTS,
         fuentes: [thread.sessionKey, "whatsapp:desconocido:main", { session_key: thread.sessionKey }],

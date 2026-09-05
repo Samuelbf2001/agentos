@@ -152,18 +152,18 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
 
   // ── Projects ──────────────────────────────────────────────────────────────
 
-  app.get("/api/projects", async () => ({ projects: listProjects(db) }));
+  app.get("/api/projects", async () => ({ projects: await listProjects(db) }));
 
   app.get("/api/projects/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const project = getProject(db, id);
+    const project = await getProject(db, id);
     if (!project) throw errors.notFound("project", id);
     return { project };
   });
 
   app.post("/api/projects", async (req, reply) => {
     const body = parse(CreateProjectBody, req.body);
-    const project = createProject(db, {
+    const project = await createProject(db, {
       orgId: body.org_id,
       name: body.name,
       type: body.type,
@@ -171,7 +171,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       gateState: "pending",
       workspacePath: body.workspace_path ?? null,
     });
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "project.create",
@@ -179,7 +179,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       entityId: project.id,
       after: { name: project.name, type: project.type },
     });
-    sink.publish(`board:${project.id}`, { type: "project.created", payload: { projectId: project.id } });
+    await sink.publish(`board:${project.id}`, { type: "project.created", payload: { projectId: project.id } });
     reply.status(201);
     return { project };
   });
@@ -187,9 +187,9 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   app.patch("/api/projects/:id", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(UpdateProjectBody, req.body);
-    const before = getProject(db, id);
+    const before = await getProject(db, id);
     if (!before) throw errors.notFound("project", id);
-    const project = updateProject(
+    const project = await updateProject(
       db,
       id,
       {
@@ -199,7 +199,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       },
       body.expected_version,
     );
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "project.update",
@@ -217,13 +217,13 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(GateBody, req.body);
     const personId = req.session!.personId;
     if (body.decision === "approve") {
-      const project = engine.approveGate(id, GATE_G1_PLAN, personId, body.note);
+      const project = await engine.approveGate(id, GATE_G1_PLAN, personId, body.note);
       return { project };
     }
-    const before = getProject(db, id);
+    const before = await getProject(db, id);
     if (!before) throw errors.notFound("project", id);
-    const project = setGateState(db, id, "rejected", before.version);
-    appendAudit(db, {
+    const project = await setGateState(db, id, "rejected", before.version);
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "gate.reject",
@@ -233,7 +233,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       after: { gateState: project.gateState, gate: body.gate },
       reason: body.note ?? null,
     });
-    sink.publish(`board:${id}`, { type: "gate.rejected", payload: { gate: body.gate, by: personId } });
+    await sink.publish(`board:${id}`, { type: "gate.rejected", payload: { gate: body.gate, by: personId } });
     return { project };
   });
 
@@ -241,9 +241,9 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
 
   app.get("/api/board/:projectId", async (req) => {
     const { projectId } = req.params as { projectId: string };
-    const project = getProject(db, projectId);
+    const project = await getProject(db, projectId);
     if (!project) throw errors.notFound("project", projectId);
-    const rows = listTasksWithAssignees(db, { projectId });
+    const rows = await listTasksWithAssignees(db, { projectId });
     const columns: Partial<Record<TaskStatusT, Task[]>> = {};
     const cells: Record<string, Partial<Record<TaskStatusT, Task[]>>> = {};
     for (const t of rows) {
@@ -252,7 +252,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     }
     return {
       project,
-      board_seq: ctx.bus.lastSeq(`board:${projectId}`),
+      board_seq: await ctx.bus.lastSeq(`board:${projectId}`),
       total: rows.length,
       columns,
       cells,
@@ -273,7 +273,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     );
     const status = q.status ? parse(TaskStatus, q.status) : undefined;
     return {
-      tasks: listTasksWithAssignees(db, {
+      tasks: await listTasksWithAssignees(db, {
         ...(q.project_id ? { projectId: q.project_id } : {}),
         ...(status ? { status } : {}),
         ...(q.assignee_agent_id ? { assigneeAgentId: q.assignee_agent_id } : {}),
@@ -284,20 +284,20 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
 
   app.get("/api/tasks/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const task = getTask(db, id);
+    const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
-    const project = getProject(db, task.projectId);
+    const project = await getProject(db, task.projectId);
     if (!project) throw errors.notFound("project", task.projectId);
-    const assigneeTask = taskWithAssignees(db, task);
-    const projectSources = listProjectSources(db, { projectId: project.id });
-    const knowledgeDocs = listDocs(db, { projectId: project.id });
+    const assigneeTask = await taskWithAssignees(db, task);
+    const projectSources = await listProjectSources(db, { projectId: project.id });
+    const knowledgeDocs = await listDocs(db, { projectId: project.id });
     return {
       task: assigneeTask,
       project,
       assignees: assigneeTask.assignees,
-      events: listTaskEvents(db, id),
-      artifacts: listArtifacts(db, id),
-      runs: listRunsForTask(db, id),
+      events: await listTaskEvents(db, id),
+      artifacts: await listArtifacts(db, id),
+      runs: await listRunsForTask(db, id),
       /** Referencias existentes: no se copian ni se indexan archivos aquí. */
       project_sources: projectSources,
       sources: projectSources,
@@ -308,7 +308,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
 
   app.post("/api/tasks", async (req, reply) => {
     const body = parse(CreateTaskBody, req.body);
-    const project = getProject(db, body.project_id);
+    const project = await getProject(db, body.project_id);
     if (!project) throw errors.notFound("project", body.project_id);
     const selection = normalizePersonIds(
       body.assignee_person_ids !== undefined
@@ -322,14 +322,14 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
           ? null
           : body.assignee_person_id ?? null,
     );
-    validatePeopleForProject(db, project, selection.personIds, selection.primaryPersonId);
+    await validatePeopleForProject(db, project, selection.personIds, selection.primaryPersonId);
     let assigneeAgentId: string | null = null;
     if (body.assignee_agent_slug) {
-      const agent = getAgentBySlug(db, body.assignee_agent_slug);
+      const agent = await getAgentBySlug(db, body.assignee_agent_slug);
       if (!agent) throw errors.notFound("agent", body.assignee_agent_slug);
       assigneeAgentId = agent.id;
     }
-    const task = engine.createTask(
+    const task = await engine.createTask(
       {
         projectId: body.project_id,
         title: body.title,
@@ -348,12 +348,12 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     );
     let savedTask = task;
     if (body.due_at !== undefined && body.due_at !== null) {
-      savedTask = updateTask(db, task.id, { dueAt: body.due_at }, savedTask.version);
+      savedTask = await updateTask(db, task.id, { dueAt: body.due_at }, savedTask.version);
     } else if (body.due_at === null) {
-      savedTask = updateTask(db, task.id, { dueAt: null }, savedTask.version);
+      savedTask = await updateTask(db, task.id, { dueAt: null }, savedTask.version);
     }
     if (selection.personIds.length > 0) {
-      const assigned = replaceTaskAssignees(db, {
+      const assigned = await replaceTaskAssignees(db, {
         taskId: savedTask.id,
         personIds: selection.personIds,
         primaryPersonId: selection.primaryPersonId,
@@ -365,7 +365,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       // primaria legacy durante createTask, para avisos la asignación completa
       // es un cambio real y se registra una sola vez por persona.
       if (selection.personIds.length > 0) {
-        appendTaskEvent(db, {
+        await appendTaskEvent(db, {
           taskId: savedTask.id,
           kind: "assigned",
           actor: personActor(req),
@@ -375,7 +375,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
             primaryPersonId: selection.primaryPersonId,
           },
         });
-        appendAudit(db, {
+        await appendAudit(db, {
           actor: personActor(req),
           source: "ui",
           action: "task.assign",
@@ -394,15 +394,15 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       }
     }
     reply.status(201);
-    return { task: taskWithAssignees(db, savedTask) };
+    return { task: await taskWithAssignees(db, savedTask) };
   });
 
   app.patch("/api/tasks/:id", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(UpdateTaskBody, req.body);
-    const before = getTask(db, id);
+    const before = await getTask(db, id);
     if (!before) throw errors.notFound("task", id);
-    const task = updateTask(
+    const task = await updateTask(
       db,
       id,
       {
@@ -415,7 +415,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       },
       body.expected_version,
     );
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "task.update",
@@ -424,13 +424,13 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       before: { title: before.title, dueAt: before.dueAt },
       after: { title: task.title, dueAt: task.dueAt },
     });
-    return { task: taskWithAssignees(db, task) };
+    return { task: await taskWithAssignees(db, task) };
   });
 
   app.post("/api/tasks/:id/move", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(MoveTaskBody, req.body);
-    const task = engine.moveTask({
+    const task = await engine.moveTask({
       taskId: id,
       to: body.to,
       expectedVersion: body.expected_version,
@@ -444,15 +444,15 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   app.post("/api/tasks/:id/comment", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(CommentBody, req.body);
-    const task = getTask(db, id);
+    const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
-    const event = appendTaskEvent(db, {
+    const event = await appendTaskEvent(db, {
       taskId: id,
       kind: "comment",
       actor: personActor(req),
       payload: { body: body.body },
     });
-    sink.publish(`board:${task.projectId}`, {
+    await sink.publish(`board:${task.projectId}`, {
       type: "task.commented",
       payload: { taskId: id, eventId: event.id, actor: personActor(req) },
     });
@@ -463,14 +463,14 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   app.post("/api/tasks/:id/assign", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(AssignBody, req.body);
-    const before = getTask(db, id);
+    const before = await getTask(db, id);
     if (!before) throw errors.notFound("task", id);
-    const beforeAssignees = listTaskAssignees(db, id);
+    const beforeAssignees = await listTaskAssignees(db, id);
     let assigneeAgentId: string | null | undefined;
     if (body.agent_slug !== undefined) {
       if (body.agent_slug === null) assigneeAgentId = null;
       else {
-        const agent = getAgentBySlug(db, body.agent_slug);
+        const agent = await getAgentBySlug(db, body.agent_slug);
         if (!agent) throw errors.notFound("agent", body.agent_slug);
         assigneeAgentId = agent.id;
       }
@@ -499,16 +499,16 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
             ? null
             : body.person_id ?? null;
       const selection = normalizePersonIds(personIds, primary);
-      const project = getProject(db, before.projectId);
+      const project = await getProject(db, before.projectId);
       if (!project) throw errors.notFound("project", before.projectId);
-      validatePeopleForProject(db, project, selection.personIds, selection.primaryPersonId);
+      await validatePeopleForProject(db, project, selection.personIds, selection.primaryPersonId);
 
       // Si también cambia el agente, primero se actualiza su proyección y se
       // usa la versión resultante para el reemplazo humano. Ambos guards son
       // optimistic-locking; una carrera siempre devuelve conflicto.
       if (assigneeAgentId !== undefined) {
-        task = updateTask(db, id, { assigneeAgentId }, body.expected_version);
-        const assigned = replaceTaskAssignees(db, {
+        task = await updateTask(db, id, { assigneeAgentId }, body.expected_version);
+        const assigned = await replaceTaskAssignees(db, {
           taskId: id,
           personIds: selection.personIds,
           primaryPersonId: selection.primaryPersonId,
@@ -519,7 +519,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         afterAssignees = assigned.assignees;
         assignmentChanged = assigned.changed;
       } else {
-        const assigned = replaceTaskAssignees(db, {
+        const assigned = await replaceTaskAssignees(db, {
           taskId: id,
           personIds: selection.personIds,
           primaryPersonId: selection.primaryPersonId,
@@ -531,7 +531,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         assignmentChanged = assigned.changed;
       }
     } else {
-      task = updateTask(
+      task = await updateTask(
         db,
         id,
         { ...(assigneeAgentId !== undefined ? { assigneeAgentId } : {}) },
@@ -540,7 +540,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     }
 
     if (humanSelectionProvided || assigneeAgentId !== undefined) {
-      appendTaskEvent(db, {
+      await appendTaskEvent(db, {
         taskId: id,
         kind: "assigned",
         actor: personActor(req),
@@ -551,7 +551,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
           primaryPersonId: afterAssignees.find((row) => row.isPrimary)?.personId ?? null,
         },
       });
-      appendAudit(db, {
+      await appendAudit(db, {
         actor: personActor(req),
         source: "ui",
         action: "task.assign",
@@ -568,7 +568,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
           primaryAssigneePersonId: afterAssignees.find((row) => row.isPrimary)?.personId ?? null,
         },
       });
-      sink.publish(`board:${task.projectId}`, {
+      await sink.publish(`board:${task.projectId}`, {
         type: "task.assigned",
         payload: { taskId: id, actor: personActor(req) },
       });
@@ -582,15 +582,15 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         beforePrimaryPersonId: beforeAssignees.find((row) => row.isPrimary)?.personId ?? null,
       });
     }
-    return { task: taskWithAssignees(db, task), assignees: afterAssignees };
+    return { task: await taskWithAssignees(db, task), assignees: afterAssignees };
   });
 
   app.post("/api/tasks/:id/artifacts", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(ArtifactBody, req.body);
-    const task = getTask(db, id);
+    const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
-    const artifact = attachArtifact(db, {
+    const artifact = await attachArtifact(db, {
       taskId: id,
       kind: body.kind,
       title: body.title,
@@ -598,7 +598,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       path: body.path ?? null,
       createdBy: personActor(req),
     });
-    sink.publish(`board:${task.projectId}`, {
+    await sink.publish(`board:${task.projectId}`, {
       type: "task.artifact_attached",
       payload: { taskId: id, artifactId: artifact.id },
     });
@@ -610,16 +610,16 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   app.post("/api/tasks/:id/approve", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(DecisionBody, req.body);
-    const before = getTask(db, id);
+    const before = await getTask(db, id);
     if (!before) throw errors.notFound("task", id);
-    const task = engine.moveTask({
+    const task = await engine.moveTask({
       taskId: id,
       to: "DONE",
       expectedVersion: body.expected_version,
       actor: personActor(req),
       ...(body.note !== undefined ? { note: body.note } : {}),
     });
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "task.review_approve",
@@ -640,16 +640,16 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   app.post("/api/tasks/:id/reject", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(RejectBody, req.body);
-    const before = getTask(db, id);
+    const before = await getTask(db, id);
     if (!before) throw errors.notFound("task", id);
-    const rejected = engine.moveTask({
+    const rejected = await engine.moveTask({
       taskId: id,
       to: "IN_PROGRESS",
       expectedVersion: body.expected_version,
       actor: personActor(req),
       note: body.note,
     });
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "task.review_reject",
@@ -660,7 +660,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       reason: body.note,
     });
     // Reencolar para el despachador (transición de sistema: IN_PROGRESS→READY).
-    const task = engine.moveTask({
+    const task = await engine.moveTask({
       taskId: id,
       to: "READY",
       expectedVersion: rejected.version,

@@ -15,11 +15,11 @@ export function makeDb(): AgentosDb {
   return db;
 }
 
-export function makeProfile(
+export async function makeProfile(
   db: AgentosDb,
   overrides: Partial<Omit<NewProviderProfile, "id" | "createdAt" | "updatedAt">> = {},
-): ProviderProfile {
-  return upsertProviderProfile(db, {
+): Promise<ProviderProfile> {
+  return await upsertProviderProfile(db, {
     slug: "test-openai-compatible",
     name: "Proveedor de prueba",
     kind: "openai_compatible",

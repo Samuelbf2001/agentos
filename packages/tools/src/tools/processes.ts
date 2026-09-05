@@ -21,8 +21,8 @@ export const processTools: ToolDefinition[] = [
     description: "Lee un proceso mapeado (pasos SIPOC, sistemas, pain points, fuentes).",
     schema: z.object({ process_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const proc = getProcess(ctx.db, args.process_id);
+    async handler(ctx, args) {
+      const proc = await getProcess(ctx.db, args.process_id);
       if (!proc) throw errors.notFound("process", args.process_id);
       return proc;
     },
@@ -50,8 +50,8 @@ export const processTools: ToolDefinition[] = [
       status: ProcessStatus.optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const process = upsertProcess(ctx.db, {
+    async handler(ctx, args) {
+      const process = await upsertProcess(ctx.db, {
         id: args.id,
         orgId: args.org_id,
         name: args.name,

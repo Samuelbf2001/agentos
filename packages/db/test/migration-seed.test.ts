@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
-import { countDomainTables, seed } from "../src/seed.js";
+import { seed } from "../src/seed.js";
+import { countDomainTables } from "../src/repositories/stats.js";
 import { getAgentBySlug, getActivePrompt } from "../src/repositories/agents.js";
 import { getProviderProfile } from "../src/repositories/providers.js";
 import { getProjectByName } from "../src/repositories/projects.js";
@@ -10,7 +11,7 @@ import { getConfig, ConfigKeys } from "../src/repositories/config.js";
 import { getMethodology, listMethodologies } from "../src/repositories/methodologies.js";
 import { listLaunches } from "../src/repositories/modules.js";
 
-function freshDb(): AgentosDb {
+function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
   runMigrations(db);
   return db;
@@ -82,9 +83,9 @@ describe("migración desde cero", () => {
 });
 
 describe("seeds", () => {
-  it("carga los conteos esperados con CERO API keys (fallback de arranque)", () => {
+  it("carga los conteos esperados con CERO API keys (fallback de arranque)", async () => {
     const db = freshDb();
-    const counts = seed(db, { env: {} });
+    const counts = await seed(db, { env: {} });
     expect(counts.organizations).toBe(2);
     expect(counts.people).toBe(5);
     expect(counts.providerProfiles).toBe(6);
@@ -103,9 +104,9 @@ describe("seeds", () => {
     expect(getActivePrompt(db, alex.id)?.stable).toContain("Alex");
   });
 
-  it("respeta la credencial configurada (sam queda en ai_sdk/openai con su modelo)", () => {
+  it("respeta la credencial configurada (sam queda en ai_sdk/openai con su modelo)", async () => {
     const db = freshDb();
-    const counts = seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
+    const counts = await seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
     expect(counts.agentsFallback).not.toContain("sam");
     const sam = getAgentBySlug(db, "sam")!;
     expect(sam.runtime).toBe("ai_sdk");
@@ -116,9 +117,9 @@ describe("seeds", () => {
   // Fix H5: el fallback de arranque dejaba runtime claude_code con modelos que
   // el CLI de Claude no puede correr (gpt-5, kimi, MiniMax) → modelo y runtime
   // caen JUNTOS a la suscripción.
-  it("fallback sin credencial: los modelos no-Anthropic caen a un alias Claude válido", () => {
+  it("fallback sin credencial: los modelos no-Anthropic caen a un alias Claude válido", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     for (const slug of ["sam", "sally", "clara"]) {
       const agent = getAgentBySlug(db, slug)!;
       expect(agent.runtime).toBe("claude_code");
@@ -127,14 +128,14 @@ describe("seeds", () => {
     // alex ya venía con modelo Anthropic: se respeta.
     expect(getAgentBySlug(db, "alex")!.model).toBe("claude-sonnet-4-5");
     // Aparece la credencial → re-seed restaura el modelo declarado en el .md.
-    seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
+    await seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
     expect(getAgentBySlug(db, "sam")!.model).toBe("gpt-5");
   });
 
-  it("es idempotente: re-ejecutar no duplica nada (ni el launch demo)", () => {
+  it("es idempotente: re-ejecutar no duplica nada (ni el launch demo)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
-    const counts = seed(db, { env: {} });
+    await seed(db, { env: {} });
+    const counts = await seed(db, { env: {} });
     expect(counts.agents).toBe(7);
     expect(counts.tasks).toBe(12);
     expect(counts.people).toBe(5);
@@ -146,18 +147,18 @@ describe("seeds", () => {
     ).toBe(1);
   });
 
-  it("re-seed con cambio solo de proveedor no crea versiones de prompt redundantes", () => {
+  it("re-seed con cambio solo de proveedor no crea versiones de prompt redundantes", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     // Aparece la credencial de OpenAI: sam cambia de perfil (seed_hash efectivo
     // cambia) pero su prompt es idéntico → no debe nacer una versión nueva.
-    const counts = seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
+    const counts = await seed(db, { env: { OPENAI_API_KEY: "sk-test" } });
     expect(counts.promptVersions).toBe(7);
   });
 
-  it("proyecto demo: ENTENDER, gate pending, 3 READY + 9 BACKLOG, DoD y asignado en todas", () => {
+  it("proyecto demo: ENTENDER, gate pending, 3 READY + 9 BACKLOG, DoD y asignado en todas", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const project = getProjectByName(db, "Assessment ACME")!;
     expect(project.type).toBe("assessment");
     expect(project.stage).toBe("ENTENDER");
@@ -178,9 +179,9 @@ describe("seeds", () => {
     expect(tasks.filter((t) => t.requiresApproval)).toHaveLength(7);
   });
 
-  it("seed demo = launch de consultoria v1: recibo en module_launches (§13.6, CA-M2.4)", () => {
+  it("seed demo = launch de consultoria v1: recibo en module_launches (§13.6, CA-M2.4)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const project = getProjectByName(db, "Assessment ACME")!;
     const launches = listLaunches(db, { projectId: project.id });
     expect(launches).toHaveLength(1);
@@ -203,9 +204,9 @@ describe("seeds", () => {
     expect(assignee("systems_inventory")).toBe(getAgentBySlug(db, "clara")!.id);
   });
 
-  it("las tareas del demo llevan depends_on coherente (ids reales, CA-M2.3)", () => {
+  it("las tareas del demo llevan depends_on coherente (ids reales, CA-M2.3)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const project = getProjectByName(db, "Assessment ACME")!;
     const tasks = listTasks(db, { projectId: project.id });
     // Las 3 entrevistas dependen del id del kickoff.
@@ -223,18 +224,18 @@ describe("seeds", () => {
     }
   });
 
-  it("provider_profiles guardan NOMBRE de env var, jamás un valor", () => {
+  it("provider_profiles guardan NOMBRE de env var, jamás un valor", async () => {
     const db = freshDb();
-    seed(db, { env: { OPENAI_API_KEY: "sk-super-secreta" } });
+    await seed(db, { env: { OPENAI_API_KEY: "sk-super-secreta" } });
     const raw = db.$client.prepare(`SELECT * FROM provider_profiles`).all();
     const dump = JSON.stringify(raw);
     expect(dump).not.toContain("sk-super-secreta");
     expect(dump).toContain("OPENAI_API_KEY");
   });
 
-  it("jerarquía de mando: Alex y Quinn raíces; el resto reporta a Alex", () => {
+  it("jerarquía de mando: Alex y Quinn raíces; el resto reporta a Alex", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const alex = getAgentBySlug(db, "alex")!;
     const quinn = getAgentBySlug(db, "quinn")!;
     // Alex = raíz operacional; Quinn = raíz meta/QA (independencia del auditor).
@@ -246,18 +247,18 @@ describe("seeds", () => {
     }
   });
 
-  it("jerarquía: re-seed es idempotente (no re-escribe reports_to ya correcto)", () => {
+  it("jerarquía: re-seed es idempotente (no re-escribe reports_to ya correcto)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const samV1 = getAgentBySlug(db, "sam")!.version;
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     // reports_to ya correcto → la segunda pasada no bombea la versión del agente.
     expect(getAgentBySlug(db, "sam")!.version).toBe(samV1);
   });
 
-  it("Fuentes del proyecto (F2): el re-seed aplica sources.list/ingest a alex y sam", () => {
+  it("Fuentes del proyecto (F2): el re-seed aplica sources.list/ingest a alex y sam", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     for (const slug of ["alex", "sam"]) {
       const agent = getAgentBySlug(db, slug)!;
       expect(agent.toolsAllowlist, slug).toContain("sources.list");
@@ -265,15 +266,15 @@ describe("seeds", () => {
     }
     // Re-seed idempotente: la allowlist se mantiene sin duplicar ni bombear versión.
     const samV1 = getAgentBySlug(db, "sam")!.version;
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const sam = getAgentBySlug(db, "sam")!;
     expect(sam.version).toBe(samV1);
     expect(sam.toolsAllowlist.filter((t) => t === "sources.ingest")).toHaveLength(1);
   });
 
-  it("config base: seguro por defecto (kill switch activo) y presupuestos definidos", () => {
+  it("config base: seguro por defecto (kill switch activo) y presupuestos definidos", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     // Arranque en frío PAUSADO: el despachador no dispara los runs de las tareas
     // READY del seed hasta que un humano haga resume_all.
     expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(true);
@@ -283,18 +284,18 @@ describe("seeds", () => {
 });
 
 describe("metodologías ISO 9001 (F2-3)", () => {
-  it("carga iso9001-prep e iso9001-clausulas junto a las 3 base (5 en total)", () => {
+  it("carga iso9001-prep e iso9001-clausulas junto a las 3 base (5 en total)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const slugs = listMethodologies(db).map((m) => m.slug);
     for (const s of ["assessment-14d", "transform", "ops", "iso9001-prep", "iso9001-clausulas"]) {
       expect(slugs, `falta metodología ${s}`).toContain(s);
     }
   });
 
-  it("iso9001-prep e iso9001-clausulas incluyen el disclaimer de preparación (no certificación)", () => {
+  it("iso9001-prep e iso9001-clausulas incluyen el disclaimer de preparación (no certificación)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const disclaimer = "organismo de certificación acreditado";
     const prep = getMethodology(db, "iso9001-prep")!;
     const catalogo = getMethodology(db, "iso9001-clausulas")!;
@@ -306,9 +307,9 @@ describe("metodologías ISO 9001 (F2-3)", () => {
     expect(catalogo.bodyMd).toContain("10.3");
   });
 
-  it("re-seed aplica el prompt ISO 9001 de Sam (versión activa)", () => {
+  it("re-seed aplica el prompt ISO 9001 de Sam (versión activa)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const sam = getAgentBySlug(db, "sam")!;
     const prompt = getActivePrompt(db, sam.id);
     expect(prompt?.stable).toContain("ISO 9001");

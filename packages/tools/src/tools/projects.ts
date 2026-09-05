@@ -11,8 +11,8 @@ export const projectTools: ToolDefinition[] = [
     description: "Devuelve un proyecto (tipo, etapa, gate_state, workspace).",
     schema: z.object({ project_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const project = getProject(ctx.db, args.project_id);
+    async handler(ctx, args) {
+      const project = await getProject(ctx.db, args.project_id);
       if (!project) throw errors.notFound("project", args.project_id);
       return project;
     },

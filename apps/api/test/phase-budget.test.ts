@@ -55,14 +55,14 @@ describe("budgetFromLimits + budget:project (unidad)", () => {
 
 describe("corte de presupuesto de fase en el tick", () => {
   it("gasto acumulado ≥ phase_usd → el proyecto NO recibe despachos (la tarea espera en READY)", async () => {
-    setConfig(fx.db, projectBudgetKey(fx.project.id), {
+    await setConfig(fx.db, projectBudgetKey(fx.project.id), {
       phase_usd: 5,
       per_run_usd: 2,
       warning_thresholds_pct: [70, 90, 100],
       launch_id: null,
     });
     // Gasto ya consumido por la fase: 6 USD ≥ 5.
-    createRun(fx.db, {
+    await createRun(fx.db, {
       agentId: fx.sam.id,
       projectId: fx.project.id,
       trigger: "dispatcher",
@@ -70,30 +70,30 @@ describe("corte de presupuesto de fase en el tick", () => {
       status: "succeeded",
       costUsd: 6,
     });
-    const task = makeReadyTask(fx, fx.sam, { title: "No debe despachar" });
+    const task = await makeReadyTask(fx, fx.sam, { title: "No debe despachar" });
 
     const report = await fx.api.ctx.dispatcher.tick();
     expect(report.dispatched).toEqual([]);
     expect(fx.aiRunner.calls).toHaveLength(0); // ningún run arrancó
-    expect(getTask(fx.db, task.id)!.status).toBe("READY"); // ni claim ni lease
+    expect((await getTask(fx.db, task.id))!.status).toBe("READY"); // ni claim ni lease
   });
 
   it("por debajo del tope SÍ despacha, y el run lleva maxUsd = min(agente, per_run del proyecto)", async () => {
-    const projectB: Project = createProject(fx.db, {
+    const projectB: Project = await createProject(fx.db, {
       orgId: fx.org.id,
       name: "Assessment Nova (presupuesto)",
       type: "assessment",
       stage: "ENTENDER",
       gateState: "pending",
     });
-    setConfig(fx.db, projectBudgetKey(projectB.id), {
+    await setConfig(fx.db, projectBudgetKey(projectB.id), {
       phase_usd: 10,
       per_run_usd: 2,
       warning_thresholds_pct: [70, 90, 100],
       launch_id: null,
     });
     // Gasto previo por debajo del tope de fase.
-    createRun(fx.db, {
+    await createRun(fx.db, {
       agentId: fx.sam.id,
       projectId: projectB.id,
       trigger: "dispatcher",
@@ -102,10 +102,10 @@ describe("corte de presupuesto de fase en el tick", () => {
       costUsd: 3,
     });
     // Límite propio del agente MÁS laxo que el del proyecto: gana el proyecto.
-    const sam = getAgentBySlug(fx.db, "sam")!;
-    updateAgent(fx.db, sam.id, { limits: { max_usd: 5 } }, sam.version);
+    const sam = (await getAgentBySlug(fx.db, "sam"))!;
+    await updateAgent(fx.db, sam.id, { limits: { max_usd: 5 } }, sam.version);
 
-    const task = makeReadyTask(fx, fx.sam, { title: "Sí despacha", projectId: projectB.id });
+    const task = await makeReadyTask(fx, fx.sam, { title: "Sí despacha", projectId: projectB.id });
     const report = await fx.api.ctx.dispatcher.tick();
 
     expect(report.dispatched).toHaveLength(1);
@@ -114,7 +114,7 @@ describe("corte de presupuesto de fase en el tick", () => {
     expect(call.input.budget?.maxUsd).toBe(2); // min(5 del agente, 2 del proyecto)
 
     await waitFor(
-      () => listRuns(fx.db, { taskId: task.id }).some((r) => r.status === "succeeded"),
+      async () => (await listRuns(fx.db, { taskId: task.id })).some((r) => r.status === "succeeded"),
       { label: "run del proyecto B terminado" },
     );
   });

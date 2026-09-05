@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isAgentosError } from "@agentos/shared";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { seed } from "../src/seed.js";
 import { loadModuleSeeds, parseModuleSeed, MODULES_DIR, type ParsedModuleSeed } from "../src/seed-sources.js";
@@ -14,7 +14,7 @@ import {
 } from "../src/repositories/modules.js";
 import path from "node:path";
 
-function freshDb(): AgentosDb {
+function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
   runMigrations(db);
   return db;
@@ -104,9 +104,9 @@ describe("parseModuleSeed sobre modules/*.md reales", () => {
 });
 
 describe("seed 5b: módulos de fase activos", () => {
-  it("el seed deja los 3 módulos ACTIVOS y visibles (CA-M1.1)", () => {
+  it("el seed deja los 3 módulos ACTIVOS y visibles (CA-M1.1)", async () => {
     const db = freshDb();
-    const counts = seed(db, { env: {} });
+    const counts = await seed(db, { env: {} });
     expect(counts.phaseModules).toBe(3);
     for (const slug of ["consultoria", "implementacion", "operacion"]) {
       const active = getActiveModule(db, slug);
@@ -119,11 +119,11 @@ describe("seed 5b: módulos de fase activos", () => {
     expect(listPhaseModules(db)).toHaveLength(3);
   });
 
-  it("re-seed sin cambios = no-op (idempotencia por seed_hash)", () => {
+  it("re-seed sin cambios = no-op (idempotencia por seed_hash)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const before = getActiveModule(db, "consultoria")!;
-    const counts = seed(db, { env: {} });
+    const counts = await seed(db, { env: {} });
     expect(counts.phaseModules).toBe(3);
     const after = getActiveModule(db, "consultoria")!;
     expect(after.id).toBe(before.id);
@@ -136,9 +136,9 @@ describe("upsertPhaseModuleFromSeed — versiones inmutables ([SÍNTESIS] Codex)
     return parseModuleSeed(path.join(MODULES_DIR, "consultoria.md"));
   }
 
-  it("mismo (slug,version) con contenido DISTINTO → error module_version_immutable", () => {
+  it("mismo (slug,version) con contenido DISTINTO → error module_version_immutable", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const cambiado: ParsedModuleSeed = { ...consultoriaSeed(), seedHash: "0".repeat(64) };
     try {
       upsertPhaseModuleFromSeed(db, cambiado);
@@ -150,9 +150,9 @@ describe("upsertPhaseModuleFromSeed — versiones inmutables ([SÍNTESIS] Codex)
     expect(getActiveModule(db, "consultoria")!.version).toBe(1);
   });
 
-  it("version+1 → fila nueva ACTIVA y la anterior ARCHIVADA (CA-M1.2)", () => {
+  it("version+1 → fila nueva ACTIVA y la anterior ARCHIVADA (CA-M1.2)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const base = consultoriaSeed();
     const v2: ParsedModuleSeed = {
       ...base,
@@ -171,9 +171,9 @@ describe("upsertPhaseModuleFromSeed — versiones inmutables ([SÍNTESIS] Codex)
 });
 
 describe("activateModuleVersion — fail-closed (momento B, §13.5)", () => {
-  it("un draft con blueprint inválido se guarda pero NO puede activarse (CA-M1.3)", () => {
+  it("un draft con blueprint inválido se guarda pero NO puede activarse (CA-M1.3)", async () => {
     const db = freshDb();
-    seed(db, { env: {} });
+    await seed(db, { env: {} });
     const base = parseModuleSeed(path.join(MODULES_DIR, "consultoria.md")).blueprint;
     // Rompemos una regla estructural: entregable sin productor.
     const roto = JSON.parse(JSON.stringify(base));

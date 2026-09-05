@@ -24,7 +24,7 @@ beforeEach(async () => {
   fx = await makeFixture();
   // Metodologías reales (el momento B de la activación del módulo las exige).
   for (const m of loadMethodologySeeds()) {
-    upsertMethodology(fx.db, {
+    await upsertMethodology(fx.db, {
       slug: m.slug,
       version: m.version,
       bodyMd: m.bodyMd,
@@ -35,7 +35,7 @@ beforeEach(async () => {
   }
   // Roster de consultoria: alex y sam ya existen en el fixture; faltan clara
   // (capa operacion) y quinn (capa meta) para que el roster resuelva completo.
-  createAgent(fx.db, {
+  await createAgent(fx.db, {
     slug: "clara",
     name: "Clara",
     layer: "operacion",
@@ -44,7 +44,7 @@ beforeEach(async () => {
     model: "mock-model",
     toolsAllowlist: [],
   });
-  createAgent(fx.db, {
+  await createAgent(fx.db, {
     slug: "quinn",
     name: "Quinn",
     layer: "meta",
@@ -54,7 +54,7 @@ beforeEach(async () => {
     toolsAllowlist: [],
   });
   // El módulo consultoria REAL, por el mismo camino del seed (queda activo).
-  upsertPhaseModuleFromSeed(fx.db, parseModuleSeed(path.join(MODULES_DIR, "consultoria.md")));
+  await upsertPhaseModuleFromSeed(fx.db, parseModuleSeed(path.join(MODULES_DIR, "consultoria.md")));
 });
 
 afterEach(async () => {
@@ -165,7 +165,7 @@ describe("POST /api/modules/:slug/launch (CA-M2.2 / CA-M2.6)", () => {
       payload: { inputs: GLOBEX_INPUTS, idempotency_key: "wizard:anon" },
     });
     expect(res.statusCode).toBe(401);
-    expect(listTasks(fx.db).some((t) => t.title.includes("Globex"))).toBe(false);
+    expect((await listTasks(fx.db)).some((t) => t.title.includes("Globex"))).toBe(false);
   });
 
   it("feliz: crea proyecto+tareas+recibo con actor de la sesión; repetir la key es idempotente", async () => {
@@ -196,10 +196,10 @@ describe("POST /api/modules/:slug/launch (CA-M2.2 / CA-M2.6)", () => {
     expect(body.tasks_count).toBe(planned);
     expect(body.launch.actor).toBe(`person:${fx.person.id}`);
     expect(body.launch.inputs["notas_comercial"]).toBe("[redacted]"); // CA-M2.4
-    expect(listTasks(fx.db, { projectId: body.project.id }).length).toBe(planned);
+    expect((await listTasks(fx.db, { projectId: body.project.id })).length).toBe(planned);
 
     // Lo que emitió launchModuleWithEvents está en el bus (lo que sirve el WS).
-    const events = fx.api.ctx.bus.getSince(`board:${body.project.id}`, 0);
+    const events = await fx.api.ctx.bus.getSince(`board:${body.project.id}`, 0);
     expect(events.some((e) => e.type === "module.launched")).toBe(true);
     expect(events.filter((e) => e.type === "task.created").length).toBe(planned);
 
@@ -214,7 +214,7 @@ describe("POST /api/modules/:slug/launch (CA-M2.2 / CA-M2.6)", () => {
     const againBody = again.json() as { launch: { id: string }; idempotent: boolean };
     expect(againBody.idempotent).toBe(true);
     expect(againBody.launch.id).toBe(body.launch.id);
-    expect(listTasks(fx.db, { projectId: body.project.id }).length).toBe(planned);
+    expect((await listTasks(fx.db, { projectId: body.project.id })).length).toBe(planned);
 
     // Key distinta sobre el MISMO proyecto/fase → error de dominio 409 con código.
     const conflict = await fx.api.app.inject({

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { appConfig } from "../schema.js";
 import type { AppConfigRow } from "../types.js";
 
@@ -11,12 +11,12 @@ export const ConfigKeys = {
   BUDGET_MAX_COST_PER_DAY_USD: "budget_max_cost_per_day_usd",
 } as const;
 
-export function getConfig<T = unknown>(db: AgentosDb, key: string): T | undefined {
+export function getConfig<T = unknown>(db: AgentosSqliteDb, key: string): T | undefined {
   const row = db.select().from(appConfig).where(eq(appConfig.key, key)).get();
   return row?.value as T | undefined;
 }
 
-export function setConfig(db: AgentosDb, key: string, value: unknown): void {
+export function setConfig(db: AgentosSqliteDb, key: string, value: unknown): void {
   const now = nowMs();
   db.insert(appConfig)
     .values({ key, value, updatedAt: now })
@@ -24,6 +24,6 @@ export function setConfig(db: AgentosDb, key: string, value: unknown): void {
     .run();
 }
 
-export function listConfig(db: AgentosDb): AppConfigRow[] {
+export function listConfig(db: AgentosSqliteDb): AppConfigRow[] {
   return db.select().from(appConfig).all();
 }

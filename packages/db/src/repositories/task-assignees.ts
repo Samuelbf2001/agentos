@@ -1,6 +1,6 @@
 import { and, asc, eq, exists, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type TaskStatus } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { people, projects, taskAssignees, tasks } from "../schema.js";
 import type {
   NewTaskAssignee,
@@ -45,7 +45,7 @@ interface NormalizedAssignees {
  * Lista los responsables de una tarea en un orden estable. La tabla puente es
  * canónica; no se reconstruye la lista desde `tasks.assignee_person_id`.
  */
-export function listTaskAssignees(db: AgentosDb, taskId: string): TaskAssignee[] {
+export function listTaskAssignees(db: AgentosSqliteDb, taskId: string): TaskAssignee[] {
   return db
     .select()
     .from(taskAssignees)
@@ -54,7 +54,7 @@ export function listTaskAssignees(db: AgentosDb, taskId: string): TaskAssignee[]
     .all();
 }
 
-export function getPrimaryTaskAssignee(db: AgentosDb, taskId: string): TaskAssignee | undefined {
+export function getPrimaryTaskAssignee(db: AgentosSqliteDb, taskId: string): TaskAssignee | undefined {
   return db
     .select()
     .from(taskAssignees)
@@ -62,7 +62,7 @@ export function getPrimaryTaskAssignee(db: AgentosDb, taskId: string): TaskAssig
     .get();
 }
 
-export function getTaskWithAssignees(db: AgentosDb, taskId: string): TaskWithAssignees | undefined {
+export function getTaskWithAssignees(db: AgentosSqliteDb, taskId: string): TaskWithAssignees | undefined {
   const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   return task ? { ...task, assignees: listTaskAssignees(db, taskId) } : undefined;
 }
@@ -73,7 +73,7 @@ export function getTaskWithAssignees(db: AgentosDb, taskId: string): TaskWithAss
  * primarios; `assigneePersonId` queda como alias legacy.
  */
 export function listTasksWithAssignees(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: {
     projectId?: string;
     status?: TaskStatus;
@@ -105,7 +105,7 @@ export function listTasksWithAssignees(
 }
 
 /** Igual que `listTasksWithAssignees`, para el tablero de un proyecto. */
-export function boardTasksWithAssignees(db: AgentosDb, projectId: string): TaskWithAssignees[] {
+export function boardTasksWithAssignees(db: AgentosSqliteDb, projectId: string): TaskWithAssignees[] {
   return listTasksWithAssignees(db, { projectId });
 }
 
@@ -115,7 +115,7 @@ export function boardTasksWithAssignees(db: AgentosDb, projectId: string): TaskW
  * `createTask` y la reposición compartan exactamente la misma validación.
  */
 export function validateTaskAssigneeOrganization(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   projectId: string,
   personIds: readonly string[],
 ): void {
@@ -179,7 +179,7 @@ function normalizeAssignees(
 
 /** @internal Inserta las filas puente después de que la validación haya pasado. */
 export function insertTaskAssigneeRows(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   taskId: string,
   normalized: NormalizedAssignees,
   createdAt = nowMs(),
@@ -198,7 +198,7 @@ export function insertTaskAssigneeRows(
 
 /** @internal Mantiene el puente cuando un consumer legacy actualiza el campo singular. */
 export function synchronizeTaskAssignees(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   taskId: string,
   personId: string | null,
   assignedBy = "system:legacy-task-update",
@@ -222,13 +222,13 @@ export function synchronizeTaskAssignees(
  * posterior revierte la transacción completa.
  */
 export function replaceTaskAssignees(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   taskId: string,
   input: ReplaceTaskAssigneesInput | ReplaceTaskAssigneesObjectInput,
   expectedVersion: number,
 ): TaskWithAssignees;
 export function replaceTaskAssignees(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   taskId: string,
   personIds: readonly string[],
   primaryPersonId: string | null | undefined,
@@ -236,7 +236,7 @@ export function replaceTaskAssignees(
   assignedBy?: string,
 ): TaskWithAssignees;
 export function replaceTaskAssignees(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   taskId: string,
   inputOrPersonIds: ReplaceTaskAssigneesInput | ReplaceTaskAssigneesObjectInput | readonly string[],
   expectedVersionOrPrimary: number | string | null | undefined,
@@ -298,7 +298,7 @@ export const assignTaskPeople = replaceTaskAssignees;
  * operador verificar/reparar una base parcialmente migrada sin duplicar pares.
  */
 export function backfillTaskAssignees(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   assignedBy = "system:migration:0005",
 ): number {
   const rows = db.$client

@@ -212,8 +212,10 @@ describe("Fuentes del proyecto (REST)", () => {
     });
     expect(second.statusCode).toBe(200);
     expect((second.json() as { doc: { id: string } }).doc.id).toBe(docId);
-    expect(listDocs(fx.db, { projectId: fx.project.id })).toHaveLength(1);
-    expect(getDoc(fx.db, docId)!.updatedAt).toBeGreaterThanOrEqual(getDoc(fx.db, docId)!.createdAt);
+    expect(await listDocs(fx.db, { projectId: fx.project.id })).toHaveLength(1);
+    expect((await getDoc(fx.db, docId))!.updatedAt).toBeGreaterThanOrEqual(
+      (await getDoc(fx.db, docId))!.createdAt,
+    );
   });
 
   it("error del conector → 502 legible, fuente en 'error' y SIN doc huérfano", async () => {
@@ -229,11 +231,11 @@ describe("Fuentes del proyecto (REST)", () => {
     expect(err.code).toBe("provider_error");
     expect(err.message).toContain("VPS");
 
-    const after = getProjectSource(fx.db, source.id)!;
+    const after = (await getProjectSource(fx.db, source.id))!;
     expect(after.status).toBe("error");
     expect(after.lastError).toContain("VPS");
     expect(after.knowledgeDocId).toBeNull();
-    expect(listDocs(fx.db, { projectId: fx.project.id })).toHaveLength(0);
+    expect(await listDocs(fx.db, { projectId: fx.project.id })).toHaveLength(0);
 
     // Reintentable: al volver el VPS, la re-ingesta sana el estado.
     state.failMeetingMarkdown = false;
@@ -243,7 +245,7 @@ describe("Fuentes del proyecto (REST)", () => {
       headers: fx.authHeaders,
     });
     expect(retry.statusCode).toBe(200);
-    expect(getProjectSource(fx.db, source.id)!.status).toBe("ingested");
+    expect((await getProjectSource(fx.db, source.id))!.status).toBe("ingested");
   });
 
   it("ingerir un hilo de WhatsApp produce 'evidence' con el transcript", async () => {

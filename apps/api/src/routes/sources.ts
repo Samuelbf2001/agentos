@@ -135,14 +135,14 @@ export function registerSourcesRoutes(app: FastifyInstance, ctx: ApiContext): vo
 
   app.get("/api/projects/:id/sources", async (req) => {
     const { id } = req.params as { id: string };
-    if (!getProject(db, id)) throw errors.notFound("project", id);
-    return { sources: listProjectSources(db, { projectId: id }) };
+    if (!(await getProject(db, id))) throw errors.notFound("project", id);
+    return { sources: await listProjectSources(db, { projectId: id }) };
   });
 
   /** Asociar (kind + external_ref). Idempotente: la misma referencia no duplica. */
   app.post("/api/projects/:id/sources", async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!getProject(db, id)) throw errors.notFound("project", id);
+    if (!(await getProject(db, id))) throw errors.notFound("project", id);
     const body = parse(LinkSourceBody, req.body);
     const ref = body.external_ref;
     if (body.kind === "meeting" && !ref.meetingId) {
@@ -152,18 +152,18 @@ export function registerSourcesRoutes(app: FastifyInstance, ctx: ApiContext): vo
       throw errors.validation("external_ref.contactId es obligatorio para kind='whatsapp_thread'");
     }
 
-    const existing = findProjectSourceByExternalRef(db, id, body.kind, ref);
+    const existing = await findProjectSourceByExternalRef(db, id, body.kind, ref);
     if (existing) {
       return { source: existing, deduped: true };
     }
-    const source = createProjectSource(db, {
+    const source = await createProjectSource(db, {
       projectId: id,
       kind: body.kind,
       externalRef: ref,
       status: "linked",
       createdBy: personActor(req),
     });
-    appendAudit(db, {
+    await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
       action: "source.link",
@@ -179,11 +179,11 @@ export function registerSourcesRoutes(app: FastifyInstance, ctx: ApiContext): vo
 
   app.post("/api/sources/:id/ingest", async (req) => {
     const { id } = req.params as { id: string };
-    if (!getProjectSource(db, id)) throw errors.notFound("project_source", id);
+    if (!(await getProjectSource(db, id))) throw errors.notFound("project_source", id);
     const connector = requireConnector(ctx);
     const actor = personActor(req);
     const { source, doc } = await ingestProjectSource(db, connector, id, actor);
-    appendAudit(db, {
+    await appendAudit(db, {
       actor,
       source: "ui",
       action: "source.ingest",
@@ -280,7 +280,7 @@ export function registerSourcesRoutes(app: FastifyInstance, ctx: ApiContext): vo
         connector.listMeetings({ page: 1, pageSize: 1, status: "error" }),
         connector.listMeetings({ page: 1, pageSize: 1, status: "ok" }),
       ]);
-      const localMeetings = listProjectSources(db, { kind: "meeting" });
+      const localMeetings = await listProjectSources(db, { kind: "meeting" });
       return {
         source: "2brain / WhatsAppHub",
         mode: "remote_read_only" as const,

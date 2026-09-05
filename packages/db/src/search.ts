@@ -18,14 +18,14 @@
  *
  * En Postgres NO hacen falta los triggers espejo: la columna generada se mantiene sola.
  */
-import type { AgentosDb } from "./client.js";
+import type { AgentosSqliteDb } from "./client.js";
 
 /**
  * Crea las tablas virtuales FTS5 (contenido externo, clave rowid) y los triggers
  * espejo. Idempotente: se puede llamar en cada arranque. Estos triggers NO son
  * lógica de negocio — solo mantienen el índice espejo (permitido por §5).
  */
-export function ensureFts(db: AgentosDb): void {
+export function ensureFts(db: AgentosSqliteDb): void {
   const sql = db.$client;
 
   sql.exec(`
@@ -74,7 +74,7 @@ export interface MessageSearchHit {
   rank: number;
 }
 
-export function searchMessages(db: AgentosDb, query: string, limit = 20): MessageSearchHit[] {
+export function searchMessages(db: AgentosSqliteDb, query: string, limit = 20): MessageSearchHit[] {
   const rows = db.$client
     .prepare(
       `SELECT m.id, m.thread_id AS threadId, m.content, m.created_at AS createdAt, f.rank
@@ -99,7 +99,7 @@ export interface KnowledgeSearchHit {
   rank: number;
 }
 
-export function searchKnowledge(db: AgentosDb, query: string, limit = 20): KnowledgeSearchHit[] {
+export function searchKnowledge(db: AgentosSqliteDb, query: string, limit = 20): KnowledgeSearchHit[] {
   // snippet(): columna 1 = body_md, marcadores « », elipsis, ~24 tokens de contexto.
   // Equivalente Postgres: ts_headline('spanish', body_md, websearch_to_tsquery('spanish', :q),
   //   'StartSel=«, StopSel=», MaxWords=24').

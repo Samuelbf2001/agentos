@@ -14,16 +14,16 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
     for (const fixture of fixtures.splice(0)) await fixture.close();
   });
 
-  function people(fixture: TestFixture): [Person, Person] {
+  async function people(fixture: TestFixture): Promise<[Person, Person]> {
     return [
-      createPerson(fixture.db, {
+      await createPerson(fixture.db, {
         orgId: fixture.org.id,
         fullName: "Ana responsable",
         email: "ana@acme.test",
         isInternal: true,
         role: "Operadora",
       }),
-      createPerson(fixture.db, {
+      await createPerson(fixture.db, {
         orgId: fixture.org.id,
         fullName: "Luis responsable",
         email: "luis@acme.test",
@@ -36,7 +36,7 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
   it("crea/lista/consulta dos responsables y conserva contexto del proyecto", async () => {
     const fixture = await makeFixture();
     fixtures.push(fixture);
-    const [ana, luis] = people(fixture);
+    const [ana, luis] = await people(fixture);
     const created = await fixture.api.app.inject({
       method: "POST",
       url: "/api/tasks",
@@ -83,8 +83,8 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
   it("asigna atómicamente, audita y rechaza expected_version viejo", async () => {
     const fixture = await makeFixture();
     fixtures.push(fixture);
-    const [ana, luis] = people(fixture);
-    const task = createTask(fixture.db, {
+    const [ana, luis] = await people(fixture);
+    const task = await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Reasignación",
       stage: "ENTENDER",
@@ -128,7 +128,7 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
       notificationDelivery: { enabled: true, provider: "fake", send },
     });
     fixtures.push(fixture);
-    const [ana] = people(fixture);
+    const [ana] = await people(fixture);
     const created = await fixture.api.app.inject({
       method: "POST",
       url: "/api/tasks",
@@ -162,9 +162,9 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
     });
     expect(secondDue.statusCode).toBe(200);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(listTaskNotificationLogs(fixture.db, { taskId: task.id })).toHaveLength(2);
+    expect(await listTaskNotificationLogs(fixture.db, { taskId: task.id })).toHaveLength(2);
 
-    const terminal = createTask(fixture.db, {
+    const terminal = await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "No avisar terminal",
       stage: "ENTENDER",
@@ -180,14 +180,14 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
       headers: fixture.authHeaders,
       payload: {},
     });
-    expect(listTaskNotificationLogs(fixture.db, { taskId: terminal.id })).toHaveLength(0);
+    expect(await listTaskNotificationLogs(fixture.db, { taskId: terminal.id })).toHaveLength(0);
   });
 
   it("sin proveedor no hace entrega y deja estado suppressed auditable", async () => {
     const send = vi.fn();
     const fixture = await makeFixture({ notificationDelivery: { enabled: false, provider: "off", send } });
     fixtures.push(fixture);
-    const [ana] = people(fixture);
+    const [ana] = await people(fixture);
     const response = await fixture.api.app.inject({
       method: "POST",
       url: "/api/tasks",
@@ -203,7 +203,7 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
     expect(response.statusCode).toBe(201);
     expect(send).not.toHaveBeenCalled();
     const taskId = (response.json() as { task: { id: string } }).task.id;
-    expect(listTaskNotificationLogs(fixture.db, { taskId })[0]?.status).toBe("suppressed");
+    expect((await listTaskNotificationLogs(fixture.db, { taskId }))[0]?.status).toBe("suppressed");
   });
 
   it("no acepta una hora aportada por quien dispara el procesador", async () => {
@@ -229,8 +229,8 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
       notificationDelivery: { enabled: true, provider: "fake", send },
     });
     fixtures.push(fixture);
-    const [ana] = people(fixture);
-    const task = createTask(fixture.db, {
+    const [ana] = await people(fixture);
+    const task = await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Reintento de vencimiento",
       stage: "ENTENDER",
@@ -246,7 +246,7 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
       headers: fixture.authHeaders,
       payload: {},
     });
-    expect(listTaskNotificationLogs(fixture.db, { taskId: task.id })).toMatchObject([
+    expect(await listTaskNotificationLogs(fixture.db, { taskId: task.id })).toMatchObject([
       { status: "failed" },
     ]);
 
@@ -256,7 +256,7 @@ describe("Oleada 2 — REST y avisos de tareas", () => {
       headers: fixture.authHeaders,
       payload: {},
     });
-    const logs = listTaskNotificationLogs(fixture.db, { taskId: task.id });
+    const logs = await listTaskNotificationLogs(fixture.db, { taskId: task.id });
     expect(send).toHaveBeenCalledTimes(2);
     expect(logs).toHaveLength(1);
     expect(logs[0]).toMatchObject({ status: "delivered" });

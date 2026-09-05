@@ -88,21 +88,21 @@ function moduleAuditFields(m: PhaseModule): Record<string, unknown> {
 }
 
 /** Última versión del slug (draft/active/archived) — el "estado del catálogo". */
-function latestModuleVersion(db: AgentosDb, slug: string): PhaseModule | undefined {
-  return listPhaseModules(db, { slug })[0];
+async function latestModuleVersion(db: AgentosDb, slug: string): Promise<PhaseModule | undefined> {
+  return (await listPhaseModules(db, { slug }))[0];
 }
 
-function mustGetModuleVersion(db: AgentosDb, slug: string, version: number): PhaseModule {
-  const row = getModuleVersion(db, slug, version);
+async function mustGetModuleVersion(db: AgentosDb, slug: string, version: number): Promise<PhaseModule> {
+  const row = await getModuleVersion(db, slug, version);
   if (!row) throw errors.notFound("phase_module", `${slug}@${version}`);
   return row;
 }
 
 /** Momento A/B en lectura: reglas puras + reglas con DB, sin escribir nada. */
-function collectIssues(db: AgentosDb, blueprint: unknown): BlueprintIssue[] {
+async function collectIssues(db: AgentosDb, blueprint: unknown): Promise<BlueprintIssue[]> {
   const result = validateBlueprint(blueprint);
   const issues = [...result.issues];
-  if (result.blueprint) issues.push(...moduleBlueprintDbIssues(db, result.blueprint));
+  if (result.blueprint) issues.push(...(await moduleBlueprintDbIssues(db, result.blueprint)));
   return issues;
 }
 
@@ -112,12 +112,12 @@ function composeModuleText(m: PhaseModule): string {
 }
 
 /** Recibo del launch con el nombre resuelto si el actor es person:<id> (CA-M2.4). */
-function launchReceipt(db: AgentosDb, launch: ModuleLaunch): Record<string, unknown> {
+async function launchReceipt(db: AgentosDb, launch: ModuleLaunch): Promise<Record<string, unknown>> {
   let actorName: string | null = null;
   if (launch.actor.startsWith("person:")) {
-    actorName = getPerson(db, launch.actor.slice("person:".length))?.fullName ?? null;
+    actorName = (await getPerson(db, launch.actor.slice("person:".length)))?.fullName ?? null;
   }
-  const moduleName = getPhaseModuleById(db, launch.moduleId)?.name ?? launch.moduleSlug;
+  const moduleName = (await getPhaseModuleById(db, launch.moduleId))?.name ?? launch.moduleSlug;
   return {
     launch,
     actor_name: actorName,
@@ -139,8 +139,8 @@ export const moduleTools: AdminToolDefinition[] = [
       status: z.enum(["draft", "active", "archived"]).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      const rows = listPhaseModules(ctx.db, {
+    async handler(ctx, args) {
+      const rows = await listPhaseModules(ctx.db, {
         ...(args.slug ? { slug: args.slug } : {}),
         ...(args.status ? { status: args.status } : {}),
       });
@@ -156,18 +156,18 @@ export const moduleTools: AdminToolDefinition[] = [
       "`issues` de validación (momento A/B: reglas puras + reglas con DB).",
     schema: z.object({ slug: ModuleSlug, version: z.number().int().positive().optional() }),
     readOnly: true,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const row =
         args.version !== undefined
-          ? mustGetModuleVersion(ctx.db, args.slug, args.version)
-          : (getActiveModule(ctx.db, args.slug) ?? latestModuleVersion(ctx.db, args.slug));
+          ? await mustGetModuleVersion(ctx.db, args.slug, args.version)
+          : (await getActiveModule(ctx.db, args.slug) ?? await latestModuleVersion(ctx.db, args.slug));
       if (!row) throw errors.notFound("phase_module", args.slug);
       return {
         module: moduleSummary(row),
         blueprint: row.blueprint,
         body_md: row.bodyMd,
         blueprint_hash: row.blueprintHash,
-        ...(row.status === "draft" ? { issues: collectIssues(ctx.db, row.blueprint) } : {}),
+        ...(row.status === "draft" ? { issues: await collectIssues(ctx.db, row.blueprint) } : {}),
       };
     },
   }),
@@ -183,9 +183,9 @@ export const moduleTools: AdminToolDefinition[] = [
       context_lines: z.number().int().min(0).max(20).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      const from = mustGetModuleVersion(ctx.db, args.slug, args.from_version);
-      const to = mustGetModuleVersion(ctx.db, args.slug, args.to_version);
+    async handler(ctx, args) {
+      const from = await mustGetModuleVersion(ctx.db, args.slug, args.from_version);
+      const to = await mustGetModuleVersion(ctx.db, args.slug, args.to_version);
       const unified = unifiedDiff(composeModuleText(from), composeModuleText(to), {
         fromLabel: `${args.slug}@${from.version}`,
         toLabel: `${args.slug}@${to.version}`,
@@ -209,8 +209,8 @@ export const moduleTools: AdminToolDefinition[] = [
       "un booleano a secas.",
     schema: z.object({ blueprint: z.record(z.string(), z.unknown()) }),
     readOnly: true,
-    handler(ctx, args) {
-      const issues = collectIssues(ctx.db, args.blueprint);
+    async handler(ctx, args) {
+      const issues = await collectIssues(ctx.db, args.blueprint);
       return { ok: issues.length === 0, issues };
     },
   }),
@@ -232,8 +232,8 @@ export const moduleTools: AdminToolDefinition[] = [
       cadences_confirmed: z.array(z.string().min(1)).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      return previewLaunch(ctx.db, {
+    async handler(ctx, args) {
+      return await previewLaunch(ctx.db, {
         moduleSlug: args.slug,
         ...(args.version !== undefined ? { moduleVersion: args.version } : {}),
         inputs: args.inputs,
@@ -253,12 +253,12 @@ export const moduleTools: AdminToolDefinition[] = [
       module_slug: z.string().optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      const rows = listLaunches(ctx.db, {
+    async handler(ctx, args) {
+      const rows = await listLaunches(ctx.db, {
         ...(args.project_id ? { projectId: args.project_id } : {}),
         ...(args.module_slug ? { moduleSlug: args.module_slug } : {}),
       });
-      return { launches: rows.map((l) => launchReceipt(ctx.db, l)) };
+      return { launches: await Promise.all(rows.map((l) => launchReceipt(ctx.db, l))) };
     },
   }),
 
@@ -270,10 +270,10 @@ export const moduleTools: AdminToolDefinition[] = [
       "nombre de la persona si el actor es person:<id>.",
     schema: z.object({ launch_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const launch = getLaunch(ctx.db, args.launch_id);
+    async handler(ctx, args) {
+      const launch = await getLaunch(ctx.db, args.launch_id);
       if (!launch) throw errors.notFound("module_launch", args.launch_id);
-      return launchReceipt(ctx.db, launch);
+      return await launchReceipt(ctx.db, launch);
     },
   }),
 
@@ -285,8 +285,8 @@ export const moduleTools: AdminToolDefinition[] = [
       "debe aprobarse con faltantes.",
     schema: z.object({ project_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      return phaseClosureStatus(ctx.db, args.project_id);
+    async handler(ctx, args) {
+      return await phaseClosureStatus(ctx.db, args.project_id);
     },
   }),
 
@@ -301,8 +301,8 @@ export const moduleTools: AdminToolDefinition[] = [
       "el previous_launch_id que el launch nuevo debe llevar. Solo lectura.",
     schema: z.object({ project_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      return nextPhaseStatus(ctx.db, args.project_id);
+    async handler(ctx, args) {
+      return await nextPhaseStatus(ctx.db, args.project_id);
     },
   }),
 
@@ -322,10 +322,10 @@ export const moduleTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "modules.create", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "modules.create", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getPhaseModuleById(ctx.db, previous.entityId);
+        const existing = await getPhaseModuleById(ctx.db, previous.entityId);
         if (existing) return { module: moduleSummary(existing), idempotent: true };
       }
       // El schema Zod debe pasar (sin él no hay slug/name/phase que persistir);
@@ -338,14 +338,14 @@ export const moduleTools: AdminToolDefinition[] = [
         );
       }
       const bp = result.blueprint;
-      if (latestModuleVersion(ctx.db, bp.slug)) {
+      if (await latestModuleVersion(ctx.db, bp.slug)) {
         throw new AgentosError(
           ErrorCodes.CONFLICT,
           `Ya existe el módulo "${bp.slug}" — usa agentos.modules.update para crear una versión nueva`,
           { slug: bp.slug },
         );
       }
-      const module = createModuleVersion(ctx.db, {
+      const module = await createModuleVersion(ctx.db, {
         slug: bp.slug,
         version: bp.version,
         name: bp.name,
@@ -358,7 +358,7 @@ export const moduleTools: AdminToolDefinition[] = [
         changelog: args.changelog ?? `Creado via MCP (${ctx.actor})`,
         createdBy: ctx.actor,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "modules.create",
         entityType: "phase_module",
         entityId: module.id,
@@ -367,7 +367,7 @@ export const moduleTools: AdminToolDefinition[] = [
         reason: args.reason,
         idempotencyKey: args.idempotency_key,
       });
-      return { module: moduleSummary(module), issues: collectIssues(ctx.db, module.blueprint) };
+      return { module: moduleSummary(module), issues: await collectIssues(ctx.db, module.blueprint) };
     },
   }),
 
@@ -389,13 +389,13 @@ export const moduleTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "modules.update", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "modules.update", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getPhaseModuleById(ctx.db, previous.entityId);
+        const existing = await getPhaseModuleById(ctx.db, previous.entityId);
         if (existing) return { module: moduleSummary(existing), idempotent: true };
       }
-      const latest = latestModuleVersion(ctx.db, args.slug);
+      const latest = await latestModuleVersion(ctx.db, args.slug);
       if (!latest) throw errors.notFound("phase_module", args.slug);
       if (latest.version !== args.expected_version) {
         throw errors.versionConflict("phase_module", args.slug, args.expected_version);
@@ -432,7 +432,7 @@ export const moduleTools: AdminToolDefinition[] = [
         rawBlueprint = { ...latest.blueprint, version: nextVersion };
       }
       const parsed = validateBlueprint(rawBlueprint).blueprint!;
-      const module = createModuleVersion(ctx.db, {
+      const module = await createModuleVersion(ctx.db, {
         slug: args.slug,
         version: nextVersion,
         name: parsed.name,
@@ -445,7 +445,7 @@ export const moduleTools: AdminToolDefinition[] = [
         changelog: args.changelog,
         createdBy: ctx.actor,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "modules.update",
         entityType: "phase_module",
         entityId: module.id,
@@ -454,7 +454,7 @@ export const moduleTools: AdminToolDefinition[] = [
         reason: args.reason,
         idempotencyKey: args.idempotency_key,
       });
-      return { module: moduleSummary(module), issues: collectIssues(ctx.db, module.blueprint) };
+      return { module: moduleSummary(module), issues: await collectIssues(ctx.db, module.blueprint) };
     },
   }),
 
@@ -472,9 +472,9 @@ export const moduleTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const target = mustGetModuleVersion(ctx.db, args.slug, args.version);
-      const active = getActiveModule(ctx.db, args.slug);
+    async handler(ctx, args) {
+      const target = await mustGetModuleVersion(ctx.db, args.slug, args.version);
+      const active = await getActiveModule(ctx.db, args.slug);
       const activeVersion = active?.version ?? 0;
       if (activeVersion !== args.expected_version) {
         throw errors.versionConflict("phase_module(active)", args.slug, args.expected_version);
@@ -482,8 +482,8 @@ export const moduleTools: AdminToolDefinition[] = [
       if (target.status === "active") {
         return { module: moduleSummary(target), already_active: true };
       }
-      const published = activateModuleVersion(ctx.db, args.slug, args.version);
-      auditMutation(ctx, {
+      const published = await activateModuleVersion(ctx.db, args.slug, args.version);
+      await auditMutation(ctx, {
         action: "modules.publish",
         entityType: "phase_module",
         entityId: published.id,
@@ -512,8 +512,8 @@ export const moduleTools: AdminToolDefinition[] = [
       reason: z.string().min(1).max(2000),
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const target = mustGetModuleVersion(ctx.db, args.slug, args.target_version);
+    async handler(ctx, args) {
+      const target = await mustGetModuleVersion(ctx.db, args.slug, args.target_version);
       if (target.status === "active") {
         throw new AgentosError(
           ErrorCodes.CONFLICT,
@@ -521,9 +521,9 @@ export const moduleTools: AdminToolDefinition[] = [
           { slug: args.slug, version: args.target_version },
         );
       }
-      const active = getActiveModule(ctx.db, args.slug);
-      const reactivated = activateModuleVersion(ctx.db, args.slug, args.target_version);
-      auditMutation(ctx, {
+      const active = await getActiveModule(ctx.db, args.slug);
+      const reactivated = await activateModuleVersion(ctx.db, args.slug, args.target_version);
+      await auditMutation(ctx, {
         action: "modules.rollback",
         entityType: "phase_module",
         entityId: reactivated.id,
@@ -546,12 +546,12 @@ export const moduleTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       let target: PhaseModule;
       if (args.version !== undefined) {
-        target = mustGetModuleVersion(ctx.db, args.slug, args.version);
+        target = await mustGetModuleVersion(ctx.db, args.slug, args.version);
       } else {
-        const active = getActiveModule(ctx.db, args.slug);
+        const active = await getActiveModule(ctx.db, args.slug);
         if (!active) {
           throw errors.validation(
             `modules.archive: ${args.slug} no tiene versión activa — indica \`version\` explícita`,
@@ -560,8 +560,8 @@ export const moduleTools: AdminToolDefinition[] = [
         target = active;
       }
       const before = moduleAuditFields(target);
-      const archived = archiveModuleVersion(ctx.db, args.slug, target.version);
-      auditMutation(ctx, {
+      const archived = await archiveModuleVersion(ctx.db, args.slug, target.version);
+      await auditMutation(ctx, {
         action: "modules.archive",
         entityType: "phase_module",
         entityId: archived.id,
@@ -586,18 +586,18 @@ export const moduleTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const row =
         args.version !== undefined
-          ? mustGetModuleVersion(ctx.db, args.slug, args.version)
-          : getActiveModule(ctx.db, args.slug);
+          ? await mustGetModuleVersion(ctx.db, args.slug, args.version)
+          : await getActiveModule(ctx.db, args.slug);
       if (!row) throw errors.notFound("phase_module(active)", args.slug);
       const content = serializeModuleMd(row.blueprint, row.bodyMd);
       const dir = args.dir ?? MODULES_DIR;
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${args.slug}.md`);
       fs.writeFileSync(file, content, "utf8");
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "modules.export",
         entityType: "phase_module",
         entityId: row.id,
@@ -638,8 +638,8 @@ export const moduleTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const person = mustGetPerson(ctx.db, args.person_id);
+    async handler(ctx, args) {
+      const person = await mustGetPerson(ctx.db, args.person_id);
       let org: LaunchOrgInput;
       if (args.org.org_id) {
         org = { orgId: args.org.org_id };
@@ -659,7 +659,7 @@ export const moduleTools: AdminToolDefinition[] = [
       // La auditoría del launch la escribe el MOTOR dentro de su transacción
       // (NM-5) — aquí no se duplica. Los eventos AG-UI salen POST-commit por
       // el sink del contexto (tabla events — la API los recoge por since_seq).
-      const result = launchModuleWithEvents(ctx.db, ctx.sink, {
+      const result = await launchModuleWithEvents(ctx.db, ctx.sink, {
         moduleSlug: args.module_slug,
         ...(args.version !== undefined ? { moduleVersion: args.version } : {}),
         org,

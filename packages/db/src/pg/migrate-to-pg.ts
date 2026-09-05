@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { PgTable } from "drizzle-orm/pg-core";
-import { closeDb, openDb, resolveDbPath, type AgentosDb } from "../client.js";
+import { closeDb, openDb, resolveDbPath, type AgentosSqliteDb } from "../client.js";
 import { closePgDb, openPgDb, type AgentosPgDb } from "./client-pg.js";
 import { runPgMigrations } from "./migrate-pg.js";
 import { backfillKnowledgeEmbeddings } from "./search-pg.js";
@@ -122,7 +122,7 @@ const BATCH = 500;
  * suyas); `migrateSqliteToPostgres` es el envoltorio que las abre y cierra.
  */
 export async function copyAllTables(
-  lite_: AgentosDb,
+  lite_: AgentosSqliteDb,
   pg_: AgentosPgDb,
   opts: { dryRun?: boolean; batchSize?: number; log?: (line: string) => void } = {},
 ): Promise<TableReport[]> {
@@ -229,7 +229,7 @@ export async function migrateSqliteToPostgres(
  * TEXT→objeto JSON) y ordenada por su columna temporal, que es lo que
  * garantiza padre-antes-que-hijo en las auto-FKs.
  */
-function readAll(db: AgentosDb, pair: TablePair): Record<string, unknown>[] {
+function readAll(db: AgentosSqliteDb, pair: TablePair): Record<string, unknown>[] {
   return db
     .select()
     .from(pair.from)

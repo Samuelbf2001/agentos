@@ -48,7 +48,11 @@ export class EventBus {
    * alimenta el ring buffer y notifica a los suscriptores del topic y a los
    * suscriptores globales.
    */
-  publish(topic: string, event: BusPayload, opts: { runId?: string } = {}): PersistedEvent {
+  async publish(
+    topic: string,
+    event: BusPayload,
+    opts: { runId?: string } = {},
+  ): Promise<PersistedEvent> {
     if (!isValidTopic(topic)) {
       throw new Error(`Topic inválido: ${topic}`);
     }
@@ -57,7 +61,7 @@ export class EventBus {
       opts.runId ?? (typeof (parsed as { runId?: unknown }).runId === "string"
         ? (parsed as { runId: string }).runId
         : undefined);
-    const persisted = appendEvent(this.db, {
+    const persisted = await appendEvent(this.db, {
       topic,
       type: parsed.type,
       payload: parsed as unknown as Record<string, unknown>,
@@ -87,20 +91,20 @@ export class EventBus {
    * (su último seq coincide con el persistido — la DB es la fuente de verdad);
    * en cualquier otro caso cae a la DB.
    */
-  getSince(topic: string, sinceSeq = 0, limit = 1000): PersistedEvent[] {
+  async getSince(topic: string, sinceSeq = 0, limit = 1000): Promise<PersistedEvent[]> {
     const buffer = this.buffers.get(topic);
-    if (buffer && buffer.newestSeq === dbLastSeq(this.db, topic)) {
+    if (buffer && buffer.newestSeq === (await dbLastSeq(this.db, topic))) {
       const buffered = buffer.since(sinceSeq);
       if (buffered !== null) {
         return buffered.slice(0, limit);
       }
     }
-    return listEventsSince(this.db, topic, sinceSeq, limit);
+    return await listEventsSince(this.db, topic, sinceSeq, limit);
   }
 
   /** Último seq persistido del topic (0 si nunca se emitió nada). */
-  lastSeq(topic: string): number {
-    return dbLastSeq(this.db, topic);
+  async lastSeq(topic: string): Promise<number> {
+    return await dbLastSeq(this.db, topic);
   }
 
   private bufferFor(topic: string): RingBuffer<PersistedEvent> {

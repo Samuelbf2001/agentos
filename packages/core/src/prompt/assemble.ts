@@ -66,46 +66,46 @@ export const METHODOLOGY_BY_PROJECT_TYPE: Record<ProjectType, string> = {
   ops: "ops",
 };
 
-function resolveAgent(db: AgentosDb, ref: Agent | string): Agent {
+async function resolveAgent(db: AgentosDb, ref: Agent | string): Promise<Agent> {
   if (typeof ref !== "string") return ref;
-  const agent = getAgent(db, ref) ?? getAgentBySlug(db, ref);
+  const agent = (await getAgent(db, ref)) ?? (await getAgentBySlug(db, ref));
   if (!agent) throw errors.notFound("agent", ref);
   return agent;
 }
 
-function resolveProject(db: AgentosDb, ref: Project | string | null | undefined): Project | null {
+async function resolveProject(db: AgentosDb, ref: Project | string | null | undefined): Promise<Project | null> {
   if (ref == null) return null;
   if (typeof ref !== "string") return ref;
-  const project = getProject(db, ref);
+  const project = await getProject(db, ref);
   if (!project) throw errors.notFound("project", ref);
   return project;
 }
 
-function resolveTask(db: AgentosDb, ref: Task | string | null | undefined): Task | null {
+async function resolveTask(db: AgentosDb, ref: Task | string | null | undefined): Promise<Task | null> {
   if (ref == null) return null;
   if (typeof ref !== "string") return ref;
-  const task = getTask(db, ref);
+  const task = await getTask(db, ref);
   if (!task) throw errors.notFound("task", ref);
   return task;
 }
 
-function resolveThread(db: AgentosDb, ref: Thread | string | null | undefined): Thread | null {
+async function resolveThread(db: AgentosDb, ref: Thread | string | null | undefined): Promise<Thread | null> {
   if (ref == null) return null;
   if (typeof ref !== "string") return ref;
-  const thread = getThread(db, ref);
+  const thread = await getThread(db, ref);
   if (!thread) throw errors.notFound("thread", ref);
   return thread;
 }
 
-export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): AssembledPrompt {
-  const agent = resolveAgent(db, input.agent);
-  const project = resolveProject(db, input.project);
-  const task = resolveTask(db, input.task);
-  const thread = resolveThread(db, input.thread);
+export async function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Promise<AssembledPrompt> {
+  const agent = await resolveAgent(db, input.agent);
+  const project = await resolveProject(db, input.project);
+  const task = await resolveTask(db, input.task);
+  const thread = await resolveThread(db, input.thread);
   const now = input.now ?? nowMs();
 
   // ── Capa stable ───────────────────────────────────────────────────────────
-  const activePrompt = getActivePrompt(db, agent.id);
+  const activePrompt = await getActivePrompt(db, agent.id);
   const identity =
     activePrompt?.stable?.trim() ||
     `Eres ${agent.name} (${agent.slug}), agente de la capa ${agent.layer} de AgentOS Sixteam.`;
@@ -121,7 +121,7 @@ export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Assem
     );
 
     const slug = input.methodologySlug ?? METHODOLOGY_BY_PROJECT_TYPE[project.type];
-    const methodology = slug ? getMethodology(db, slug) : undefined;
+    const methodology = slug ? await getMethodology(db, slug) : undefined;
     if (methodology) {
       contextParts.push(
         `## Metodología activa: ${methodology.slug} v${methodology.version}\n${methodology.bodyMd.trim()}`,
@@ -132,7 +132,8 @@ export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Assem
       );
     }
 
-    const docs = listDocs(db, { projectId: project.id }).slice(0, input.maxContextDocs ?? 20);
+    const allDocs = await listDocs(db, { projectId: project.id });
+    const docs = allDocs.slice(0, input.maxContextDocs ?? 20);
     if (docs.length > 0) {
       const lines = docs.map((d) => `- [doc:${d.id}] (${d.kind}) ${d.title}`);
       contextParts.push(
@@ -161,7 +162,8 @@ export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Assem
   if (project && !task) {
     // Runs sin tarea reclamada (chat): índice del tablero con los UUIDs reales
     // de las tareas, para que tasks.get/tasks.move/delegate usen ids que existen.
-    const boardIndex = listTasks(db, { projectId: project.id }).slice(0, input.maxBoardTasks ?? 30);
+    const allBoardTasks = await listTasks(db, { projectId: project.id });
+    const boardIndex = allBoardTasks.slice(0, input.maxBoardTasks ?? 30);
     if (boardIndex.length > 0) {
       const lines = boardIndex.map((t) => `- [task:${t.id}] (${t.status}) ${t.title}`);
       volatileParts.push(
@@ -174,7 +176,8 @@ export function assemblePrompt(db: AgentosDb, input: AssemblePromptInput): Assem
       `## Tarea actual\n- Id: ${task.id}\n- Título: ${task.title}\n- Estado: ${task.status} (etapa ${task.stage}, prioridad ${task.priority})` +
         (task.description ? `\n- Descripción: ${task.description}` : ""),
     );
-    const events = listTaskEvents(db, task.id).slice(-(input.maxTaskEvents ?? 10));
+    const allEvents = await listTaskEvents(db, task.id);
+    const events = allEvents.slice(-(input.maxTaskEvents ?? 10));
     if (events.length > 0) {
       const lines = events.map((e) => {
         const move = e.fromStatus || e.toStatus ? ` ${e.fromStatus ?? "·"}→${e.toStatus ?? "·"}` : "";

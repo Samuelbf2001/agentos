@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isAgentosError } from "@agentos/shared";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { createOrganization, createPerson } from "../src/repositories/organizations-people.js";
 import { createProject } from "../src/repositories/projects.js";
@@ -22,13 +22,13 @@ import {
   markTaskNotificationFailed,
 } from "../src/repositories/task-notifications.js";
 
-function freshDb(): AgentosDb {
+function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
   runMigrations(db);
   return db;
 }
 
-function fixture(db: AgentosDb) {
+function fixture(db: AgentosSqliteDb) {
   const org = createOrganization(db, { name: "Org asignaciones", kind: "client" });
   const otherOrg = createOrganization(db, { name: "Org ajena", kind: "client" });
   const project = createProject(db, {

@@ -1,11 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type GateState } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { projects } from "../schema.js";
 import type { NewProject, Project } from "../types.js";
 
 export function createProject(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewProject, "id" | "createdAt" | "updatedAt" | "version"> & { id?: string },
 ): Project {
   const now = nowMs();
@@ -14,11 +14,11 @@ export function createProject(
   return getProject(db, row.id!)!;
 }
 
-export function getProject(db: AgentosDb, id: string): Project | undefined {
+export function getProject(db: AgentosSqliteDb, id: string): Project | undefined {
   return db.select().from(projects).where(eq(projects.id, id)).get();
 }
 
-export function getProjectByName(db: AgentosDb, name: string): Project | undefined {
+export function getProjectByName(db: AgentosSqliteDb, name: string): Project | undefined {
   return db.select().from(projects).where(eq(projects.name, name)).get();
 }
 
@@ -29,7 +29,7 @@ export function getProjectByName(db: AgentosDb, name: string): Project | undefin
  * el redo legítimo es proyecto nuevo).
  */
 export function getProjectByOrgAndName(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   orgId: string,
   name: string,
 ): Project | undefined {
@@ -40,7 +40,7 @@ export function getProjectByOrgAndName(
     .get();
 }
 
-export function listProjects(db: AgentosDb, orgId?: string): Project[] {
+export function listProjects(db: AgentosSqliteDb, orgId?: string): Project[] {
   if (orgId) return db.select().from(projects).where(eq(projects.orgId, orgId)).all();
   return db.select().from(projects).all();
 }
@@ -50,7 +50,7 @@ export function listProjects(db: AgentosDb, orgId?: string): Project[] {
  * Conflicto → AgentosError(version_conflict); el llamador relee, nunca last-write-wins.
  */
 export function updateProject(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Omit<Project, "id" | "createdAt" | "version">>,
   expectedVersion: number,
@@ -69,7 +69,7 @@ export function updateProject(
 
 /** Gate 1 (nivel proyecto): cerrar ENTENDER exige aprobación humana. */
 export function setGateState(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   gateState: GateState,
   expectedVersion: number,

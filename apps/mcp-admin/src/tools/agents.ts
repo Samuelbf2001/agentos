@@ -65,8 +65,13 @@ function agentAuditFields(agent: Agent): Record<string, unknown> {
   };
 }
 
-function mustGetPromptVersionByNumber(db: AgentosDb, agent: Agent, version: number): PromptVersion {
-  const pv = listPromptVersions(db, agent.id).find((v) => v.version === version);
+async function mustGetPromptVersionByNumber(
+  db: AgentosDb,
+  agent: Agent,
+  version: number,
+): Promise<PromptVersion> {
+  const versions = await listPromptVersions(db, agent.id);
+  const pv = versions.find((v) => v.version === version);
   if (!pv) throw errors.notFound("prompt_version", `${agent.slug} v${version}`);
   return pv;
 }
@@ -90,8 +95,8 @@ export const agentTools: AdminToolDefinition[] = [
     description: "Lista los agentes registrados (slug, runtime, modelo, estado, versión).",
     schema: z.object({ status: AgentStatus.optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      const all = listAgents(ctx.db);
+    async handler(ctx, args) {
+      const all = await listAgents(ctx.db);
       return args.status ? all.filter((a) => a.status === args.status) : all;
     },
   }),
@@ -101,13 +106,14 @@ export const agentTools: AdminToolDefinition[] = [
     description: "Devuelve un agente (por id o slug) con su prompt activo y el nº de versiones.",
     schema: z.object({ agent: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
-      const active = getActivePrompt(ctx.db, agent.id);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
+      const active = await getActivePrompt(ctx.db, agent.id);
+      const versions = await listPromptVersions(ctx.db, agent.id);
       return {
         agent,
         active_prompt: active ?? null,
-        prompt_versions: listPromptVersions(ctx.db, agent.id).length,
+        prompt_versions: versions.length,
       };
     },
   }),
@@ -132,19 +138,19 @@ export const agentTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "agents.create", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "agents.create", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getAgent(ctx.db, previous.entityId);
+        const existing = await getAgent(ctx.db, previous.entityId);
         if (existing) return { agent: existing, idempotent: true };
       }
-      if (getAgentBySlug(ctx.db, args.slug)) {
+      if (await getAgentBySlug(ctx.db, args.slug)) {
         throw new AgentosError(ErrorCodes.CONFLICT, `Ya existe un agente con slug "${args.slug}"`);
       }
       const provider = args.provider_profile
-        ? resolveProviderRef(ctx.db, args.provider_profile)
+        ? await resolveProviderRef(ctx.db, args.provider_profile)
         : undefined;
-      const created = createAgent(ctx.db, {
+      const created = await createAgent(ctx.db, {
         slug: args.slug,
         name: args.name,
         layer: args.layer,
@@ -159,7 +165,7 @@ export const agentTools: AdminToolDefinition[] = [
       });
       let promptVersion: PromptVersion | null = null;
       if (args.prompt) {
-        promptVersion = createPromptVersion(ctx.db, {
+        promptVersion = await createPromptVersion(ctx.db, {
           agentId: created.id,
           stable: args.prompt.stable,
           context: args.prompt.context ?? null,
@@ -168,8 +174,8 @@ export const agentTools: AdminToolDefinition[] = [
           createdBy: ctx.actor,
         });
       }
-      const agent = getAgent(ctx.db, created.id)!;
-      auditMutation(ctx, {
+      const agent = (await getAgent(ctx.db, created.id))!;
+      await auditMutation(ctx, {
         action: "agents.create",
         entityType: "agent",
         entityId: agent.id,
@@ -207,8 +213,8 @@ export const agentTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
       if (agent.version !== args.expected_version) {
         throw errors.versionConflict("agent", agent.id, args.expected_version);
       }
@@ -230,14 +236,14 @@ export const agentTools: AdminToolDefinition[] = [
         if (p.limits !== undefined) patch.limits = p.limits;
         if (p.provider_profile !== undefined) {
           patch.providerProfileId =
-            p.provider_profile === null ? null : resolveProviderRef(ctx.db, p.provider_profile).id;
+            p.provider_profile === null ? null : (await resolveProviderRef(ctx.db, p.provider_profile)).id;
         }
-        updateAgent(ctx.db, agent.id, patch, args.expected_version);
+        await updateAgent(ctx.db, agent.id, patch, args.expected_version);
       }
 
       let promptVersion: PromptVersion | null = null;
       if (args.prompt) {
-        promptVersion = createPromptVersion(ctx.db, {
+        promptVersion = await createPromptVersion(ctx.db, {
           agentId: agent.id,
           stable: args.prompt.stable,
           context: args.prompt.context ?? null,
@@ -247,8 +253,8 @@ export const agentTools: AdminToolDefinition[] = [
         });
       }
 
-      const updated = getAgent(ctx.db, agent.id)!;
-      auditMutation(ctx, {
+      const updated = (await getAgent(ctx.db, agent.id))!;
+      await auditMutation(ctx, {
         action: "agents.update",
         entityType: "agent",
         entityId: agent.id,
@@ -275,11 +281,11 @@ export const agentTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
       const before = { status: agent.status, version: agent.version };
-      const updated = updateAgent(ctx.db, agent.id, { status: args.status }, args.expected_version);
-      auditMutation(ctx, {
+      const updated = await updateAgent(ctx.db, agent.id, { status: args.status }, args.expected_version);
+      await auditMutation(ctx, {
         action: "agents.set_status",
         entityType: "agent",
         entityId: agent.id,
@@ -304,17 +310,18 @@ export const agentTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
       if (agent.version !== args.expected_version) {
         throw errors.versionConflict("agent", agent.id, args.expected_version);
       }
-      const managerId = args.manager === null ? null : resolveAgentRef(ctx.db, args.manager).id;
+      const managerId =
+        args.manager === null ? null : (await resolveAgentRef(ctx.db, args.manager)).id;
       // Anti-ciclo ANTES de escribir (fail-closed): jamás se persiste un organigrama roto.
-      assertNoCycle(ctx.db, agent.id, managerId);
+      await assertNoCycle(ctx.db, agent.id, managerId);
       const before = { reportsTo: agent.reportsTo, version: agent.version };
-      const updated = updateAgent(ctx.db, agent.id, { reportsTo: managerId }, args.expected_version);
-      auditMutation(ctx, {
+      const updated = await updateAgent(ctx.db, agent.id, { reportsTo: managerId }, args.expected_version);
+      await auditMutation(ctx, {
         action: "agents.set_manager",
         entityType: "agent",
         entityId: agent.id,
@@ -322,7 +329,7 @@ export const agentTools: AdminToolDefinition[] = [
         after: { reportsTo: updated.reportsTo, version: updated.version },
         reason: args.reason,
       });
-      return { agent: updated, chain_health: computeOrgChainHealth(ctx.db, updated.id) };
+      return { agent: updated, chain_health: await computeOrgChainHealth(ctx.db, updated.id) };
     },
   }),
 
@@ -333,15 +340,20 @@ export const agentTools: AdminToolDefinition[] = [
       "cadena de cada agente (healthy | terminated_ancestor | missing_manager | cycle).",
     schema: z.object({}),
     readOnly: true,
-    handler(ctx) {
-      return {
-        tree: orgForCompany(ctx.db),
-        health: listAgents(ctx.db).map((a) => ({
+    async handler(ctx) {
+      const agents = await listAgents(ctx.db);
+      const health = [];
+      for (const a of agents) {
+        health.push({
           slug: a.slug,
           status: a.status,
           reportsTo: a.reportsTo,
-          chain: computeOrgChainHealth(ctx.db, a.id),
-        })),
+          chain: await computeOrgChainHealth(ctx.db, a.id),
+        });
+      }
+      return {
+        tree: await orgForCompany(ctx.db),
+        health,
       };
     },
   }),
@@ -358,17 +370,17 @@ export const agentTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "agents.clone", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "agents.clone", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getAgent(ctx.db, previous.entityId);
+        const existing = await getAgent(ctx.db, previous.entityId);
         if (existing) return { agent: existing, idempotent: true };
       }
-      const source = resolveAgentRef(ctx.db, args.agent);
-      if (getAgentBySlug(ctx.db, args.new_slug)) {
+      const source = await resolveAgentRef(ctx.db, args.agent);
+      if (await getAgentBySlug(ctx.db, args.new_slug)) {
         throw new AgentosError(ErrorCodes.CONFLICT, `Ya existe un agente con slug "${args.new_slug}"`);
       }
-      const clone = createAgent(ctx.db, {
+      const clone = await createAgent(ctx.db, {
         slug: args.new_slug,
         name: args.new_name ?? `${source.name} (clon)`,
         layer: source.layer,
@@ -381,10 +393,10 @@ export const agentTools: AdminToolDefinition[] = [
         autonomy: source.autonomy,
         status: source.status,
       });
-      const activePrompt = getActivePrompt(ctx.db, source.id);
+      const activePrompt = await getActivePrompt(ctx.db, source.id);
       let promptVersion: PromptVersion | null = null;
       if (activePrompt) {
-        promptVersion = createPromptVersion(ctx.db, {
+        promptVersion = await createPromptVersion(ctx.db, {
           agentId: clone.id,
           stable: activePrompt.stable,
           context: activePrompt.context,
@@ -393,8 +405,8 @@ export const agentTools: AdminToolDefinition[] = [
           createdBy: ctx.actor,
         });
       }
-      const agent = getAgent(ctx.db, clone.id)!;
-      auditMutation(ctx, {
+      const agent = (await getAgent(ctx.db, clone.id))!;
+      await auditMutation(ctx, {
         action: "agents.clone",
         entityType: "agent",
         entityId: agent.id,
@@ -419,9 +431,9 @@ export const agentTools: AdminToolDefinition[] = [
       methodology_slug: z.string().optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
-      const assembled = assemblePrompt(ctx.db, {
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
+      const assembled = await assemblePrompt(ctx.db, {
         agent,
         project: args.project_id ?? null,
         task: args.task_id ?? null,
@@ -448,9 +460,9 @@ export const promptTools: AdminToolDefinition[] = [
     description: "Lista las versiones de prompt de un agente (la activa marcada).",
     schema: z.object({ agent: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
-      const versions = listPromptVersions(ctx.db, agent.id);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
+      const versions = await listPromptVersions(ctx.db, agent.id);
       return {
         agent: { id: agent.id, slug: agent.slug },
         active_prompt_version_id: agent.activePromptVersionId,
@@ -475,17 +487,17 @@ export const promptTools: AdminToolDefinition[] = [
       version: z.number().int().positive().optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       if (args.prompt_version_id) {
-        const pv = getPromptVersion(ctx.db, args.prompt_version_id);
+        const pv = await getPromptVersion(ctx.db, args.prompt_version_id);
         if (!pv) throw errors.notFound("prompt_version", args.prompt_version_id);
         return pv;
       }
       if (!args.agent || args.version === undefined) {
         throw errors.validation("prompts.get exige prompt_version_id, o agent + version");
       }
-      const agent = resolveAgentRef(ctx.db, args.agent);
-      return mustGetPromptVersionByNumber(ctx.db, agent, args.version);
+      const agent = await resolveAgentRef(ctx.db, args.agent);
+      return await mustGetPromptVersionByNumber(ctx.db, agent, args.version);
     },
   }),
 
@@ -500,10 +512,10 @@ export const promptTools: AdminToolDefinition[] = [
       context_lines: z.number().int().min(0).max(20).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
-      const from = mustGetPromptVersionByNumber(ctx.db, agent, args.from_version);
-      const to = mustGetPromptVersionByNumber(ctx.db, agent, args.to_version);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
+      const from = await mustGetPromptVersionByNumber(ctx.db, agent, args.from_version);
+      const to = await mustGetPromptVersionByNumber(ctx.db, agent, args.to_version);
       const unified = unifiedDiff(composePromptText(from), composePromptText(to), {
         fromLabel: `${agent.slug}/prompt v${from.version}`,
         toLabel: `${agent.slug}/prompt v${to.version}`,
@@ -531,15 +543,15 @@ export const promptTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const agent = resolveAgentRef(ctx.db, args.agent);
+    async handler(ctx, args) {
+      const agent = await resolveAgentRef(ctx.db, args.agent);
       if (agent.version !== args.expected_version) {
         throw errors.versionConflict("agent", agent.id, args.expected_version);
       }
-      const target = mustGetPromptVersionByNumber(ctx.db, agent, args.to_version);
+      const target = await mustGetPromptVersionByNumber(ctx.db, agent, args.to_version);
       const before = { activePromptVersionId: agent.activePromptVersionId };
-      const updated = activatePromptVersion(ctx.db, agent.id, target.id);
-      auditMutation(ctx, {
+      const updated = await activatePromptVersion(ctx.db, agent.id, target.id);
+      await auditMutation(ctx, {
         action: "prompts.rollback",
         entityType: "agent",
         entityId: agent.id,

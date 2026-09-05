@@ -68,7 +68,7 @@ export function makeFakeRunner(getDb: () => AgentosDb, runtime: AgentRuntime): F
     async *run(input, ctx) {
       const db = getDb();
       calls.push({ input, ctx });
-      ensureRunningRun(db, input, ctx, runtime);
+      await ensureRunningRun(db, input, ctx, runtime);
       yield {
         type: "RUN_STARTED" as const,
         timestamp: nowMs(),
@@ -84,7 +84,7 @@ export function makeFakeRunner(getDb: () => AgentosDb, runtime: AgentRuntime): F
         outcome = behavior ? await behavior(input, ctx) : undefined;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        finishRunRow(db, ctx.runId, {
+        await finishRunRow(db, ctx.runId, {
           status: "failed",
           usage: { tokensIn: null, tokensOut: null, tokensCacheRead: null, tokensCacheWrite: null },
           costUsd: null,
@@ -94,7 +94,7 @@ export function makeFakeRunner(getDb: () => AgentosDb, runtime: AgentRuntime): F
         return;
       }
       if (cancelled.has(ctx.runId)) {
-        finishRunRow(db, ctx.runId, {
+        await finishRunRow(db, ctx.runId, {
           status: "cancelled",
           usage: { tokensIn: null, tokensOut: null, tokensCacheRead: null, tokensCacheWrite: null },
           costUsd: null,
@@ -108,7 +108,7 @@ export function makeFakeRunner(getDb: () => AgentosDb, runtime: AgentRuntime): F
       yield { type: "TEXT_MESSAGE_START" as const, timestamp: nowMs(), runId: ctx.runId, messageId, role: "assistant" as const };
       yield { type: "TEXT_MESSAGE_CONTENT" as const, timestamp: nowMs(), runId: ctx.runId, messageId, delta: text };
       yield { type: "TEXT_MESSAGE_END" as const, timestamp: nowMs(), runId: ctx.runId, messageId };
-      finishRunRow(db, ctx.runId, {
+      await finishRunRow(db, ctx.runId, {
         status: "succeeded",
         usage: { tokensIn: 10, tokensOut: 5, tokensCacheRead: null, tokensCacheWrite: null },
         costUsd: null,
@@ -217,7 +217,7 @@ export async function makeFixture(overrides: Partial<ApiOptions> = {}): Promise<
   const db = api.ctx.db;
   dbRef = db;
 
-  const provider = upsertProviderProfile(db, {
+  const provider = await upsertProviderProfile(db, {
     slug: "test-provider",
     name: "Proveedor de prueba (mock)",
     kind: "openai_compatible",
@@ -227,22 +227,23 @@ export async function makeFixture(overrides: Partial<ApiOptions> = {}): Promise<
   });
   // Idempotente: reabrir la MISMA db (test de recuperación) reutiliza filas.
   const org =
-    getOrganizationByName(db, "ACME S.A.") ?? createOrganization(db, { name: "ACME S.A.", kind: "client" });
+    (await getOrganizationByName(db, "ACME S.A.")) ??
+    (await createOrganization(db, { name: "ACME S.A.", kind: "client" }));
   const person =
-    getPersonByFullName(db, "Ernesto") ??
-    createPerson(db, { orgId: org.id, fullName: "Ernesto", isInternal: true, role: "Operador" });
+    (await getPersonByFullName(db, "Ernesto")) ??
+    (await createPerson(db, { orgId: org.id, fullName: "Ernesto", isInternal: true, role: "Operador" }));
   const project =
-    getProjectByName(db, "Assessment ACME") ??
-    createProject(db, {
+    (await getProjectByName(db, "Assessment ACME")) ??
+    (await createProject(db, {
       orgId: org.id,
       name: "Assessment ACME",
       type: "assessment",
       stage: "ENTENDER",
       gateState: "pending",
-    });
+    }));
   const alex =
-    getAgentBySlug(db, "alex") ??
-    createAgent(db, {
+    (await getAgentBySlug(db, "alex")) ??
+    (await createAgent(db, {
       slug: "alex",
       name: "Alex",
       layer: "consultoria",
@@ -250,10 +251,10 @@ export async function makeFixture(overrides: Partial<ApiOptions> = {}): Promise<
       providerProfileId: provider.id,
       model: "mock-model",
       toolsAllowlist: ALEX_ALLOWLIST,
-    });
+    }));
   const sam =
-    getAgentBySlug(db, "sam") ??
-    createAgent(db, {
+    (await getAgentBySlug(db, "sam")) ??
+    (await createAgent(db, {
       slug: "sam",
       name: "Sam",
       layer: "consultoria",
@@ -261,7 +262,7 @@ export async function makeFixture(overrides: Partial<ApiOptions> = {}): Promise<
       providerProfileId: provider.id,
       model: "mock-model",
       toolsAllowlist: SAM_ALLOWLIST,
-    });
+    }));
 
   // Login real por HTTP (ejercita la ruta).
   const login = await api.app.inject({
@@ -292,12 +293,12 @@ export async function makeFixture(overrides: Partial<ApiOptions> = {}): Promise<
 }
 
 /** Tarea READY lista para el despachador (DoD + agente asignado). */
-export function makeReadyTask(
+export async function makeReadyTask(
   fx: Pick<TestFixture, "db" | "project">,
   agent: Agent,
   patch: Partial<Parameters<typeof createTask>[1]> = {},
-): Task {
-  const task = createTask(fx.db, {
+): Promise<Task> {
+  const task = await createTask(fx.db, {
     projectId: fx.project.id,
     title: "Tarea de prueba",
     definitionOfDone: "Artefacto adjunto y estado REVIEW",
@@ -308,19 +309,23 @@ export function makeReadyTask(
     orderKey: "m",
     ...patch,
   });
-  return getTask(fx.db, task.id)!;
+  return (await getTask(fx.db, task.id))!;
 }
 
 // ── Utilidades ──────────────────────────────────────────────────────────────
 
 export async function waitFor<T>(
-  fn: () => T | undefined | false | null,
+  fn: () => T | undefined | false | null | Promise<T | undefined | false | null>,
   opts: { timeoutMs?: number; label?: string } = {},
 ): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 4_000;
   const start = Date.now();
   for (;;) {
-    const value = fn();
+    // `fn` puede ser async (repos @agentos/db ahora devuelven Promise): se
+    // espera el valor real antes de decidir si ya cumple la condición. La
+    // `undefined` viaja DENTRO de la Promise para que TS siga infiriendo T sin
+    // el "| undefined" (igual que hacía con la versión síncrona).
+    const value = await fn();
     if (value) return value;
     if (Date.now() - start > timeoutMs) {
       throw new Error(`waitFor agotó ${timeoutMs}ms${opts.label ? `: ${opts.label}` : ""}`);

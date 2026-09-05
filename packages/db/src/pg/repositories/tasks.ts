@@ -1,6 +1,6 @@
 /** Espejo Postgres de src/repositories/tasks.ts — misma superficie, asíncrona (§NFR-9). */
-import { and, asc, eq, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
-import { errors, newId, nowMs, type TaskStatus } from "@agentos/shared";
+import { and, asc, desc, eq, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { errors, newId, nowMs, type BlockedReason, type TaskStatus } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
 import { artifacts, taskEvents, tasks } from "../schema-pg.js";
 import {
@@ -361,4 +361,142 @@ export async function countArtifacts(db: AgentosPgDb, taskId: string): Promise<n
     .where(eq(artifacts.taskId, taskId))
     .limit(1);
   return Number(row?.n ?? 0);
+}
+
+// ── Espejo de las lecturas/escrituras portables (ver src/repositories/tasks.ts) ──
+
+/**
+ * Máximo `order_key` de una columna del tablero. El motor calcula a partir de
+ * él la clave "al final de la columna" (crecimiento acotado).
+ */
+export async function maxOrderKey(
+  db: AgentosPgDb,
+  projectId: string,
+  status: TaskStatus,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ mk: sql<string | null>`max(${tasks.orderKey})` })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, status)));
+  return row?.mk ?? null;
+}
+
+export interface TransitionTaskInput {
+  taskId: string;
+  from: TaskStatus;
+  to: TaskStatus;
+  blockedReason?: BlockedReason | null;
+  /** BLOCKED → READY reinicia el contador de intentos. */
+  resetAttempts?: boolean;
+  expectedVersion: number;
+}
+
+/**
+ * UPDATE atómico de estado con `expected_version` **y** estado origen (jamás
+ * last-write-wins — ARCHITECTURE §6). Devuelve `false` si nadie cambió.
+ */
+export async function transitionTaskStatus(
+  db: AgentosPgDb,
+  input: TransitionTaskInput,
+): Promise<boolean> {
+  const res = await db
+    .update(tasks)
+    .set({
+      status: input.to,
+      blockedReason: input.blockedReason ?? null,
+      leaseUntil: null,
+      ...(input.resetAttempts ? { attempts: 0 } : {}),
+      version: sql`${tasks.version} + 1`,
+      updatedAt: nowMs(),
+    })
+    .where(
+      and(
+        eq(tasks.id, input.taskId),
+        eq(tasks.version, input.expectedVersion),
+        eq(tasks.status, input.from),
+      ),
+    )
+    .returning({ id: tasks.id });
+  return res.length > 0;
+}
+
+/**
+ * Delegaciones YA hechas desde una tarea por un run (fan-out máx 4 por run).
+ * `runId = null` cuenta las que no tienen run.
+ */
+export async function countDelegations(
+  db: AgentosPgDb,
+  taskId: string,
+  runId: string | null,
+): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(taskEvents)
+    .where(
+      and(
+        eq(taskEvents.taskId, taskId),
+        eq(taskEvents.kind, "delegated"),
+        runId === null ? isNull(taskEvents.runId) : eq(taskEvents.runId, runId),
+      ),
+    );
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Instancias ABIERTAS de una plantilla de launch en el proyecto (guarda-raíl
+ * M6a). `json_extract` de SQLite se traduce aquí al operador `->>` de jsonb.
+ */
+export async function countOpenTasksByTemplateKey(
+  db: AgentosPgDb,
+  projectId: string,
+  templateKey: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(tasks)
+    .innerJoin(taskEvents, and(eq(taskEvents.taskId, tasks.id), eq(taskEvents.kind, "created")))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        sql`${taskEvents.payload}->>'template_key' = ${templateKey}`,
+      ),
+    );
+  return Number(row?.n ?? 0);
+}
+
+/** Artefactos de un `kind` producidos por tareas del proyecto (cierre de fase). */
+export async function countProjectArtifactsByKind(
+  db: AgentosPgDb,
+  projectId: string,
+  kind: string,
+): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(artifacts)
+    .innerJoin(tasks, eq(tasks.id, artifacts.taskId))
+    .where(and(eq(tasks.projectId, projectId), eq(artifacts.kind, kind)));
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Último artefacto de un `kind` del proyecto (opcionalmente solo de tareas en
+ * un estado dado). Desempate por `id DESC`: los ids son uuidv7, monotónicos.
+ */
+export async function findLatestProjectArtifact(
+  db: AgentosPgDb,
+  projectId: string,
+  kind: string,
+  filter: { taskStatus?: TaskStatus } = {},
+): Promise<Artifact | undefined> {
+  const conds = [eq(tasks.projectId, projectId), eq(artifacts.kind, kind)];
+  if (filter.taskStatus) conds.push(eq(tasks.status, filter.taskStatus));
+  const [row] = await db
+    .select()
+    .from(artifacts)
+    .innerJoin(tasks, eq(tasks.id, artifacts.taskId))
+    .where(and(...conds))
+    .orderBy(desc(artifacts.createdAt), desc(artifacts.id))
+    .limit(1);
+  return row?.artifacts;
 }

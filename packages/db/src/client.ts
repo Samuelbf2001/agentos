@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 
-export type AgentosDb = BetterSQLite3Database<typeof schema> & { $client: Database.Database };
+export type AgentosSqliteDb = BetterSQLite3Database<typeof schema> & { $client: Database.Database };
 
 /** Raíz del repo (packages/db/src → ../../..). */
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -25,7 +25,7 @@ export function resolveDbPath(dbPath?: string): string {
  * Abre la base de datos con los pragmas obligatorios (ARCHITECTURE §5):
  * WAL, foreign_keys ON, busy_timeout.
  */
-export function openDb(dbPath?: string): AgentosDb {
+export function openDb(dbPath?: string): AgentosSqliteDb {
   const file = resolveDbPath(dbPath);
   if (file !== ":memory:") {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -38,7 +38,7 @@ export function openDb(dbPath?: string): AgentosDb {
   return drizzle(client, { schema });
 }
 
-export function closeDb(db: AgentosDb): void {
+export function closeDb(db: AgentosSqliteDb): void {
   db.$client.close();
 }
 
