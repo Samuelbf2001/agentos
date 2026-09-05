@@ -54,6 +54,7 @@ módulo, no de golpe.
 | # | Sección | Estado | Dónde vive | Qué falta |
 |---|---|---|---|---|
 | 13 | Estructura de agentes | Cerrado | PRD §6 | — |
+| 13.5 | Convertir un rol, función o proceso en agente | Abierto | Parte IV, Convertir en agente | Confirmar los tres supuestos del documento. Es la costura mapa → ejecución que ningún referente hace |
 | 14 | Fichas de cada agente | Vacío en su mayoría | Mapa de agentes | Once fichas por llenar. Es el trabajo de las próximas sesiones |
 | 15 | Gates y humano en el circuito | Abierto | PRD §8 | Qué valida exactamente cada gate al aprobarse |
 
