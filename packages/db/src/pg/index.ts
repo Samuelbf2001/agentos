@@ -48,3 +48,4 @@ export * from "./repositories/project-sources.js";
 export * from "./repositories/processes.js";
 export * from "./repositories/methodologies.js";
 export * from "./repositories/config.js";
+export * from "./repositories/notion-migration.js";

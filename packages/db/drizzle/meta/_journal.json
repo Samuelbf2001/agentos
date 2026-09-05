@@ -43,6 +43,13 @@
       "when": 1787940000000,
       "tag": "0005_responsables_avisos",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1787960000000,
+      "tag": "0007_notion_linaje",
+      "breakpoints": true
     }
   ]
 }

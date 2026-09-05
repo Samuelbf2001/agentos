@@ -5,13 +5,33 @@ export interface PaginatedJson {
   pages: JsonObject[];
 }
 
+/** Contenido binario descargado de un adjunto, con su tipo declarado. */
+export interface DownloadedFile {
+  bytes: Uint8Array;
+  contentType: string | null;
+}
+
+export interface QueryDatabaseOptions {
+  /**
+   * Pide también las páginas archivadas / en papelera. La API pública de Notion
+   * no lo garantiza: si la rechaza, el capturador registra la excepción y sigue.
+   */
+  archived?: boolean;
+}
+
 export interface NotionReader {
   getComments(blockId: string): Promise<PaginatedJson>;
   getDatabase(databaseId: string): Promise<JsonObject>;
   getPage(pageId: string): Promise<JsonObject>;
   getPageProperty(pageId: string, propertyId: string): Promise<PaginatedJson>;
   getBlockChildren(blockId: string): Promise<PaginatedJson>;
-  queryDatabase(databaseId: string): AsyncIterable<JsonObject>;
+  queryDatabase(databaseId: string, options?: QueryDatabaseOptions): AsyncIterable<JsonObject>;
+  /**
+   * Descarga un adjunto por su URL firmada. Opcional: un lector sin esta
+   * capacidad hace que el capturador conserve metadatos y motivo, nunca que
+   * descarte el adjunto en silencio.
+   */
+  downloadFile?(url: string): Promise<DownloadedFile>;
 }
 
 export class NotionReadError extends Error {
@@ -117,10 +137,19 @@ export class NotionApiReader implements NotionReader {
     return this.request(`/pages/${encodeURIComponent(pageId)}`);
   }
 
-  async *queryDatabase(databaseId: string): AsyncIterable<JsonObject> {
+  async *queryDatabase(
+    databaseId: string,
+    options: QueryDatabaseOptions = {},
+  ): AsyncIterable<JsonObject> {
     let cursor: string | undefined;
     do {
       const body: JsonObject = { page_size: 100 };
+      // `archived`/`in_trash` no están documentados para todas las versiones de
+      // la API. Se envían solo cuando se piden; un 400 lo maneja el capturador.
+      if (options.archived) {
+        body.archived = true;
+        body.in_trash = true;
+      }
       if (cursor) body.start_cursor = cursor;
       const page = await this.request(`/databases/${encodeURIComponent(databaseId)}/query`, {
         method: "POST",
@@ -129,6 +158,22 @@ export class NotionApiReader implements NotionReader {
       for (const item of asResults(page.results)) yield item;
       cursor = nextCursor(page);
     } while (cursor);
+  }
+
+  /**
+   * Descarga de adjunto. La URL firmada de Notion NO lleva la cabecera de
+   * autorización de la API (es de S3) y caduca: por eso el snapshot guarda el
+   * binario con su SHA-256 y no confía en la URL.
+   */
+  async downloadFile(url: string): Promise<DownloadedFile> {
+    await this.throttle();
+    const response = await this.fetchFn(url);
+    if (!response.ok) throw new NotionReadError(response.status);
+    const buffer = await response.arrayBuffer();
+    return {
+      bytes: new Uint8Array(buffer),
+      contentType: response.headers?.get?.("content-type") ?? null,
+    };
   }
 
   private async getPaginated(pathname: string): Promise<PaginatedJson> {

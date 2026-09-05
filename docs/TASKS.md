@@ -55,8 +55,21 @@ No verificado por esta sesión; se documenta como trabajo en progreso, no como h
 - **Plan de despliegue a EasyPanel**: `Dockerfile.api` + `docs/PLAN-DESPLIEGUE-EASYPANEL.md` (plan, no ejecutado).
 - **Plan de migración desde Notion**: `docs/PLAN-MIGRACION-NOTION-EASYPANEL.md` y `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (Fase 1 preparada, solo lectura, nada escrito).
 
+## Migración desde Notion (rama `feat/notion-import`, 2026-09-05)
+
+| # | Bloque | Contenido | Estado |
+|---|---|---|---|
+| N-A | Linaje | Migración `0007_notion_linaje` (SQLite) y `0003_notion_linaje` (Postgres): `notion_migration_runs`, `notion_page_archives`, `notion_import_links`, `notion_identity_mappings`, `notion_import_quarantine` + repos duales | ✅ hecho |
+| N-B | Mapa de campos | `packages/notion-migration/src/field-map.ts`: estados, prioridad, fechas, identidad por correo confirmado, relaciones por esquema (no por rótulo), defaults de `stage`/`type` | ✅ hecho |
+| N-C | Importador | CLI idempotente `--snapshot --db [--pilot t,p] [--dry-run] [--identity-map]`, dos pasadas, informe de conciliación en `notion_migration_runs` | ✅ hecho |
+| N-D | Capturador ampliado | Adjuntos con SHA-256 dentro del snapshot + segunda pasada de páginas archivadas con excepción explícita si Notion la rechaza | ✅ hecho |
+| N-E | Ficha de origen | `GET /api/tasks/:id/notion-origin` y `GET /api/projects/:id/notion-origin` (solo lectura). `apps/web` NO tocado: la UI es de la ola siguiente | ✅ hecho (contrato listo) |
+| N-F | Piloto y conciliación | Piloto e importación completa ejecutados sobre COPIAS de la DB viva. La importación a producción está **pendiente de la aprobación de Ernesto** | ⏳ ver §11 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` |
+| N-G | Corte de escrituras de WhatsAppHub | Inventario verificado y documentado (§12 del mismo documento). **No implementado**: es la fase N5 | ⏳ pendiente |
+
 ## Pendientes
 
+- **Decisiones de la migración de Notion que Ernesto debe confirmar**: §13 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (stage/type uniformes, organización destino, `description` vacía, tabla de prioridad, correos de `people`).
 - `AGENTOS_WHATSAPPHUB_KEY` (WIKI_SYNC_KEY) en `.env` — pendiente de Ernesto.
 - Cambio observable `requiresApproval` del demo 2→7 en DBs frescas (revert de 1 línea) — pendiente visto bueno de Ernesto.
 - Q5 `order_key` unique — diferido.

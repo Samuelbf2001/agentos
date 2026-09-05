@@ -9,6 +9,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "snapshot": "tsx src/cli.ts"
+    "snapshot": "tsx src/cli.ts",
+    "import": "tsx src/import-cli.ts"
+  },
+  "dependencies": {
+    "@agentos/db": "workspace:*",
+    "@agentos/shared": "workspace:*"
   }
 }

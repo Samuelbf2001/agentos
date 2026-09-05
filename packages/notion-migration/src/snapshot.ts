@@ -13,10 +13,22 @@ export interface SnapshotOptions {
   reader: NotionReader;
   runId?: string;
   sources: SnapshotSource[];
+  /**
+   * Descargar los adjuntos alojados en Notion con su SHA-256. Las URLs firmadas
+   * caducan, así que el binario dentro del snapshot es la única conservación
+   * real. Los adjuntos `external` NUNCA se descargan: son de terceros; se
+   * conserva la referencia.
+   */
+  downloadAttachments?: boolean;
+  /**
+   * Intentar además las páginas archivadas / en papelera. Si la API de Notion
+   * rechaza la petición, queda como excepción explícita y la corrida sigue.
+   */
+  includeArchived?: boolean;
 }
 
 interface CaptureException {
-  category: "comments" | "page" | "property" | "query" | "schema";
+  category: "archived" | "attachment" | "comments" | "page" | "property" | "query" | "schema";
   pageId?: string;
   property?: string;
   source: string;
@@ -29,6 +41,11 @@ interface SourceSummary {
   key: string;
   pages_captured: number;
   page_ids: string[];
+  /** Páginas capturadas que Notion marca como archivadas o en papelera. */
+  archived_captured: number;
+  attachments_downloaded: number;
+  attachments_external: number;
+  attachments_failed: number;
 }
 
 export interface SnapshotManifest {
@@ -74,6 +91,13 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
   await rename(temporary, filePath);
 }
 
+async function writeBinary(filePath: string, bytes: Uint8Array): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.${randomUUID()}.tmp`;
+  await writeFile(temporary, bytes);
+  await rename(temporary, filePath);
+}
+
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -107,6 +131,186 @@ async function captureBlocks(reader: NotionReader, rootId: string, visited = new
   return { block_id: rootId, responses: listing.pages, children };
 }
 
+// ── Adjuntos ────────────────────────────────────────────────────────────────
+
+/** Tipos de bloque de Notion que llevan un archivo adjunto. */
+const FILE_BLOCK_TYPES = ["image", "file", "pdf", "video", "audio"] as const;
+
+interface AttachmentRef {
+  origin: "property" | "block";
+  /** Nombre de la propiedad o id del bloque que contiene el archivo. */
+  location: string;
+  name: string | null;
+  urlKind: "file" | "external";
+  url: string;
+  expiryTime: string | null;
+}
+
+interface AttachmentRecord extends Omit<AttachmentRef, "url"> {
+  status: "downloaded" | "external_reference" | "failed" | "not_supported";
+  sha256: string | null;
+  bytes: number | null;
+  content_type: string | null;
+  stored_uri: string | null;
+  reason: string | null;
+  /** La URL de Notion caduca; se conserva solo como evidencia de origen. */
+  source_url: string;
+}
+
+function fileRefFrom(container: JsonObject, origin: AttachmentRef["origin"], location: string): AttachmentRef | undefined {
+  const kind = stringValue(container.type);
+  if (kind === "file") {
+    const file = asRecord(container.file);
+    const url = stringValue(file.url);
+    if (!url) return undefined;
+    return {
+      origin,
+      location,
+      name: stringValue(container.name) ?? null,
+      urlKind: "file",
+      url,
+      expiryTime: stringValue(file.expiry_time) ?? null,
+    };
+  }
+  if (kind === "external") {
+    const url = stringValue(asRecord(container.external).url);
+    if (!url) return undefined;
+    return {
+      origin,
+      location,
+      name: stringValue(container.name) ?? null,
+      urlKind: "external",
+      url,
+      expiryTime: null,
+    };
+  }
+  return undefined;
+}
+
+/** Adjuntos de las propiedades `files` de la página. */
+function attachmentsFromProperties(page: JsonObject): AttachmentRef[] {
+  const refs: AttachmentRef[] = [];
+  for (const [name, definition] of Object.entries(asRecord(page.properties))) {
+    const property = asRecord(definition);
+    if (stringValue(property.type) !== "files") continue;
+    for (const entry of asArray(property.files)) {
+      const ref = fileRefFrom(asRecord(entry), "property", name);
+      if (ref) refs.push(ref);
+    }
+  }
+  return refs;
+}
+
+/** Adjuntos del árbol de bloques ya capturado (no vuelve a llamar a Notion). */
+function attachmentsFromBlocks(tree: unknown): AttachmentRef[] {
+  const refs: AttachmentRef[] = [];
+  const walk = (node: unknown): void => {
+    const record = asRecord(node);
+    for (const response of asArray(record.responses)) {
+      for (const block of asArray(asRecord(response).results)) {
+        const item = asRecord(block);
+        const type = stringValue(item.type);
+        if (!type || !(FILE_BLOCK_TYPES as readonly string[]).includes(type)) continue;
+        const ref = fileRefFrom(asRecord(item[type]), "block", stringValue(item.id) ?? type);
+        if (ref) refs.push(ref);
+      }
+    }
+    for (const child of asArray(record.children)) walk(child);
+  };
+  walk(tree);
+  return refs;
+}
+
+const EXTENSION_BY_CONTENT_TYPE: Readonly<Record<string, string>> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "application/pdf": ".pdf",
+  "text/plain": ".txt",
+  "video/mp4": ".mp4",
+  "audio/mpeg": ".mp3",
+};
+
+function extensionFor(name: string | null, contentType: string | null): string {
+  const fromName = name ? path.extname(name) : "";
+  if (/^\.[A-Za-z0-9]{1,8}$/u.test(fromName)) return fromName.toLowerCase();
+  const base = contentType?.split(";")[0]?.trim().toLowerCase();
+  return (base ? EXTENSION_BY_CONTENT_TYPE[base] : undefined) ?? ".bin";
+}
+
+/**
+ * Descarga los adjuntos alojados en Notion y escribe el manifiesto por página.
+ * Un fallo NUNCA descarta el adjunto: queda con `status:"failed"` y su motivo.
+ */
+async function captureAttachments(
+  reader: NotionReader,
+  sourceRoot: string,
+  page: JsonObject,
+  blocks: unknown,
+  safeId: string,
+  download: boolean,
+): Promise<{ records: AttachmentRecord[]; downloaded: number; external: number; failed: number }> {
+  const refs = [...attachmentsFromProperties(page), ...attachmentsFromBlocks(blocks)];
+  const records: AttachmentRecord[] = [];
+  let downloaded = 0;
+  let external = 0;
+  let failed = 0;
+
+  for (const ref of refs) {
+    const { url, ...rest } = ref;
+    const base: AttachmentRecord = {
+      ...rest,
+      status: "not_supported",
+      sha256: null,
+      bytes: null,
+      content_type: null,
+      stored_uri: null,
+      reason: null,
+      source_url: url,
+    };
+    if (ref.urlKind === "external") {
+      external += 1;
+      records.push({ ...base, status: "external_reference", reason: "archivo_externo_no_alojado_en_notion" });
+      continue;
+    }
+    if (!download || !reader.downloadFile) {
+      records.push({ ...base, reason: download ? "lector_sin_descarga" : "descarga_desactivada" });
+      continue;
+    }
+    try {
+      const file = await reader.downloadFile(url);
+      const digest = createHash("sha256").update(file.bytes).digest("hex");
+      const relative = path.posix.join("files", safeId, `${digest}${extensionFor(ref.name, file.contentType)}`);
+      await writeBinary(path.join(sourceRoot, relative), file.bytes);
+      downloaded += 1;
+      records.push({
+        ...base,
+        status: "downloaded",
+        sha256: digest,
+        bytes: file.bytes.byteLength,
+        content_type: file.contentType,
+        stored_uri: relative,
+      });
+    } catch (error) {
+      failed += 1;
+      records.push({
+        ...base,
+        status: "failed",
+        reason: error instanceof NotionReadError ? `http_${error.status}` : "descarga_fallida",
+      });
+    }
+  }
+
+  if (records.length > 0) {
+    await writeJson(path.join(sourceRoot, "files", `${safeId}.json`), {
+      page_id: stringValue(page.id) ?? safeId,
+      attachments: records,
+    });
+  }
+  return { records, downloaded, external, failed };
+}
+
 function exceptionFrom(
   category: CaptureException["category"],
   source: string,
@@ -121,6 +325,12 @@ function exceptionFrom(
   };
 }
 
+interface PageCaptureResult {
+  id: string;
+  archived: boolean;
+  attachments: { downloaded: number; external: number; failed: number };
+}
+
 async function capturePage(
   reader: NotionReader,
   sourceRoot: string,
@@ -128,7 +338,8 @@ async function capturePage(
   queryPage: JsonObject,
   source: string,
   exceptions: CaptureException[],
-): Promise<string | undefined> {
+  downloadAttachments: boolean,
+): Promise<PageCaptureResult | undefined> {
   const id = pageId(queryPage);
   const safeId = safePageId(id);
   try {
@@ -151,8 +362,10 @@ async function capturePage(
       }
     }
 
+    let blocks: unknown = null;
     try {
-      await writeJson(path.join(sourceRoot, "blocks", `${safeId}.json`), await captureBlocks(reader, id));
+      blocks = await captureBlocks(reader, id);
+      await writeJson(path.join(sourceRoot, "blocks", `${safeId}.json`), blocks);
     } catch (error) {
       exceptions.push(exceptionFrom("page", source, error, { pageId: id }));
     }
@@ -164,7 +377,24 @@ async function capturePage(
       // Comments need a separate Notion capability. The page snapshot remains usable.
       exceptions.push(exceptionFrom("comments", source, error, { pageId: id }));
     }
-    return id;
+
+    let attachments = { downloaded: 0, external: 0, failed: 0 };
+    try {
+      const captured = await captureAttachments(reader, sourceRoot, fullPage, blocks, safeId, downloadAttachments);
+      attachments = {
+        downloaded: captured.downloaded,
+        external: captured.external,
+        failed: captured.failed,
+      };
+    } catch (error) {
+      exceptions.push(exceptionFrom("attachment", source, error, { pageId: id }));
+    }
+
+    return {
+      id,
+      archived: fullPage.archived === true || fullPage.in_trash === true,
+      attachments,
+    };
   } catch (error) {
     exceptions.push(exceptionFrom("page", source, error, { pageId: id }));
     return undefined;
@@ -175,6 +405,8 @@ export async function createNotionSnapshot(options: SnapshotOptions): Promise<{ 
   const runId = options.runId ?? `notion-${new Date().toISOString().replace(/[:.]/gu, "-")}`;
   const runDirectory = path.resolve(options.outputDirectory, runId);
   await mkdir(runDirectory, { recursive: false });
+  const downloadAttachments = options.downloadAttachments !== false;
+  const includeArchived = options.includeArchived !== false;
   const sources: SourceSummary[] = [];
 
   for (const source of options.sources) {
@@ -186,28 +418,76 @@ export async function createNotionSnapshot(options: SnapshotOptions): Promise<{ 
       await writeJson(path.join(sourceRoot, "schema.json"), schema);
     } catch (error) {
       exceptions.push(exceptionFrom("schema", source.key, error));
-      sources.push({ database_id: source.databaseId, exceptions, key: source.key, pages_captured: 0, page_ids: [] });
+      sources.push({
+        database_id: source.databaseId,
+        exceptions,
+        key: source.key,
+        pages_captured: 0,
+        page_ids: [],
+        archived_captured: 0,
+        attachments_downloaded: 0,
+        attachments_external: 0,
+        attachments_failed: 0,
+      });
       continue;
     }
 
     const capturedIds: string[] = [];
+    const seen = new Set<string>();
+    let archivedCaptured = 0;
+    let downloaded = 0;
+    let external = 0;
+    let failed = 0;
     const ids = schemaPropertyIds(schema);
+
+    const consume = (result: PageCaptureResult | undefined): void => {
+      if (!result || seen.has(result.id)) return;
+      seen.add(result.id);
+      capturedIds.push(result.id);
+      if (result.archived) archivedCaptured += 1;
+      downloaded += result.attachments.downloaded;
+      external += result.attachments.external;
+      failed += result.attachments.failed;
+    };
+
     try {
       for await (const queryPage of options.reader.queryDatabase(source.databaseId)) {
-        const captured = await capturePage(options.reader, sourceRoot, ids, queryPage, source.key, exceptions);
-        if (captured) capturedIds.push(captured);
+        consume(
+          await capturePage(options.reader, sourceRoot, ids, queryPage, source.key, exceptions, downloadAttachments),
+        );
       }
     } catch (error) {
       // Si la paginación de la consulta se corta, se conserva lo ya capturado y
       // la corrida queda marcada como incompleta en vez de perderse entera.
       exceptions.push(exceptionFrom("query", source.key, error));
     }
+
+    if (includeArchived) {
+      // Segunda pasada explícita. La API pública no promete listar la papelera:
+      // si la rechaza, se registra el límite en vez de afirmar que no había nada.
+      try {
+        for await (const queryPage of options.reader.queryDatabase(source.databaseId, { archived: true })) {
+          const id = stringValue(queryPage.id);
+          if (id && seen.has(id)) continue;
+          consume(
+            await capturePage(options.reader, sourceRoot, ids, queryPage, source.key, exceptions, downloadAttachments),
+          );
+        }
+      } catch (error) {
+        exceptions.push(exceptionFrom("archived", source.key, error));
+      }
+    }
+
     const summary: SourceSummary = {
       database_id: source.databaseId,
       exceptions,
       key: source.key,
       pages_captured: capturedIds.length,
       page_ids: capturedIds,
+      archived_captured: archivedCaptured,
+      attachments_downloaded: downloaded,
+      attachments_external: external,
+      attachments_failed: failed,
     };
     await writeJson(path.join(sourceRoot, "manifest.json"), summary);
     sources.push(summary);
