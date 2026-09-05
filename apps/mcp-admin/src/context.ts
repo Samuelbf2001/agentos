@@ -8,10 +8,10 @@
 import {
   appendAudit,
   appendEvent,
+  applyMigrations,
   findAuditByIdempotencyKey,
   getPerson,
-  openDb,
-  runMigrations,
+  openConfiguredDb,
   type AgentosDb,
   type AuditEntry,
   type Person,
@@ -57,9 +57,9 @@ export function parseProfile(raw: string | undefined): AdminProfile {
  */
 export function persistentEventSink(db: AgentosDb): EventSink {
   return {
-    publish(topic, event) {
+    async publish(topic, event) {
       try {
-        appendEvent(db, {
+        await appendEvent(db, {
           topic,
           type: event.type,
           payload: event.payload ?? null,
@@ -73,9 +73,9 @@ export function persistentEventSink(db: AgentosDb): EventSink {
   };
 }
 
-export function createAdminContext(opts: CreateAdminContextOptions): AdminContext {
-  const db = opts.db ?? openDb(opts.dbPath);
-  if (opts.migrate !== false) runMigrations(db);
+export async function createAdminContext(opts: CreateAdminContextOptions): Promise<AdminContext> {
+  const db = opts.db ?? (await openConfiguredDb({ dbPath: opts.dbPath }));
+  if (opts.migrate !== false) await applyMigrations(db);
   const sink = opts.sink ?? persistentEventSink(db);
   const engine = createBoardEngine({ db, sink });
   const actor = opts.personId ? `person:${opts.personId}` : "system:mcp-admin";
@@ -86,8 +86,8 @@ export { noopEventSink };
 
 // ── Helpers de atribución y auditoría comunes a todas las tools ─────────────
 
-export function mustGetPerson(db: AgentosDb, personId: string): Person {
-  const person = getPerson(db, personId);
+export async function mustGetPerson(db: AgentosDb, personId: string): Promise<Person> {
+  const person = await getPerson(db, personId);
   if (!person) throw errors.notFound("person", personId);
   return person;
 }
@@ -108,7 +108,7 @@ export interface AuditMutationInput {
  * (regla dura de §7). La idempotency_key viaja dentro de `after` para que
  * `findAuditByIdempotencyKey` la recupere.
  */
-export function auditMutation(ctx: AdminContext, input: AuditMutationInput): AuditEntry {
+export async function auditMutation(ctx: AdminContext, input: AuditMutationInput): Promise<AuditEntry> {
   const after = {
     ...(input.after ?? {}),
     ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
@@ -127,11 +127,11 @@ export function auditMutation(ctx: AdminContext, input: AuditMutationInput): Aud
 }
 
 /** Mutación ya aplicada con esta clave → su entrada de auditoría (o undefined). */
-export function findIdempotentMutation(
+export async function findIdempotentMutation(
   ctx: AdminContext,
   action: string,
   idempotencyKey: string | undefined | null,
-): AuditEntry | undefined {
+): Promise<AuditEntry | undefined> {
   if (!idempotencyKey) return undefined;
   return findAuditByIdempotencyKey(ctx.db, action, idempotencyKey);
 }

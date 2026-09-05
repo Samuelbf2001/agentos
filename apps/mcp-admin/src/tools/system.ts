@@ -70,9 +70,9 @@ export const configTools: AdminToolDefinition[] = [
     description: "Lee app_config: una clave concreta o todas.",
     schema: z.object({ key: z.string().optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      if (args.key) return { key: args.key, value: getConfig(ctx.db, args.key) ?? null };
-      return listConfig(ctx.db);
+    async handler(ctx, args) {
+      if (args.key) return { key: args.key, value: (await getConfig(ctx.db, args.key)) ?? null };
+      return await listConfig(ctx.db);
     },
   }),
 
@@ -95,7 +95,7 @@ export const configTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const isBudgetKey = PROJECT_BUDGET_KEY_RE.test(args.key);
       if (!isBudgetKey && !ALLOWED_CONFIG_KEYS.has(args.key)) {
         throw errors.validation(
@@ -123,9 +123,9 @@ export const configTools: AdminToolDefinition[] = [
           { key: args.key },
         );
       }
-      const before = { value: getConfig(ctx.db, args.key) ?? null };
-      setConfig(ctx.db, args.key, value);
-      auditMutation(ctx, {
+      const before = { value: (await getConfig(ctx.db, args.key)) ?? null };
+      await setConfig(ctx.db, args.key, value);
+      await auditMutation(ctx, {
         action: "config.set",
         entityType: "app_config",
         entityId: args.key,
@@ -143,8 +143,8 @@ export const configTools: AdminToolDefinition[] = [
       "Kill switch ON: ningún agente arranca trabajo nuevo (los runs vivos los corta la API). Core audita.",
     schema: z.object({ reason: Reason }),
     readOnly: false,
-    handler(ctx, args) {
-      ctx.engine.setKillSwitch(true, ctx.actor, args.reason);
+    async handler(ctx, args) {
+      await ctx.engine.setKillSwitch(true, ctx.actor, args.reason);
       return { kill_switch: true };
     },
   }),
@@ -154,8 +154,8 @@ export const configTools: AdminToolDefinition[] = [
     description: "Kill switch OFF: los agentes vuelven a poder tomar trabajo. Core audita.",
     schema: z.object({ reason: Reason }),
     readOnly: false,
-    handler(ctx, args) {
-      ctx.engine.setKillSwitch(false, ctx.actor, args.reason);
+    async handler(ctx, args) {
+      await ctx.engine.setKillSwitch(false, ctx.actor, args.reason);
       return { kill_switch: false };
     },
   }),
@@ -167,40 +167,44 @@ export const configTools: AdminToolDefinition[] = [
       "presupuestos de fase activos por proyecto (budget:project:*, con gasto acumulado).",
     schema: z.object({}),
     readOnly: true,
-    handler(ctx) {
-      const tables = countDomainTables(ctx.db);
+    async handler(ctx) {
+      const tables = await countDomainTables(ctx.db);
       // §13.4: presupuestos de proyecto declarados por launches (o editados por
       // humano). Cálculo de umbrales de aviso aquí — el "lugar natural", sin UI.
-      const projectBudgets = listConfig(ctx.db)
-        .filter((row) => projectIdFromBudgetKey(row.key) !== null)
-        .map((row) => {
-          const projectId = projectIdFromBudgetKey(row.key)!;
-          const budget = parseProjectBudget(row.value);
-          const spent = sumRunCostForProject(ctx.db, projectId);
-          const phaseUsd = budget?.phaseUsd ?? null;
-          const pctUsed = phaseUsd !== null ? Math.round((spent / phaseUsd) * 100) : null;
-          const thresholds = budget?.warningThresholdsPct ?? [];
-          return {
-            project_id: projectId,
-            phase_usd: phaseUsd,
-            per_run_usd: budget?.perRunUsd ?? null,
-            launch_id: budget?.launchId ?? null,
-            spent_usd: spent,
-            pct_used: pctUsed,
-            warning_thresholds_pct: thresholds,
-            warnings_reached:
-              pctUsed !== null ? thresholds.filter((t) => pctUsed >= t) : [],
-            exhausted: phaseUsd !== null && spent >= phaseUsd,
-          };
+      const configRows = (await listConfig(ctx.db)).filter(
+        (row) => projectIdFromBudgetKey(row.key) !== null,
+      );
+      const projectBudgets = [];
+      for (const row of configRows) {
+        const projectId = projectIdFromBudgetKey(row.key)!;
+        const budget = parseProjectBudget(row.value);
+        const spent = await sumRunCostForProject(ctx.db, projectId);
+        const phaseUsd = budget?.phaseUsd ?? null;
+        const pctUsed = phaseUsd !== null ? Math.round((spent / phaseUsd) * 100) : null;
+        const thresholds = budget?.warningThresholdsPct ?? [];
+        projectBudgets.push({
+          project_id: projectId,
+          phase_usd: phaseUsd,
+          per_run_usd: budget?.perRunUsd ?? null,
+          launch_id: budget?.launchId ?? null,
+          spent_usd: spent,
+          pct_used: pctUsed,
+          warning_thresholds_pct: thresholds,
+          warnings_reached: pctUsed !== null ? thresholds.filter((t) => pctUsed >= t) : [],
+          exhausted: phaseUsd !== null && spent >= phaseUsd,
         });
+      }
+      const agents = await listAgents(ctx.db);
+      const tasks = await listTasks(ctx.db);
+      const pendingApprovals = await ctx.engine.listPendingApprovals();
       return {
         status: "ok",
         db_ok: tables > 0,
         tables,
-        agents: listAgents(ctx.db).length,
-        tasks: listTasks(ctx.db).length,
-        pending_approvals: ctx.engine.listPendingApprovals().length,
-        kill_switch_active: ctx.engine.isKillSwitchActive(),
+        agents: agents.length,
+        tasks: tasks.length,
+        pending_approvals: pendingApprovals.length,
+        kill_switch_active: await ctx.engine.isKillSwitchActive(),
         project_budgets: projectBudgets,
         profile: ctx.profile,
         actor: ctx.actor,
@@ -215,8 +219,8 @@ export const peopleTools: AdminToolDefinition[] = [
     description: "Lista personas (opcionalmente por organización).",
     schema: z.object({ org_id: z.string().optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      return listPeople(ctx.db, args.org_id);
+    async handler(ctx, args) {
+      return await listPeople(ctx.db, args.org_id);
     },
   }),
 
@@ -234,10 +238,10 @@ export const peopleTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const existing = args.id
-        ? mustGetPerson(ctx.db, args.id)
-        : getPersonByFullName(ctx.db, args.full_name);
+        ? await mustGetPerson(ctx.db, args.id)
+        : await getPersonByFullName(ctx.db, args.full_name);
       if (existing) {
         const before = {
           fullName: existing.fullName,
@@ -245,13 +249,13 @@ export const peopleTools: AdminToolDefinition[] = [
           role: existing.role,
           isInternal: existing.isInternal,
         };
-        const updated = updatePerson(ctx.db, existing.id, {
+        const updated = await updatePerson(ctx.db, existing.id, {
           fullName: args.full_name,
           ...(args.email !== undefined ? { email: args.email } : {}),
           ...(args.role !== undefined ? { role: args.role } : {}),
           ...(args.is_internal !== undefined ? { isInternal: args.is_internal } : {}),
         });
-        auditMutation(ctx, {
+        await auditMutation(ctx, {
           action: "people.upsert",
           entityType: "person",
           entityId: updated.id,
@@ -269,14 +273,14 @@ export const peopleTools: AdminToolDefinition[] = [
       if (!args.org_id) {
         throw errors.validation("people.upsert: crear una persona nueva exige org_id");
       }
-      const person = createPerson(ctx.db, {
+      const person = await createPerson(ctx.db, {
         orgId: args.org_id,
         fullName: args.full_name,
         email: args.email ?? null,
         role: args.role ?? null,
         isInternal: args.is_internal ?? false,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "people.upsert",
         entityType: "person",
         entityId: person.id,
@@ -346,52 +350,52 @@ function pickRevertible(
   return { applied, ignored };
 }
 
-function applyRevert(
+async function applyRevert(
   ctx: AdminContext,
   entityType: string,
   entityId: string,
   before: Record<string, unknown>,
-): { applied: Record<string, unknown>; ignored: string[] } {
+): Promise<{ applied: Record<string, unknown>; ignored: string[] }> {
   const { applied, ignored } = pickRevertible(entityType, before);
 
   switch (entityType) {
     case "agent": {
-      const agent = getAgent(ctx.db, entityId);
+      const agent = await getAgent(ctx.db, entityId);
       if (!agent) throw errors.notFound("agent", entityId);
       if (Object.keys(applied).length === 0) break;
-      updateAgent(ctx.db, agent.id, applied as Partial<Agent>, agent.version);
+      await updateAgent(ctx.db, agent.id, applied as Partial<Agent>, agent.version);
       break;
     }
     case "task": {
-      const task = getTask(ctx.db, entityId);
+      const task = await getTask(ctx.db, entityId);
       if (!task) throw errors.notFound("task", entityId);
       if (Object.keys(applied).length === 0) break;
-      updateTask(ctx.db, task.id, applied as Partial<Task>, task.version);
+      await updateTask(ctx.db, task.id, applied as Partial<Task>, task.version);
       break;
     }
     case "project": {
-      const project = getProject(ctx.db, entityId);
+      const project = await getProject(ctx.db, entityId);
       if (!project) throw errors.notFound("project", entityId);
       if (Object.keys(applied).length === 0) break;
-      updateProject(ctx.db, project.id, applied as Partial<Project>, project.version);
+      await updateProject(ctx.db, project.id, applied as Partial<Project>, project.version);
       break;
     }
     case "provider_profile": {
-      const profile = getProviderProfile(ctx.db, entityId);
+      const profile = await getProviderProfile(ctx.db, entityId);
       if (!profile) throw errors.notFound("provider_profile", entityId);
-      upsertProviderProfile(ctx.db, { ...profile, ...applied, slug: profile.slug });
+      await upsertProviderProfile(ctx.db, { ...profile, ...applied, slug: profile.slug });
       break;
     }
     case "app_config": {
       if (entityId === ConfigKeys.KILL_SWITCH) {
         // El estado anterior del kill switch se restaura por el camino auditado de core.
-        ctx.engine.setKillSwitch(before.active === true, ctx.actor, "audit.revert");
+        await ctx.engine.setKillSwitch(before.active === true, ctx.actor, "audit.revert");
         return { applied: { active: before.active === true }, ignored: [] };
       }
       if (!ALLOWED_CONFIG_KEYS.has(entityId) && !PROJECT_BUDGET_KEY_RE.test(entityId)) {
         throw errors.validation(`audit.revert: clave de config no permitida: "${entityId}"`);
       }
-      setConfig(ctx.db, entityId, before.value ?? null);
+      await setConfig(ctx.db, entityId, before.value ?? null);
       return { applied: { value: before.value ?? null }, ignored: [] };
     }
     default:
@@ -417,8 +421,8 @@ export const auditTools: AdminToolDefinition[] = [
       limit: z.number().int().positive().max(500).optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      return queryAudit(ctx.db, {
+    async handler(ctx, args) {
+      return await queryAudit(ctx.db, {
         entityType: args.entity_type,
         entityId: args.entity_id,
         action: args.action,
@@ -436,8 +440,8 @@ export const auditTools: AdminToolDefinition[] = [
       "Solo revierte datos — jamás salta la máquina de estados.",
     schema: z.object({ audit_id: z.string().min(1), reason: Reason }),
     readOnly: false,
-    handler(ctx, args) {
-      const entry = getAuditEntry(ctx.db, args.audit_id);
+    async handler(ctx, args) {
+      const entry = await getAuditEntry(ctx.db, args.audit_id);
       if (!entry) throw errors.notFound("audit_entry", args.audit_id);
       if (!entry.before || Object.keys(entry.before).length === 0) {
         throw errors.validation(
@@ -447,8 +451,8 @@ export const auditTools: AdminToolDefinition[] = [
       if (!entry.entityId) {
         throw errors.validation(`La fila de auditoría ${entry.id} no referencia una entidad`);
       }
-      const { applied, ignored } = applyRevert(ctx, entry.entityType, entry.entityId, entry.before);
-      const audit = auditMutation(ctx, {
+      const { applied, ignored } = await applyRevert(ctx, entry.entityType, entry.entityId, entry.before);
+      const audit = await auditMutation(ctx, {
         action: "audit.revert",
         entityType: entry.entityType,
         entityId: entry.entityId,

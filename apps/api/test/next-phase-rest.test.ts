@@ -18,6 +18,7 @@ import {
   listTasks,
   loadMethodologySeeds,
   parseModuleSeed,
+  updateTask,
   upsertMethodology,
   upsertPhaseModuleFromSeed,
 } from "@agentos/db";
@@ -28,7 +29,7 @@ let fx: TestFixture;
 beforeEach(async () => {
   fx = await makeFixture();
   for (const m of loadMethodologySeeds()) {
-    upsertMethodology(fx.db, {
+    await upsertMethodology(fx.db, {
       slug: m.slug,
       version: m.version,
       bodyMd: m.bodyMd,
@@ -45,7 +46,7 @@ beforeEach(async () => {
     ["vinnie", "implementacion"],
     ["quinn", "meta"],
   ] as const) {
-    createAgent(fx.db, {
+    await createAgent(fx.db, {
       slug,
       name: slug[0]!.toUpperCase() + slug.slice(1),
       layer,
@@ -57,7 +58,7 @@ beforeEach(async () => {
   }
   // Los 3 módulos REALES por el mismo camino del seed (quedan activos).
   for (const file of ["consultoria.md", "implementacion.md", "operacion.md"]) {
-    upsertPhaseModuleFromSeed(fx.db, parseModuleSeed(path.join(MODULES_DIR, file)));
+    await upsertPhaseModuleFromSeed(fx.db, parseModuleSeed(path.join(MODULES_DIR, file)));
   }
 });
 
@@ -88,10 +89,10 @@ async function launchConsultoria(): Promise<{ launchId: string; projectId: strin
 }
 
 /** Deliverables mínimos (ISO off) + roadmap aprobado, como CA-M3.1 exige. */
-function completePhase(projectId: string): void {
+async function completePhase(projectId: string): Promise<void> {
   // La org del proyecto es la creada por el launch (Globex), no la del fixture:
   // los procesos as-is cuentan por org_id del proyecto (phaseClosureStatus).
-  const orgId = getProject(fx.db, projectId)!.orgId;
+  const orgId = (await getProject(fx.db, projectId))!.orgId;
   const doc = (kind: string, title: string) =>
     createDoc(fx.db, {
       orgId,
@@ -100,26 +101,26 @@ function completePhase(projectId: string): void {
       title,
       bodyMd: "Contenido con fuente.",
     });
-  doc("org_profile", "Perfil Globex");
-  doc("interview", "Entrevista dirección");
-  doc("interview", "Entrevista operaciones");
-  doc("finding", "Fugas de valor");
-  createProcess(fx.db, { orgId, name: "direccion", variant: "as_is" });
-  createProcess(fx.db, { orgId, name: "operaciones", variant: "as_is" });
+  await doc("org_profile", "Perfil Globex");
+  await doc("interview", "Entrevista dirección");
+  await doc("interview", "Entrevista operaciones");
+  await doc("finding", "Fugas de valor");
+  await createProcess(fx.db, { orgId, name: "direccion", variant: "as_is" });
+  await createProcess(fx.db, { orgId, name: "operaciones", variant: "as_is" });
 
-  const tasks = listTasks(fx.db, { projectId });
+  const tasks = await listTasks(fx.db, { projectId });
   const informe = tasks.find((t) => t.title.includes("Informe"))!;
   const roadmap = tasks.find((t) => t.title.includes("Roadmap"))!;
-  attachArtifact(fx.db, { taskId: informe.id, kind: "report", title: "Informe final" });
-  attachArtifact(fx.db, {
+  await attachArtifact(fx.db, { taskId: informe.id, kind: "report", title: "Informe final" });
+  await attachArtifact(fx.db, {
     taskId: roadmap.id,
     kind: "roadmap",
     title: "Roadmap",
     content: "- Automatizar facturación\n- Pipeline CRM\n",
   });
-  fx.db.$client
-    .prepare(`UPDATE tasks SET status = 'DONE', version = version + 1 WHERE id = ?`)
-    .run(roadmap.id);
+  // Sustituye el UPDATE crudo de SQLite por la función de repositorio: vale
+  // igual para el motor SQLite y para Postgres (docs/POSTGRES.md §5).
+  await updateTask(fx.db, roadmap.id, { status: "DONE" }, roadmap.version);
 }
 
 describe("GET /api/projects/:id/next-phase (CA-M3.2)", () => {
@@ -136,7 +137,7 @@ describe("GET /api/projects/:id/next-phase (CA-M3.2)", () => {
     expect(res.json()).toMatchObject({ available: false, reason: "phase_incomplete" });
 
     // 2) Deliverables completos pero gate sin aprobar.
-    completePhase(projectId);
+    await completePhase(projectId);
     res = await fx.api.app.inject({
       method: "GET",
       url: `/api/projects/${projectId}/next-phase`,
@@ -177,7 +178,7 @@ describe("GET /api/projects/:id/next-phase (CA-M3.2)", () => {
     expect(status.prefilled.missing_required).toEqual(["fecha_objetivo"]);
 
     // 4) Disparo de implementacion con el prefill + previous_launch_id.
-    const docsBefore = listDocs(fx.db, { projectId }).length;
+    const docsBefore = (await listDocs(fx.db, { projectId })).length;
     const launch = await fx.api.app.inject({
       method: "POST",
       url: "/api/modules/implementacion/launch",
@@ -197,7 +198,7 @@ describe("GET /api/projects/:id/next-phase (CA-M3.2)", () => {
     expect(body.project.stage).toBe("CONSTRUIR");
     expect(body.project.gateState).toBe("pending"); // gate de la fase nueva
     expect(body.launch.previousLaunchId).toBe(launchId);
-    expect(listDocs(fx.db, { projectId })).toHaveLength(docsBefore); // Context Hub intacto
+    expect(await listDocs(fx.db, { projectId })).toHaveLength(docsBefore); // Context Hub intacto
   });
 
   it("proyecto inexistente → 404; sin sesión → 401", async () => {
@@ -247,7 +248,7 @@ describe("cadencia consent-first por REST (CA-M3.4)", () => {
     });
     expect(launch.statusCode).toBe(201);
     const body = launch.json() as { project: { id: string } };
-    const tasks = listTasks(fx.db, { projectId: body.project.id });
+    const tasks = await listTasks(fx.db, { projectId: body.project.id });
     const reporte = tasks.find((t) => t.title.startsWith("Reporte semanal"))!;
     expect(reporte.status).toBe("READY");
     expect(reporte.dueAt).not.toBeNull();

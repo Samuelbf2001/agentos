@@ -97,15 +97,15 @@ export const taskTools: ToolDefinition[] = [
     async handler(ctx, args) {
       const selection = personSelection(args);
       if (selection.personIds.length > 0) {
-        validateTaskAssigneeOrganization(ctx.db, args.project_id, selection.personIds);
+        await validateTaskAssigneeOrganization(ctx.db, args.project_id, selection.personIds);
       }
       let assigneeAgentId: string | null = null;
       if (args.assignee_agent_slug) {
-        const agent = getAgentBySlug(ctx.db, args.assignee_agent_slug);
+        const agent = await getAgentBySlug(ctx.db, args.assignee_agent_slug);
         if (!agent) throw errors.notFound("agent", args.assignee_agent_slug);
         assigneeAgentId = agent.id;
       }
-      let task = ctx.engine.createTask(
+      let task = await ctx.engine.createTask(
         {
           projectId: args.project_id,
           title: args.title,
@@ -123,10 +123,10 @@ export const taskTools: ToolDefinition[] = [
         { actor: ctx.actor, runId: ctx.run_id },
       );
       if (args.due_at !== undefined) {
-        task = updateTask(ctx.db, task.id, { dueAt: args.due_at }, task.version);
+        task = await updateTask(ctx.db, task.id, { dueAt: args.due_at }, task.version);
       }
       if (selection.personIds.length > 0) {
-        const assigned = replaceTaskAssignees(
+        const assigned = await replaceTaskAssignees(
           ctx.db,
           task.id,
           {
@@ -138,7 +138,7 @@ export const taskTools: ToolDefinition[] = [
         );
         task = assigned;
         if (assignmentChanged([], assigned.assignees)) {
-          appendTaskEvent(ctx.db, {
+          await appendTaskEvent(ctx.db, {
             taskId: task.id,
             runId: ctx.run_id ?? null,
             kind: "assigned",
@@ -149,7 +149,7 @@ export const taskTools: ToolDefinition[] = [
               primaryPersonId: selection.primaryPersonId,
             },
           });
-          appendAudit(ctx.db, {
+          await appendAudit(ctx.db, {
             actor: ctx.actor,
             source: ctx.actor.startsWith("agent:") ? "agent" : ctx.actor.startsWith("person:") ? "ui" : "system",
             action: "task.assign",
@@ -167,7 +167,8 @@ export const taskTools: ToolDefinition[] = [
           });
         }
       }
-      return { ...task, assignees: getTaskWithAssignees(ctx.db, task.id)?.assignees ?? [] };
+      const withAssignees = await getTaskWithAssignees(ctx.db, task.id);
+      return { ...task, assignees: withAssignees?.assignees ?? [] };
     },
   }),
 
@@ -177,8 +178,8 @@ export const taskTools: ToolDefinition[] = [
       "Reclama atómicamente una tarea READY con lease. {claimed:false} = otro la tomó primero (no es un error).",
     schema: z.object({ task_id: z.string().min(1), lease_ms: z.number().int().positive().optional() }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      return ctx.engine.claim({
+    async handler(ctx, args) {
+      return await ctx.engine.claim({
         taskId: args.task_id,
         agentId: ctx.agent_id,
         runId: ctx.run_id,
@@ -199,8 +200,8 @@ export const taskTools: ToolDefinition[] = [
       blocked_reason: BlockedReason.optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      return ctx.engine.moveTask({
+    async handler(ctx, args) {
+      return await ctx.engine.moveTask({
         taskId: args.task_id,
         to: args.to,
         expectedVersion: args.expected_version,
@@ -217,17 +218,17 @@ export const taskTools: ToolDefinition[] = [
     description: "Añade un comentario al timeline de la tarea (task_events, append-only).",
     schema: z.object({ task_id: z.string().min(1), body: z.string().min(1) }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const task = getTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await getTask(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
-      const event = appendTaskEvent(ctx.db, {
+      const event = await appendTaskEvent(ctx.db, {
         taskId: task.id,
         runId: ctx.run_id ?? null,
         kind: "comment",
         actor: ctx.actor,
         payload: { body: args.body },
       });
-      ctx.sink.publish(`board:${task.projectId}`, {
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.commented",
         payload: { taskId: task.id, eventId: event.id, actor: ctx.actor },
         runId: ctx.run_id ?? null,
@@ -248,10 +249,10 @@ export const taskTools: ToolDefinition[] = [
       path: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const task = getTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await getTask(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
-      const artifact = attachArtifact(ctx.db, {
+      const artifact = await attachArtifact(ctx.db, {
         taskId: task.id,
         runId: ctx.run_id ?? null,
         kind: args.kind,
@@ -260,7 +261,7 @@ export const taskTools: ToolDefinition[] = [
         path: args.path ?? null,
         createdBy: ctx.actor,
       });
-      ctx.sink.publish(`board:${task.projectId}`, {
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.artifact_attached",
         payload: { taskId: task.id, artifactId: artifact.id },
         runId: ctx.run_id ?? null,
@@ -294,21 +295,21 @@ export const taskTools: ToolDefinition[] = [
     description: "Devuelve una tarea con responsables, timeline, artefactos y contexto del proyecto.",
     schema: z.object({ task_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const task = getTaskWithAssignees(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await getTaskWithAssignees(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
-      const sources = listProjectSources(ctx.db, { projectId: task.projectId });
-      const documents = listDocs(ctx.db, { projectId: task.projectId });
+      const sources = await listProjectSources(ctx.db, { projectId: task.projectId });
+      const documents = await listDocs(ctx.db, { projectId: task.projectId });
       return {
         task,
-        events: listTaskEvents(ctx.db, task.id),
-        artifacts: listArtifacts(ctx.db, task.id),
+        events: await listTaskEvents(ctx.db, task.id),
+        artifacts: await listArtifacts(ctx.db, task.id),
         assignees: task.assignees,
         project_sources: sources,
         sources,
         knowledge_docs: documents,
         documents,
-        runs: listRunsForTask(ctx.db, task.id),
+        runs: await listRunsForTask(ctx.db, task.id),
       };
     },
   }),
@@ -325,13 +326,13 @@ export const taskTools: ToolDefinition[] = [
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
     async handler(ctx, args) {
-      const before = getTaskWithAssignees(ctx.db, args.task_id);
+      const before = await getTaskWithAssignees(ctx.db, args.task_id);
       if (!before) throw errors.notFound("task", args.task_id);
       const primary = args.primary_assignee_person_id ?? null;
       if (primary && !args.assignee_person_ids.includes(primary)) {
         throw errors.validation("primary_assignee_person_id debe pertenecer a assignee_person_ids");
       }
-      const assigned = replaceTaskAssignees(
+      const assigned = await replaceTaskAssignees(
         ctx.db,
         args.task_id,
         {
@@ -342,7 +343,7 @@ export const taskTools: ToolDefinition[] = [
         args.expected_version,
       );
       const changed = assignmentChanged(before.assignees, assigned.assignees);
-      appendTaskEvent(ctx.db, {
+      await appendTaskEvent(ctx.db, {
         taskId: args.task_id,
         runId: ctx.run_id ?? null,
         kind: "assigned",
@@ -353,7 +354,7 @@ export const taskTools: ToolDefinition[] = [
           primaryPersonId: assigned.assignees.find((row) => row.isPrimary)?.personId ?? null,
         },
       });
-      appendAudit(ctx.db, {
+      await appendAudit(ctx.db, {
         actor: ctx.actor,
         source: ctx.actor.startsWith("agent:") ? "agent" : ctx.actor.startsWith("person:") ? "ui" : "system",
         action: "task.assign",
@@ -392,18 +393,18 @@ export const taskTools: ToolDefinition[] = [
       expected_version: z.number().int().positive(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const before = getTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const before = await getTask(ctx.db, args.task_id);
       if (!before) throw errors.notFound("task", args.task_id);
-      const task = updateTask(ctx.db, args.task_id, { dueAt: args.due_at ?? null }, args.expected_version);
-      appendTaskEvent(ctx.db, {
+      const task = await updateTask(ctx.db, args.task_id, { dueAt: args.due_at ?? null }, args.expected_version);
+      await appendTaskEvent(ctx.db, {
         taskId: task.id,
         runId: ctx.run_id ?? null,
         kind: "due_date_changed",
         actor: ctx.actor,
         payload: { beforeDueAt: before.dueAt, afterDueAt: task.dueAt },
       });
-      appendAudit(ctx.db, {
+      await appendAudit(ctx.db, {
         actor: ctx.actor,
         source: ctx.actor.startsWith("agent:") ? "agent" : ctx.actor.startsWith("person:") ? "ui" : "system",
         action: "task.set_due_date",
@@ -413,7 +414,7 @@ export const taskTools: ToolDefinition[] = [
         after: { dueAt: task.dueAt },
         runId: ctx.run_id ?? null,
       });
-      ctx.sink.publish(`board:${task.projectId}`, {
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.updated",
         payload: { taskId: task.id, dueAt: task.dueAt },
         runId: ctx.run_id ?? null,
@@ -427,11 +428,11 @@ export const taskTools: ToolDefinition[] = [
     description: "Tablero de un proyecto: tareas agrupadas por estado (orden de columna).",
     schema: z.object({ project_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
+    async handler(ctx, args) {
       // H2: un project_id inexistente es not_found, NUNCA un tablero vacío OK
       // (un tablero vacío falso alimenta la alucinación de ids inventados).
-      if (!getProject(ctx.db, args.project_id)) throw errors.notFound("project", args.project_id);
-      const rows = listTasksWithAssignees(ctx.db, { projectId: args.project_id });
+      if (!(await getProject(ctx.db, args.project_id))) throw errors.notFound("project", args.project_id);
+      const rows = await listTasksWithAssignees(ctx.db, { projectId: args.project_id });
       const byStatus: Record<string, typeof rows> = {};
       for (const t of rows) (byStatus[t.status] ??= []).push(t);
       return { project_id: args.project_id, columns: byStatus, total: rows.length };

@@ -63,32 +63,32 @@ export const ALEX_ALLOWLIST = [
   "spy.fail",
 ];
 
-export function toolsFixture(extraTools: ToolDefinition[] = []): ToolsFixture {
+export async function toolsFixture(extraTools: ToolDefinition[] = []): Promise<ToolsFixture> {
   const db = openDb(":memory:");
   runMigrations(db);
-  const org = createOrganization(db, { name: "ACME S.A.", kind: "client" });
-  const person = createPerson(db, { orgId: org.id, fullName: "Ernesto", isInternal: true });
-  const project = createProject(db, {
+  const org = await createOrganization(db, { name: "ACME S.A.", kind: "client" });
+  const person = await createPerson(db, { orgId: org.id, fullName: "Ernesto", isInternal: true });
+  const project = await createProject(db, {
     orgId: org.id,
     name: "Assessment ACME",
     type: "assessment",
     workspacePath: path.join(os.tmpdir(), `agentos-test-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`),
   });
-  const alex = createAgent(db, {
+  const alex = await createAgent(db, {
     slug: "alex",
     name: "Alex",
     layer: "consultoria",
     runtime: "ai_sdk",
     toolsAllowlist: ALEX_ALLOWLIST,
   });
-  const quinn = createAgent(db, {
+  const quinn = await createAgent(db, {
     slug: "quinn",
     name: "Quinn",
     layer: "meta",
     runtime: "ai_sdk",
     toolsAllowlist: ["tasks.list", "tasks.get", "board.get"],
   });
-  const run = createRun(db, { trigger: "manual", runtime: "ai_sdk", agentId: alex.id });
+  const run = await createRun(db, { trigger: "manual", runtime: "ai_sdk", agentId: alex.id });
   const sink = recordingEventSink();
   const engine = createBoardEngine({ db, sink });
   const runtime = createToolRuntime({ db, sink, engine, extraTools });

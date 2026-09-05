@@ -10,8 +10,8 @@ import { adminFixture, type AdminFixture } from "./helpers.js";
 
 let f: AdminFixture;
 
-beforeAll(() => {
-  f = adminFixture();
+beforeAll(async () => {
+  f = await adminFixture();
 });
 
 describe("config.set — budget:project:* (§13.4)", () => {
@@ -25,9 +25,9 @@ describe("config.set — budget:project:* (§13.4)", () => {
     };
     const result = await f.call("agentos.config.set", { key, value, reason: "tope de fase demo" });
     expect(result).toEqual({ key, value });
-    expect(getConfig(f.db, key)).toEqual(value);
+    expect(await getConfig(f.db, key)).toEqual(value);
 
-    const audits = queryAudit(f.db, { action: "config.set", entityId: key });
+    const audits = await queryAudit(f.db, { action: "config.set", entityId: key });
     expect(audits).toHaveLength(1);
     expect(audits[0]!.reason).toBe("tope de fase demo");
   });
@@ -74,8 +74,8 @@ describe("config.set — budget:project:* (§13.4)", () => {
 
   it("system.health lista el presupuesto activo con gasto acumulado y umbrales", async () => {
     // Gasto real del proyecto: 12 de 15 USD (80% → umbral 70 alcanzado).
-    const alex = getAgentBySlug(f.db, "alex")!;
-    createRun(f.db, {
+    const alex = (await getAgentBySlug(f.db, "alex"))!;
+    await createRun(f.db, {
       agentId: alex.id,
       projectId: f.project.id,
       trigger: "dispatcher",

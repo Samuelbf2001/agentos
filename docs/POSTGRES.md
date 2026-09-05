@@ -1,12 +1,17 @@
 # POSTGRES — backend alternativo (Postgres / Supabase + pgvector)
 
-> Fase 2. **SQLite sigue siendo el default.** Postgres se activa por configuración,
-> no por decreto: `AGENTOS_DB_DRIVER=postgres`. Si no tocas nada, nada cambia.
+> **Estado: la aplicación ENTERA corre sobre Postgres.** API, despachador, motor
+> del tablero, gateway de tools, MCP admin, seed y launch de Módulos de Fase
+> arrancan y funcionan con `AGENTOS_DB_DRIVER=postgres` + `AGENTOS_PG_URL`.
+> Producción va en Postgres.
 >
-> La ganancia que justifica todo esto: **pgvector en el Context Hub**. Hoy
-> `knowledge.search` es coincidencia de palabras (FTS5); con pgvector busca por
-> **significado**, que es lo que convierte el Context Hub en un "LLM wiki" por
-> cliente.
+> **SQLite sigue siendo el default.** Se activa Postgres por configuración, no
+> por decreto: si no tocas nada, nada cambia, y `postgres-js` ni se carga.
+>
+> La ganancia que justifica todo esto: **pgvector en el Context Hub**. Con
+> SQLite `knowledge.search` es coincidencia de palabras (FTS5); con pgvector
+> busca por **significado**, que es lo que convierte el Context Hub en un "LLM
+> wiki" por cliente.
 
 ---
 
@@ -44,13 +49,23 @@ Un valor desconocido **falla explícito** — nunca cae en silencio a SQLite.
 ### Postgres local con pgvector (Docker)
 
 ```bash
-docker run -d --name agentos-pg \
+docker run -d --name agentos-pg-dev \
   -e POSTGRES_USER=agentos -e POSTGRES_PASSWORD=agentos -e POSTGRES_DB=agentos \
-  -p 55432:5432 pgvector/pgvector:pg16
+  -p 5434:5432 pgvector/pgvector:pg17
 
 # Windows PowerShell
-$env:AGENTOS_PG_URL = "postgres://agentos:agentos@localhost:55432/agentos"
+$env:AGENTOS_PG_URL = "postgres://agentos:agentos@localhost:5434/agentos"
 pnpm --filter @agentos/db migrate:pg
+```
+
+Parar / arrancar / borrar ese contenedor (es SOLO de desarrollo; en la máquina
+de Ernesto los puertos 5432 y 5433 están ocupados por otros proyectos, de ahí
+el 5434):
+
+```bash
+docker stop agentos-pg-dev      # parar (los datos se conservan)
+docker start agentos-pg-dev     # volver a arrancar
+docker rm -f agentos-pg-dev     # borrar del todo (se pierden los datos)
 ```
 
 `migrate:pg` aplica las 25 tablas **y** deja listas las estructuras de búsqueda
@@ -61,6 +76,31 @@ Migraciones Postgres aplicadas.
   búsqueda por texto : tsvector (spanish)
   búsqueda semántica : pgvector vector(1536) + HNSW
 ```
+
+### Arrancar la aplicación entera contra Postgres
+
+```bash
+# Windows PowerShell (worktree de la rama)
+$env:AGENTOS_DB_DRIVER = "postgres"
+$env:AGENTOS_PG_URL    = "postgres://agentos:agentos@localhost:5434/agentos"
+$env:AGENTOS_SHARED_PASSWORD = "<la contraseña compartida>"
+pnpm --filter @agentos/api dev        # :4300
+```
+
+```bash
+# bash / Linux / contenedor
+AGENTOS_DB_DRIVER=postgres \
+AGENTOS_PG_URL=postgres://usuario:clave@host:5432/agentos \
+AGENTOS_SHARED_PASSWORD=... \
+pnpm --filter @agentos/api start
+```
+
+La API **aplica las migraciones Postgres al arrancar** (idempotentes, igual que
+hace con SQLite) y corre el seed idempotente. No hay paso manual previo: si la
+base está vacía, al primer arranque quedan las 25 tablas, tsvector, pgvector y
+el proyecto demo. El MCP admin (`apps/mcp-admin`) lee las mismas dos variables.
+
+Un arranque en frío queda **pausado** (kill switch activo), igual que en SQLite.
 
 ### Supabase
 
@@ -189,7 +229,7 @@ Total: 558 filas insertadas de 558 en origen (795 ms). Integridad: OK ✓
 | **Las convenciones de §5** | `id` TEXT uuidv7 (generado en JS, nunca en SQL), `*_at` epoch ms, JSON estructurado, `version` para optimistic locking. |
 | **El claim atómico** | `UPDATE … WHERE status='READY' AND (lease vencido o nulo)` es atómico por fila en Postgres igual que en SQLite. `changes=0` se traduce a `RETURNING id` vacío. Verificado con 8 clientes concurrentes: gana exactamente uno y `attempts` sube **una** vez. |
 | **`expected_version`** | Idéntico: conflicto → `version_conflict`, nunca last-write-wins. |
-| **La superficie de repositorios** | Mismos nombres de función, mismos argumentos, mismos tipos de fila (NFR-9: fuera de `packages/db` no se toca nada). |
+| **La superficie de repositorios** | Mismos nombres de función, mismos argumentos, mismos tipos de fila (NFR-9). Lo único que cambió fuera de `packages/db` es que las llamadas llevan `await` — ver más abajo. |
 | **El contrato de `rank`** | En FTS5 menor = mejor; `ts_rank` es al revés. Devolvemos `-ts_rank` para que el llamante no tenga que saber qué motor hay debajo. |
 | **`snippet()` → `ts_headline`** | Mismos marcadores `«` `»`, mismo tamaño de extracto. |
 
@@ -203,30 +243,88 @@ Total: 558 filas insertadas de 558 en origen (795 ms). Integridad: OK ✓
 | **`json_extract`** | Función de SQLite. En Postgres, operador `->>`. |
 | **Pragmas** | `journal_mode=WAL`, `busy_timeout`, `foreign_keys=ON` no existen; su equivalente es la configuración del servidor. |
 
-### Lo que **NO** es portable tal cual — dilo en voz alta
+### Lo único que el llamante nota: **hay que `await`**
 
-**Los repositorios SQLite son SÍNCRONOS y los de Postgres son ASÍNCRONOS.**
-`better-sqlite3` es síncrono por diseño y **no existe** un driver Postgres
-síncrono para Node. La *forma* de la API es idéntica —mismos nombres, mismos
-argumentos, mismos tipos de fila— pero el llamante debe `await`.
+`better-sqlite3` es síncrono por diseño y **no existe** driver Postgres síncrono
+para Node. Esa asimetría no se puede esconder, así que se resolvió eligiendo el
+denominador común: **una sola interfaz ASÍNCRONA con dos implementaciones.**
 
-Consecuencia práctica y honesta:
+```
+@agentos/db  (superficie pública, asíncrona, misma de siempre)
+   └─ src/facade.ts        despacha mirando el handle que recibe
+        ├─ src/repositories/*      SQLite  (síncronos por dentro)
+        └─ src/pg/repositories/*   Postgres (asíncronos de verdad)
+```
 
-- `packages/db` está **completo** para los dos motores.
-- `packages/core`, `apps/api`, `apps/mcp-admin` y las tools llaman a los
-  repositorios de forma síncrona. Para que Postgres sea el motor **en ejecución**
-  falta una fase mecánica —pero real— de `async/await` en esos llamantes.
-- Por eso el switch es por configuración y el default sigue siendo SQLite: esto
-  **habilita** Postgres, no lo impone. NFR-9 se cumple en lo que promete —el
-  cambio de motor no se filtra fuera de la capa de datos como *cambio de forma*—
-  y donde no puede cumplirse (sync→async) está documentado aquí en vez de
-  escondido.
-- El **motor de launch de Módulos de Fase** (`src/modules/launch.ts`) es el otro
-  pendiente: depende de la transacción **síncrona** de better-sqlite3
-  (`db.$client.transaction(...)`, que solo revierte callbacks síncronos). Su
-  equivalente en Postgres es `db.transaction(async tx => …)`, que es *mejor*
-  (revierte también en async), pero es una reescritura, no una traducción
-  mecánica. No está portado.
+- **Mismos nombres, mismos argumentos, mismos tipos de fila** (NFR-9). Lo único
+  que cambió en `packages/core`, `packages/tools`, `apps/api` y `apps/mcp-admin`
+  es que las llamadas llevan `await`. **Ningún llamante ramifica por motor.**
+- El handle se llama `AgentosDb` y es la **unión** de los dos. El tipo concreto
+  de SQLite (el que expone `$client`) se llama ahora `AgentosSqliteDb` y solo
+  se usa dentro de `packages/db` y en los tests que necesitan SQL crudo.
+- `postgres-js` **no se carga nunca** en el camino SQLite: el backend PG se
+  registra a sí mismo al importar `@agentos/db/pg`, y la fachada solo lo importa
+  (dinámicamente) si le llega un handle Postgres.
+- `openConfiguredDb()` / `applyMigrations(db)` / `closeAnyDb(db)` son la puerta
+  única: leen `AGENTOS_DB_DRIVER` y `AGENTOS_PG_URL` y devuelven el motor
+  configurado. **Nadie fuera de `packages/db` decide el motor.**
+
+#### Transacciones: `withTransaction`
+
+`withTransaction(db, async tx => …)` da UNA transacción en los dos motores y
+cualquier throw revierte todo (NM-1):
+
+| Motor | Implementación |
+|---|---|
+| Postgres | `db.transaction(async tx => …)` de drizzle. Revierte también en asíncrono, que es estrictamente mejor de lo que daba better-sqlite3. Las escrituras anidadas usan SAVEPOINT. |
+| SQLite | `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` a mano sobre la conexión: `db.$client.transaction(cb)` solo admite callbacks **síncronos** y aquí el callback es asíncrono. |
+
+**Garantía real en SQLite** (una sola conexión, sin savepoints), en tres piezas:
+
+1. **Cola de transacciones por conexión.** Todas las `withTransaction` de SQLite
+   se serializan: la siguiente no hace `BEGIN` hasta que la anterior hizo COMMIT
+   o ROLLBACK. Sin la cola, `Promise.all([withTransaction(A→throw),
+   withTransaction(B→ok)])` fusionaba B dentro de A — B devolvía éxito y el
+   ROLLBACK de A borraba sus filas **en silencio**.
+2. **Token de dueño.** La transacción en curso se marca en un
+   `AsyncLocalStorage`. Anidar solo se reutiliza desde la MISMA cadena de
+   llamadas; si al empezar hay una transacción abierta por otro camino se lanza
+   `transaction_nesting_error` en vez de fusionar dos unidades de trabajo.
+3. **Guarda de dev/test** (`NODE_ENV=test|development`, forzable con
+   `AGENTOS_TX_GUARD=on|off`). Un centinela `setImmediate` que **no debe llegar a
+   ejecutarse antes del COMMIT**: si se ejecuta, el cuerpo esperó algo realmente
+   asíncrono (red, disco, temporizador) con la transacción abierta y se lanza
+   `transaction_yielded_error`. La cola cubre a las demás transacciones, pero una
+   escritura suelta (fuera de `withTransaction`) sí caería en esa ventana; la
+   guarda convierte ese bug en un fallo ruidoso en CI en vez de dejarlo latente.
+
+En producción la guarda está apagada y manda la condición de siempre: en el
+camino SQLite todas las funciones de la fachada devuelven **promesas ya
+resueltas**, así que el cuerpo se agota entero en un solo drenaje de la cola de
+microtareas y ninguna macrotarea (temporizadores del despachador y el reaper,
+E/S) se cuela entre dos `await` del bloque. La condición sigue siendo no esperar
+nada realmente asíncrono dentro del callback — el motor de launch no lo hace.
+
+El **motor de launch de Módulos de Fase** (`src/modules/launch.ts`) y el **seed**
+están escritos UNA sola vez contra esta fachada: valen para los dos motores, con
+la misma idempotencia y el mismo `blueprint_snapshot` inmutable.
+
+#### Diferencias de implementación que quedaron dentro de `packages/db`
+
+| | SQLite | Postgres |
+|---|---|---|
+| `json_extract(payload,'$.k')` | nativo | operador `->>` |
+| desempate por orden de inserción | era `rowid DESC` | `id DESC` (uuidv7 es monotónico; **la consulta SQLite también se cambió a `id DESC`** para que las dos den lo mismo) |
+| conteo de tablas de dominio | `sqlite_master` | `information_schema.tables` |
+| `count(*)` | `number` | `bigint` → el repositorio castea `::int` |
+
+Todo lo que antes obligaba a `db.$client.prepare(...)` fuera de la capa de datos
+(motor del tablero, cierre de fase, cadencias, salud de la API) vive ahora como
+función de repositorio con implementación en los dos motores: `maxOrderKey`,
+`transitionTaskStatus`, `countDelegations`, `countOpenTasksByTemplateKey`,
+`countProjectArtifactsByKind`, `findLatestProjectArtifact`, `countDocs`,
+`countProcesses`, `domainCounts` y `countDomainTables`. **Fuera de
+`packages/db` ya no queda ni un `$client`.**
 
 ### Mejora opcional documentada: `FOR UPDATE SKIP LOCKED`
 
@@ -241,25 +339,40 @@ esperen el lock. No es un requisito de corrección y no está implementado.
 ## 6. Tests
 
 ```bash
-# Sin AGENTOS_PG_URL: la suite PG se auto-omite y todo sigue verde.
+# Sin AGENTOS_PG_URL: las suites PG se auto-omiten y todo sigue verde.
 pnpm -r test
 
-# Con Postgres de verdad:
-docker run -d --name agentos-pg -e POSTGRES_USER=agentos -e POSTGRES_PASSWORD=agentos \
-  -e POSTGRES_DB=agentos -p 55432:5432 pgvector/pgvector:pg16
-$env:AGENTOS_PG_URL = "postgres://agentos:agentos@localhost:55432/agentos"
-pnpm --filter @agentos/db test
+# Con Postgres de verdad (la MISMA suite, ahora también end-to-end):
+docker run -d --name agentos-pg-dev -e POSTGRES_USER=agentos -e POSTGRES_PASSWORD=agentos \
+  -e POSTGRES_DB=agentos -p 5434:5432 pgvector/pgvector:pg17
+$env:AGENTOS_PG_URL = "postgres://agentos:agentos@localhost:5434/agentos"
+pnpm -r test
 ```
 
-- `test/pg-portability.test.ts` — corre **siempre**, sin Postgres: equivalencia
-  de esquema (25 tablas en ambos motores), orden topológico de la copia,
-  equivalencia de **tipos** en tiempo de compilación, resolución de driver,
-  detección del pooler de Supabase, redacción de contraseñas y el proveedor de
-  embeddings (mock determinista, degradación sin key).
-- `test/pg-backend.test.ts` — `describe.skipIf(!AGENTOS_PG_URL)`: migración de
-  esquema, round-trip de repositorios, **claim atómico con 8 clientes
-  concurrentes**, `seq` con 15 escritores, tsvector, pgvector con el embedder
-  mock, degradaciones, y la copia de datos (incluida su idempotencia).
+> ⚠️ La base a la que apunte `AGENTOS_PG_URL` **durante los tests se trunca**:
+> tiene que ser desechable, jamás una de producción.
+
+- `packages/db/test/pg-portability.test.ts` — corre **siempre**, sin Postgres:
+  equivalencia de esquema (25 tablas en ambos motores), orden topológico de la
+  copia, equivalencia de **tipos** en tiempo de compilación, resolución de
+  driver, detección del pooler de Supabase, redacción de contraseñas y el
+  proveedor de embeddings (mock determinista, degradación sin key).
+- `packages/db/test/dual-facade.test.ts` — corre **siempre**: resolución de
+  motor por configuración, fail-closed sin `AGENTOS_PG_URL`, y `withTransaction`
+  revirtiendo y commiteando en SQLite. Con `AGENTOS_PG_URL` añade la **paridad**:
+  el seed produce exactamente los mismos conteos en los dos motores y NM-1
+  revierte igual en Postgres.
+- `packages/db/test/pg-backend.test.ts` — `describe.skipIf(!AGENTOS_PG_URL)`:
+  migración de esquema, round-trip de repositorios, **claim atómico con 8
+  clientes concurrentes**, `seq` con 15 escritores, tsvector, pgvector con el
+  embedder mock, degradaciones, y la copia de datos (incluida su idempotencia).
+- `apps/api/test/pg-end-to-end.test.ts` — `describe.skipIf(!AGENTOS_PG_URL)`:
+  **la aplicación entera** contra Postgres. Arranca la API con
+  `dbDriver: "postgres"`, deja que ella misma migre y seedee, dispara el módulo
+  Consultoría por REST (y comprueba que repetir la `idempotency_key` es
+  idempotente), crea y mueve una tarea con `expected_version` (incluido el 409
+  del conflicto), aprueba el Gate 1 y **verifica las filas desde una conexión
+  Postgres independiente**.
 
 ---
 

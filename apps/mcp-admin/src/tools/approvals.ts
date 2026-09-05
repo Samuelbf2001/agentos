@@ -12,8 +12,8 @@ export const approvalTools: AdminToolDefinition[] = [
     description: "Bandeja 'Esperando por ti': aprobaciones pendientes (tool_call | deliverable | gate).",
     schema: z.object({}),
     readOnly: true,
-    handler(ctx) {
-      return ctx.engine.listPendingApprovals();
+    async handler(ctx) {
+      return await ctx.engine.listPendingApprovals();
     },
   }),
 
@@ -33,9 +33,9 @@ export const approvalTools: AdminToolDefinition[] = [
       note: z.string().optional(),
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const person = mustGetPerson(ctx.db, args.person_id);
-      const result = ctx.engine.decideApproval(
+    async handler(ctx, args) {
+      const person = await mustGetPerson(ctx.db, args.person_id);
+      const result = await ctx.engine.decideApproval(
         args.approval_id,
         args.decision,
         person.id,

@@ -2,7 +2,8 @@
  * Motor de launch de Módulos de Fase (ARCHITECTURE §13.3) — "el seed
  * generalizado": materializa un blueprint validado en org + proyecto + backlog
  * completo + presupuesto + fuentes + recibo inmutable, en UNA transacción
- * síncrona (better-sqlite3 solo revierte callbacks síncronos).
+ * (`withTransaction` de la fachada: transacción de drizzle en Postgres, y en
+ * SQLite `BEGIN IMMEDIATE` serializado por la cola de transacciones).
  *
  * Contrato:
  * - Pre-vuelo FUERA de la transacción (idempotencia, módulo activo, blueprint,
@@ -32,7 +33,7 @@ import {
   type ModuleBlueprint,
   type OrgKind,
 } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import { withTransaction, type AnyDb } from "../facade.js";
 import type {
   Agent,
   Methodology,
@@ -42,39 +43,34 @@ import type {
   Project,
   Task,
 } from "../types.js";
-import { listAgents } from "../repositories/agents.js";
-import { appendAudit } from "../repositories/audit.js";
-import { setConfig } from "../repositories/config.js";
-import { getMethodology } from "../repositories/methodologies.js";
 import {
+  appendAudit,
+  appendTaskEvent,
+  countOpenTasksByAgent,
+  createOrganization,
+  createProject,
+  createTask,
   findLaunchByIdempotencyKey,
   findLaunchByProjectAndPhase,
   getActiveModule,
   getLatestLaunchForProject,
   getLaunch,
+  getMethodology,
   getModuleVersion,
-  insertModuleLaunch,
-  listPhaseModules,
-} from "../repositories/modules.js";
-import {
-  createOrganization,
   getOrganization,
   getOrganizationByName,
-} from "../repositories/organizations-people.js";
-import {
-  createProject,
   getProject,
   getProjectByOrgAndName,
-  updateProject,
-} from "../repositories/projects.js";
-import {
-  appendTaskEvent,
-  countOpenTasksByAgent,
-  createTask,
   getTask,
+  getThreadBySessionKey,
+  insertModuleLaunch,
+  listAgents,
+  listPhaseModules,
+  setConfig,
+  setThreadProject,
+  updateProject,
   updateTask,
-} from "../repositories/tasks.js";
-import { getThreadBySessionKey, setThreadProject } from "../repositories/threads.js";
+} from "../repos.js";
 
 // ── Contrato de entrada/salida ──────────────────────────────────────────────
 
@@ -201,16 +197,20 @@ function moduleNotActive(slug: string, version: number | null, status: string | 
 
 // ── Resolución contra la DB (pre-vuelo) ─────────────────────────────────────
 
-function resolveModule(db: AgentosDb, slug: string, version: number | undefined): PhaseModule {
+async function resolveModule(
+  db: AnyDb,
+  slug: string,
+  version: number | undefined,
+): Promise<PhaseModule> {
   if (version !== undefined) {
-    const row = getModuleVersion(db, slug, version);
+    const row = await getModuleVersion(db, slug, version);
     if (!row) throw errors.notFound("phase_module", `${slug}@${version}`);
     if (row.status !== "active") moduleNotActive(slug, version, row.status);
     return row;
   }
-  const active = getActiveModule(db, slug);
+  const active = await getActiveModule(db, slug);
   if (active) return active;
-  const any = listPhaseModules(db, { slug });
+  const any = await listPhaseModules(db, { slug });
   if (any.length === 0) throw errors.notFound("phase_module", slug);
   moduleNotActive(slug, null, any[0]!.status);
 }
@@ -220,23 +220,25 @@ interface ResolvedMethodology {
   adds: Methodology[];
 }
 
-function resolveMethodology(db: AgentosDb, plan: LaunchPlan): ResolvedMethodology {
+async function resolveMethodology(db: AnyDb, plan: LaunchPlan): Promise<ResolvedMethodology> {
   const { slug, version, adds } = plan.methodology;
-  const main = version === null ? getMethodology(db, slug) : getMethodology(db, slug, version);
+  const main =
+    version === null ? await getMethodology(db, slug) : await getMethodology(db, slug, version);
   if (!main) {
     throw errors.validation(`Metodología desconocida: ${slug}${version !== null ? `@${version}` : ""}`, [
       { code: "unknown_methodology", path: "methodology", details: { slug, version } },
     ]);
   }
-  const addRows = adds.map((addSlug) => {
-    const row = getMethodology(db, addSlug);
+  const addRows: Methodology[] = [];
+  for (const addSlug of adds) {
+    const row = await getMethodology(db, addSlug);
     if (!row) {
       throw errors.validation(`Metodología adicional desconocida: ${addSlug}`, [
         { code: "unknown_methodology", path: "toggles.methodology_add", details: { slug: addSlug } },
       ]);
     }
-    return row;
-  });
+    addRows.push(row);
+  }
   return { main, adds: addRows };
 }
 
@@ -252,13 +254,13 @@ interface RosterResolutionContext {
   openCounts: Map<string, number>;
 }
 
-function rosterResolutionContext(db: AgentosDb): RosterResolutionContext {
-  const agents = listAgents(db);
+async function rosterResolutionContext(db: AnyDb): Promise<RosterResolutionContext> {
+  const agents = await listAgents(db);
   const byId = new Map(agents.map((a) => [a.id, a] as const));
   const bySlug = new Map(agents.map((a) => [a.slug, a] as const));
   const isAssignable = (a: Agent): boolean =>
     a.status === "active" && computeChainHealthFrom(a, (id) => byId.get(id)).status === "healthy";
-  return { agents, bySlug, isAssignable, openCounts: countOpenTasksByAgent(db) };
+  return { agents, bySlug, isAssignable, openCounts: await countOpenTasksByAgent(db) };
 }
 
 /** Preferido por slug si asignable; si no, asignable de la capa con MENOS carga (desempate por slug). */
@@ -285,8 +287,11 @@ function pickAssignableAgent(
  * launch ENTERO se rechaza. La carga se incrementa en memoria según se asigna
  * dentro del propio plan, para repartir el fan-out dentro de una capa.
  */
-function resolveAssignments(db: AgentosDb, plan: LaunchPlan): Map<string, ResolvedAssignment> {
-  const ctx = rosterResolutionContext(db);
+async function resolveAssignments(
+  db: AnyDb,
+  plan: LaunchPlan,
+): Promise<Map<string, ResolvedAssignment>> {
+  const ctx = await rosterResolutionContext(db);
   const out = new Map<string, ResolvedAssignment>();
   for (const task of plan.tasks) {
     const chosen = pickAssignableAgent(ctx, task.agentSlug, task.layer);
@@ -310,41 +315,47 @@ function resolveAssignments(db: AgentosDb, plan: LaunchPlan): Map<string, Resolv
  * cadencias (M6a): si el agente cambió desde el launch, se re-resuelve; si
  * nadie es asignable, devuelve null y el llamador NO crea (fail-soft).
  */
-export function resolveRoleAgainstRoster(
-  db: AgentosDb,
+export async function resolveRoleAgainstRoster(
+  db: AnyDb,
   entry: { agentSlug: string; layer: string },
-): ResolvedAssignment | null {
-  const chosen = pickAssignableAgent(rosterResolutionContext(db), entry.agentSlug, entry.layer);
+): Promise<ResolvedAssignment | null> {
+  const ctx = await rosterResolutionContext(db);
+  const chosen = pickAssignableAgent(ctx, entry.agentSlug, entry.layer);
   return chosen ? { agentId: chosen.id, agentSlug: chosen.slug } : null;
 }
 
-function resolveOrganization(db: AgentosDb, org: LaunchOrgInput): Organization {
+async function resolveOrganization(db: AnyDb, org: LaunchOrgInput): Promise<Organization> {
   if ("orgId" in org) {
-    const existing = getOrganization(db, org.orgId);
+    const existing = await getOrganization(db, org.orgId);
     if (!existing) throw errors.notFound("organization", org.orgId);
     return existing;
   }
   // Get-or-create por nombre exacto (§13.3), como el seed.
   return (
-    getOrganizationByName(db, org.name) ??
-    createOrganization(db, {
+    (await getOrganizationByName(db, org.name)) ??
+    (await createOrganization(db, {
       name: org.name,
       kind: org.kind ?? "client",
       industry: org.industria ?? null,
       employeeCount: org.employeeCount ?? null,
       notes: org.notes ?? null,
-    })
+    }))
   );
 }
 
 // ── Motor ───────────────────────────────────────────────────────────────────
 
 /**
- * Dispara un módulo de fase (CA-M2.2): síncrona a propósito — better-sqlite3
- * solo revierte callbacks síncronos; una sola `db.$client.transaction(...)
- * .immediate()` (patrón de repositories/events.ts).
+ * Dispara un módulo de fase (CA-M2.2). UNA sola transacción para los dos
+ * motores vía `withTransaction` (`BEGIN IMMEDIATE` en SQLite,
+ * `db.transaction(async tx => …)` en Postgres): cualquier throw revierte TODO
+ * (NM-1). En `facade.ts` está por qué abrir la transacción a mano es seguro en
+ * SQLite con un callback asíncrono.
  */
-export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchModuleResult {
+export async function launchModule(
+  db: AnyDb,
+  input: LaunchModuleInput,
+): Promise<LaunchModuleResult> {
   const started = nowMs();
   const now = input.now ?? started;
 
@@ -364,11 +375,11 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
   const inputsDigest = computeInputsDigest(input.inputs);
 
   // 1) Idempotencia (CA-M2.6)
-  const prior = findLaunchByIdempotencyKey(db, input.idempotencyKey);
-  if (prior) return idempotentResult(db, prior, inputsDigest, input.idempotencyKey);
+  const prior = await findLaunchByIdempotencyKey(db, input.idempotencyKey);
+  if (prior) return await idempotentResult(db, prior, inputsDigest, input.idempotencyKey);
 
   // 2) Módulo existe y está activo (NM-4)
-  const module = resolveModule(db, input.moduleSlug, input.moduleVersion);
+  const module = await resolveModule(db, input.moduleSlug, input.moduleVersion);
 
   // 3) validateBlueprint COMPLETO (momento C re-ejecuta TODO — §13.5)
   const bpResult = validateBlueprint(module.blueprint);
@@ -408,16 +419,18 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
 
   // 5b) Encadenado (US-M3): el launch anterior debe existir — y define el
   //     proyecto destino (CA-M3.3: la nueva fase cae sobre el MISMO proyecto).
-  const previousLaunch = input.previousLaunchId ? getLaunch(db, input.previousLaunchId) : undefined;
+  const previousLaunch = input.previousLaunchId
+    ? await getLaunch(db, input.previousLaunchId)
+    : undefined;
   if (input.previousLaunchId && !previousLaunch) {
     throw errors.notFound("module_launch", input.previousLaunchId);
   }
 
   // 6) Asignaciones contra el roster real (agent_not_assignable rechaza entero)
-  const assignments = resolveAssignments(db, plan);
+  const assignments = await resolveAssignments(db, plan);
 
   // 7) Metodología pinneada (+ adds de toggles) — unknown_methodology
-  const methodology = resolveMethodology(db, plan);
+  const methodology = await resolveMethodology(db, plan);
 
   const redactedInputs = redactInputs(bp, input.inputs);
   const sessionKeys = collectSessionKeys(bp, inputsResult.values);
@@ -437,20 +450,20 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
       }
     | { kind: "idempotent"; launch: ModuleLaunch };
 
-  const tx = db.$client.transaction((): TxOutcome => {
+  const outcome = await withTransaction(db, async (tx): Promise<TxOutcome> => {
     // RE-verificación TOCTOU (§13.5 C): idempotencia y módulo activo.
-    const raced = findLaunchByIdempotencyKey(db, input.idempotencyKey);
+    const raced = await findLaunchByIdempotencyKey(tx, input.idempotencyKey);
     if (raced) {
       if (raced.inputsDigest !== inputsDigest) throw idempotencyConflict(input.idempotencyKey, raced);
       return { kind: "idempotent", launch: raced };
     }
-    const fresh = getModuleVersion(db, module.slug, module.version);
+    const fresh = await getModuleVersion(tx, module.slug, module.version);
     if (!fresh || fresh.status !== "active") {
       moduleNotActive(module.slug, module.version, fresh?.status ?? null);
     }
 
     // Organización: get-or-create (por orgId o por nombre exacto).
-    const organization = resolveOrganization(db, input.org);
+    const organization = await resolveOrganization(tx, input.org);
 
     // Proyecto destino:
     // - Encadenado (US-M3): con `previousLaunchId`, el proyecto ES el del launch
@@ -461,9 +474,9 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     // uq(project_id, phase), error de dominio.
     let project: Project | undefined;
     if (previousLaunch) {
-      const prior = getLaunch(db, previousLaunch.id); // re-lee DENTRO de la tx
+      const prior = await getLaunch(tx, previousLaunch.id); // re-lee DENTRO de la tx
       if (!prior) throw errors.notFound("module_launch", previousLaunch.id);
-      project = getProject(db, prior.projectId);
+      project = await getProject(tx, prior.projectId);
       if (!project) throw errors.notFound("project", prior.projectId);
       if (project.orgId !== organization.id) {
         throw errors.validation(
@@ -473,11 +486,11 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
         );
       }
     } else {
-      project = getProjectByOrgAndName(db, organization.id, plan.projectName);
+      project = await getProjectByOrgAndName(tx, organization.id, plan.projectName);
     }
     let stageAdvancedFrom: string | null = null;
     if (project) {
-      const samePhase = findLaunchByProjectAndPhase(db, project.id, module.phase);
+      const samePhase = await findLaunchByProjectAndPhase(tx, project.id, module.phase);
       if (samePhase) {
         throw new AgentosError(
           ErrorCodes.CONFLICT,
@@ -501,13 +514,13 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
       if (project.stage !== module.phase) {
         stageAdvancedFrom = project.stage;
         const before = { stage: project.stage, gateState: project.gateState };
-        project = updateProject(
-          db,
+        project = await updateProject(
+          tx,
           project.id,
           { stage: module.phase, gateState: "pending" },
           project.version,
         );
-        appendAudit(db, {
+        await appendAudit(tx, {
           actor: input.actor,
           source: input.actor.startsWith("person:") ? "ui" : "system",
           action: "modules.phase_advanced",
@@ -519,7 +532,7 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
         });
       }
     } else {
-      project = createProject(db, {
+      project = await createProject(tx, {
         orgId: organization.id,
         name: plan.projectName,
         type: module.projectType,
@@ -531,9 +544,9 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
 
     // Tareas del plan EN ORDEN (orderKey fraccionario secuencial como el seed).
     const taskByKey = new Map<string, Task>();
-    plan.tasks.forEach((pt, i) => {
+    for (const [i, pt] of plan.tasks.entries()) {
       const assignment = assignments.get(pt.key)!;
-      const task = createTask(db, {
+      const task = await createTask(tx, {
         projectId: project!.id,
         title: pt.title,
         description: pt.description,
@@ -552,7 +565,7 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
       // El payload {launch_id, template_key} es el MAPEO tarea→plantilla que la
       // re-creación de cadencias (M6a) usa al cerrar la instancia; fan_out_value
       // viaja para poder re-renderizar instancias fan_out con su valor.
-      appendTaskEvent(db, {
+      await appendTaskEvent(tx, {
         taskId: task.id,
         kind: "created",
         toStatus: pt.status,
@@ -564,18 +577,18 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
           ...(pt.fanOutValue !== null ? { fan_out_value: pt.fanOutValue } : {}),
         },
       });
-    });
+    }
 
     // Segunda pasada: depends_on de claves de instancia → ids reales.
     for (const pt of plan.tasks) {
       if (pt.dependsOn.length === 0) continue;
       const task = taskByKey.get(pt.key)!;
       const ids = pt.dependsOn.map((depKey) => taskByKey.get(depKey)!.id);
-      taskByKey.set(pt.key, updateTask(db, task.id, { dependsOn: ids }, task.version));
+      taskByKey.set(pt.key, await updateTask(tx, task.id, { dependsOn: ids }, task.version));
     }
 
     // Presupuesto de fase (lo combina dispatcher.budgetFromLimits — §13.4).
-    setConfig(db, `budget:project:${project.id}`, {
+    await setConfig(tx, `budget:project:${project.id}`, {
       phase_usd: plan.budget.phaseUsd,
       per_run_usd: plan.budget.perRunUsd,
       warning_thresholds_pct: plan.budget.warningThresholdsPct,
@@ -587,9 +600,9 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     // session_key — la asociación rica sigue siendo el flujo de la rama fuentes.)
     const linkedThreadIds: string[] = [];
     for (const sessionKey of sessionKeys) {
-      const thread = getThreadBySessionKey(db, sessionKey);
+      const thread = await getThreadBySessionKey(tx, sessionKey);
       if (!thread) continue;
-      if (thread.projectId !== project.id) setThreadProject(db, thread.id, project.id);
+      if (thread.projectId !== project.id) await setThreadProject(tx, thread.id, project.id);
       linkedThreadIds.push(thread.id);
     }
 
@@ -597,7 +610,7 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     const phaseGate = plan.gates.find((g) => g.when === "phase_close") ?? null;
 
     // Recibo INMUTABLE del launch (triple candado NM-3: FK + snapshot + hash).
-    const launch = insertModuleLaunch(db, {
+    const launch = await insertModuleLaunch(tx, {
       id: launchId,
       moduleId: fresh.id,
       moduleSlug: fresh.slug,
@@ -647,7 +660,7 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
       // Encadenado US-M3: explícito del llamador, o auto-completado con el
       // último launch del proyecto reutilizado ("lo pasan automáticamente").
       previousLaunchId:
-        input.previousLaunchId ?? getLatestLaunchForProject(db, project.id)?.id ?? null,
+        input.previousLaunchId ?? (await getLatestLaunchForProject(tx, project.id))?.id ?? null,
       idempotencyKey: input.idempotencyKey,
       actor: input.actor,
       durationMs,
@@ -655,7 +668,7 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     });
 
     // Auditoría (NM-5: mismo helper de siempre, inputs redactados).
-    appendAudit(db, {
+    await appendAudit(tx, {
       actor: input.actor,
       source: input.actor.startsWith("person:") ? "ui" : "system",
       action: "modules.launch",
@@ -683,10 +696,8 @@ export function launchModule(db: AgentosDb, input: LaunchModuleInput): LaunchMod
     };
   });
 
-  const outcome = tx.immediate();
-
   if (outcome.kind === "idempotent") {
-    return idempotentResult(db, outcome.launch, inputsDigest, input.idempotencyKey);
+    return await idempotentResult(db, outcome.launch, inputsDigest, input.idempotencyKey);
   }
 
   // Eventos AG-UI a publicar POST-commit (board:<project_id>, patrón del motor
@@ -830,20 +841,23 @@ export interface PreviewLaunchResult {
  * título renderizado, asignación por rol resuelta, deps, due, gates y
  * entregables efectivos — o `{ok:false, missing, issues}` fail-closed.
  */
-export function previewLaunch(db: AgentosDb, input: PreviewLaunchInput): PreviewLaunchResult {
+export async function previewLaunch(
+  db: AnyDb,
+  input: PreviewLaunchInput,
+): Promise<PreviewLaunchResult> {
   const now = input.now ?? nowMs();
 
   // Módulo: activa por defecto; una versión explícita se acepta en cualquier
   // status (preview de borradores) — el launch real seguirá exigiendo active.
   let module: PhaseModule;
   if (input.moduleVersion !== undefined) {
-    const row = getModuleVersion(db, input.moduleSlug, input.moduleVersion);
+    const row = await getModuleVersion(db, input.moduleSlug, input.moduleVersion);
     if (!row) throw errors.notFound("phase_module", `${input.moduleSlug}@${input.moduleVersion}`);
     module = row;
   } else {
-    const active = getActiveModule(db, input.moduleSlug);
+    const active = await getActiveModule(db, input.moduleSlug);
     if (!active) {
-      const any = listPhaseModules(db, { slug: input.moduleSlug });
+      const any = await listPhaseModules(db, { slug: input.moduleSlug });
       if (any.length === 0) throw errors.notFound("phase_module", input.moduleSlug);
       moduleNotActive(input.moduleSlug, null, any[0]!.status);
     }
@@ -888,7 +902,7 @@ export function previewLaunch(db: AgentosDb, input: PreviewLaunchInput): Preview
   const issues: PreviewIssue[] = [];
   let assignments: Map<string, { agentId: string; agentSlug: string }> = new Map();
   try {
-    assignments = resolveAssignments(db, plan);
+    assignments = await resolveAssignments(db, plan);
   } catch (err) {
     if (err instanceof AgentosError && err.code === ErrorCodes.AGENT_NOT_ASSIGNABLE) {
       issues.push({
@@ -901,7 +915,7 @@ export function previewLaunch(db: AgentosDb, input: PreviewLaunchInput): Preview
     }
   }
   try {
-    resolveMethodology(db, plan);
+    await resolveMethodology(db, plan);
   } catch (err) {
     if (err instanceof AgentosError && err.code === ErrorCodes.VALIDATION_ERROR) {
       const detailIssues = Array.isArray(err.details) ? (err.details as PreviewIssue[]) : [];
@@ -974,23 +988,25 @@ function idempotencyConflict(key: string, existing: ModuleLaunch): AgentosError 
  * Retorno idempotente: reconstruye el resultado desde el recibo. Sin
  * `pendingEvents` — no se creó nada nuevo y re-publicar duplicaría el stream.
  */
-function idempotentResult(
-  db: AgentosDb,
+async function idempotentResult(
+  db: AnyDb,
   existing: ModuleLaunch,
   inputsDigest: string,
   idempotencyKey: string,
-): LaunchModuleResult {
+): Promise<LaunchModuleResult> {
   if (existing.inputsDigest !== inputsDigest) throw idempotencyConflict(idempotencyKey, existing);
-  const project = getProject(db, existing.projectId);
-  const organization = getOrganization(db, existing.orgId);
+  const project = await getProject(db, existing.projectId);
+  const organization = await getOrganization(db, existing.orgId);
   if (!project || !organization) {
     // Un recibo sin proyecto/org sería corrupción de datos: fail-closed.
     throw errors.notFound("module_launch materialization", existing.id);
   }
   const resultTasks = (existing.result as { tasks?: { taskId: string }[] }).tasks ?? [];
-  const tasks = resultTasks
-    .map((t) => getTask(db, t.taskId))
-    .filter((t): t is Task => t !== undefined);
+  const tasks: Task[] = [];
+  for (const t of resultTasks) {
+    const row = await getTask(db, t.taskId);
+    if (row) tasks.push(row);
+  }
   return {
     launch: existing,
     project,

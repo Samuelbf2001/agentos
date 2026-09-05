@@ -66,12 +66,12 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
 
   it("PUT /api/tasks/:id/labels reemplaza el conjunto completo sin consumir expected_version ni tocar version", async () => {
     const fixture = await fx();
-    const task = createTask(fixture.db, {
+    const task = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Tarea sin etiquetas",
       stage: "ENTENDER",
       orderKey: "labels-1",
-    });
+    }));
     expect(task.version).toBe(1);
 
     const put1 = await fixture.api.app.inject({
@@ -97,23 +97,23 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
     expect(put2.statusCode).toBe(200);
     const body2 = put2.json() as { labels: string[] };
     expect(body2.labels).toEqual(["interno"]);
-    expect(getTask(fixture.db, task.id)!.version).toBe(1);
+    expect((await getTask(fixture.db, task.id))!.version).toBe(1);
   });
 
   it("GET /api/labels devuelve el catálogo con conteo, acotado por project_id", async () => {
     const fixture = await fx();
-    const t1 = createTask(fixture.db, {
+    const t1 = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "T1",
       stage: "ENTENDER",
       orderKey: "cat-1",
-    });
-    const t2 = createTask(fixture.db, {
+    }));
+    const t2 = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "T2",
       stage: "ENTENDER",
       orderKey: "cat-2",
-    });
+    }));
     await fixture.api.app.inject({
       method: "PUT",
       url: `/api/tasks/${t1.id}/labels`,
@@ -144,12 +144,12 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
 
   it("GET /api/tasks?label= filtra por etiqueta y ?mine=1 sólo devuelve las tareas de la persona de la sesión", async () => {
     const fixture = await fx();
-    const other = createPerson(fixture.db, {
+    const other = (await createPerson(fixture.db, {
       orgId: fixture.org.id,
       fullName: "Otra persona",
       isInternal: true,
       role: "Operadora",
-    });
+    }));
 
     const mine = await fixture.api.app.inject({
       method: "POST",
@@ -285,36 +285,36 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
 
   it("I3: personal interno se asigna a una tarea de OTRA organización; una persona externa de otra org sigue dando 400", async () => {
     const fixture = await fx();
-    const otherOrg = createOrganization(fixture.db, { name: "Otra Org S.A.", kind: "client" });
-    const otherOrgProject = createProject(fixture.db, {
+    const otherOrg = (await createOrganization(fixture.db, { name: "Otra Org S.A.", kind: "client" }));
+    const otherOrgProject = (await createProject(fixture.db, {
       orgId: otherOrg.id,
       name: "Proyecto de otra organización",
       type: "assessment",
       stage: "ENTENDER",
       gateState: "pending",
-    });
+    }));
 
     // Persona interna (Sixteam), de una organización distinta a la del proyecto.
-    const internalPerson = createPerson(fixture.db, {
+    const internalPerson = (await createPerson(fixture.db, {
       orgId: fixture.org.id,
       fullName: "Interno Sixteam",
       isInternal: true,
       role: "Consultor",
-    });
+    }));
     // Persona externa, también de otra organización que la del proyecto.
-    const externalPerson = createPerson(fixture.db, {
+    const externalPerson = (await createPerson(fixture.db, {
       orgId: fixture.org.id,
       fullName: "Externo ACME",
       isInternal: false,
       role: "Cliente",
-    });
+    }));
 
-    const taskForInternal = createTask(fixture.db, {
+    const taskForInternal = (await createTask(fixture.db, {
       projectId: otherOrgProject.id,
       title: "Tarea para interno",
       stage: "ENTENDER",
       orderKey: "i3-1",
-    });
+    }));
     const assignInternal = await fixture.api.app.inject({
       method: "POST",
       url: `/api/tasks/${taskForInternal.id}/assign`,
@@ -327,12 +327,12 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
     });
     expect(assignInternal.statusCode).toBe(200);
 
-    const taskForExternal = createTask(fixture.db, {
+    const taskForExternal = (await createTask(fixture.db, {
       projectId: otherOrgProject.id,
       title: "Tarea para externo",
       stage: "ENTENDER",
       orderKey: "i3-2",
-    });
+    }));
     const assignExternal = await fixture.api.app.inject({
       method: "POST",
       url: `/api/tasks/${taskForExternal.id}/assign`,
@@ -359,21 +359,21 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
 
   it("POST /api/tasks con responsable interno en proyecto de OTRA organización crea la tarea, la asignación y el aviso (sin 400)", async () => {
     const fixture = await fx();
-    const otherOrg = createOrganization(fixture.db, { name: "ACME Otra Org", kind: "client" });
-    const otherOrgProject = createProject(fixture.db, {
+    const otherOrg = (await createOrganization(fixture.db, { name: "ACME Otra Org", kind: "client" }));
+    const otherOrgProject = (await createProject(fixture.db, {
       orgId: otherOrg.id,
       name: "Proyecto ACME",
       type: "assessment",
       stage: "ENTENDER",
       gateState: "pending",
-    });
-    const internalPerson = createPerson(fixture.db, {
+    }));
+    const internalPerson = (await createPerson(fixture.db, {
       orgId: fixture.org.id,
       fullName: "Interno Sixteam con correo",
       email: "interno@sixteam.test",
       isInternal: true,
       role: "Consultor",
-    });
+    }));
 
     const created = await fixture.api.app.inject({
       method: "POST",
@@ -392,12 +392,12 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
     expect(created.statusCode).toBe(201);
     const taskId = (created.json() as { task: { id: string } }).task.id;
 
-    const assignees = listTaskAssignees(fixture.db, taskId);
+    const assignees = (await listTaskAssignees(fixture.db, taskId));
     expect(assignees.map((row) => row.personId)).toEqual([internalPerson.id]);
 
     // Sin proveedor configurado en el fixture, el aviso queda auditado como
     // `suppressed`; con proveedor habría quedado `delivered`/`failed`.
-    const logs = listTaskNotificationLogs(fixture.db, { taskId });
+    const logs = (await listTaskNotificationLogs(fixture.db, { taskId }));
     expect(logs).toHaveLength(1);
     expect(logs[0]?.personId).toBe(internalPerson.id);
     expect(logs[0]?.status).toBe("suppressed");
@@ -405,13 +405,13 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
 
   it("si el adaptador de avisos lanza, la creación de la tarea sigue respondiendo éxito y el error queda en el log", async () => {
     const fixture = await fx();
-    const other = createPerson(fixture.db, {
+    const other = (await createPerson(fixture.db, {
       orgId: fixture.org.id,
       fullName: "Persona con correo",
       email: "persona@acme.test",
       isInternal: true,
       role: "Operadora",
-    });
+    }));
     const warnSpy = vi.spyOn(fixture.api.app.log, "warn");
     vi.spyOn(fixture.api.ctx.notifications, "notifyAssignment").mockRejectedValueOnce(
       new Error("proveedor de correo caído"),
@@ -431,7 +431,7 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
     });
     expect(created.statusCode).toBe(201);
     const taskId = (created.json() as { task: { id: string } }).task.id;
-    expect(listTaskAssignees(fixture.db, taskId).map((row) => row.personId)).toEqual([other.id]);
+    expect((await listTaskAssignees(fixture.db, taskId)).map((row) => row.personId)).toEqual([other.id]);
     expect(warnSpy).toHaveBeenCalled();
   });
 });
@@ -475,12 +475,12 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
 
   it("POST /api/tasks/:id/artifacts/upload guarda el archivo y GET /api/artifacts/:id/download lo devuelve", async () => {
     const fixture = await fx();
-    const task = createTask(fixture.db, {
+    const task = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Con archivo",
       stage: "ENTENDER",
       orderKey: "art-1",
-    });
+    }));
 
     const boundary = "----agentosTest1";
     const content = "contenido del entregable";
@@ -512,14 +512,14 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
 
   it("mover a DONE sin artefacto → 422 missing_artifact; tras subir uno con /upload, la transición funciona", async () => {
     const fixture = await fx();
-    const task = createTask(fixture.db, {
+    const task = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Sin evidencia todavia",
       definitionOfDone: "Entregable adjunto",
       stage: "ENTENDER",
       status: "IN_PROGRESS",
       orderKey: "art-2",
-    });
+    }));
 
     const blocked = await fixture.api.app.inject({
       method: "POST",
@@ -531,7 +531,7 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
     const blockedBody = blocked.json() as { error: { code: string; message: string } };
     expect(blockedBody.error.code).toBe("missing_artifact");
     expect(blockedBody.error.message).toMatch(/artefacto/i);
-    expect(getTask(fixture.db, task.id)!.status).toBe("IN_PROGRESS");
+    expect((await getTask(fixture.db, task.id))!.status).toBe("IN_PROGRESS");
 
     const boundary = "----agentosTest2";
     const upload = await fixture.api.app.inject({
@@ -550,19 +550,19 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
       payload: { to: "DONE", expected_version: task.version },
     });
     expect(done.statusCode).toBe(200);
-    expect(getTask(fixture.db, task.id)!.status).toBe("DONE");
+    expect((await getTask(fixture.db, task.id))!.status).toBe("DONE");
   });
 
   it("mover a REVIEW sin artefacto → 422 missing_artifact; tras subir uno, REVIEW y luego DONE funcionan", async () => {
     const fixture = await fx();
-    const task = createTask(fixture.db, {
+    const task = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Revision con evidencia diferida",
       definitionOfDone: "Entregable revisado",
       stage: "ENTENDER",
       status: "IN_PROGRESS",
       orderKey: "art-3",
-    });
+    }));
 
     const blockedReview = await fixture.api.app.inject({
       method: "POST",
@@ -598,17 +598,17 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
       payload: { expected_version: reviewed.version },
     });
     expect(toDone.statusCode).toBe(200);
-    expect(getTask(fixture.db, task.id)!.status).toBe("DONE");
+    expect((await getTask(fixture.db, task.id))!.status).toBe("DONE");
   });
 
   it("I4.1: subida con filename de path traversal cae saneada DENTRO de la raíz de artefactos, nunca fuera", async () => {
     const fixture = await fx();
-    const task = createTask(fixture.db, {
+    const task = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Con nombre malicioso",
       stage: "ENTENDER",
       orderKey: "art-traversal",
-    });
+    }));
 
     const boundary = "----agentosTestTraversal";
     const res = await fixture.api.app.inject({
@@ -631,12 +631,12 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
 
   it("I4.2: content de un artefacto `link` debe ser http(s); la descarga exige meta.storage === 'artifacts_root'", async () => {
     const fixture = await fx();
-    const task = createTask(fixture.db, {
+    const task = (await createTask(fixture.db, {
       projectId: fixture.project.id,
       title: "Con enlace",
       stage: "ENTENDER",
       orderKey: "art-link",
-    });
+    }));
 
     const asPath = await fixture.api.app.inject({
       method: "POST",
@@ -665,13 +665,13 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
     // Artefacto con `path` en la fila pero sin el meta que la ruta exige
     // (p.ej. fila heredada o escrita por otro camino que no sea el upload
     // de esta API): la descarga debe responder 404 sin revelar la ruta.
-    const legacy = attachArtifact(fixture.db, {
+    const legacy = (await attachArtifact(fixture.db, {
       taskId: task.id,
       kind: "file",
       title: "Legado",
       content: null,
       path: "algo/legado-secreto.txt",
-    });
+    }));
     const download = await fixture.api.app.inject({
       method: "GET",
       url: `/api/artifacts/${legacy.id}/download`,
@@ -687,12 +687,12 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
     process.env.AGENTOS_ARTIFACT_MAX_BYTES = "10";
     try {
       const fixture = await fx();
-      const task = createTask(fixture.db, {
+      const task = (await createTask(fixture.db, {
         projectId: fixture.project.id,
         title: "Archivo demasiado grande",
         stage: "ENTENDER",
         orderKey: "art-limit",
-      });
+      }));
       const boundary = "----agentosTestLimit";
       const res = await fixture.api.app.inject({
         method: "POST",
@@ -729,7 +729,7 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
       assignees?: { personId: string; isPrimary: boolean }[];
     };
     expect(body.task.assigneePersonId).toBe(fixture.person.id);
-    const assignees = listTaskAssignees(fixture.db, body.task.id);
+    const assignees = (await listTaskAssignees(fixture.db, body.task.id));
     expect(assignees).toMatchObject([{ personId: fixture.person.id, isPrimary: true }]);
 
     const moved = await fixture.api.app.inject({
@@ -739,6 +739,6 @@ describe("Tareas — artefactos por archivo (multipart) y regla anti-teatro", ()
       payload: { to: "READY", expected_version: body.task.version },
     });
     expect(moved.statusCode).toBe(200);
-    expect(getTask(fixture.db, body.task.id)!.status).toBe("READY");
+    expect((await getTask(fixture.db, body.task.id))!.status).toBe("READY");
   });
 });

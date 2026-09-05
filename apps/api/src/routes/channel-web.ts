@@ -44,7 +44,7 @@ export function registerWebChannel(app: FastifyInstance, ctx: ApiContext): void 
     const body = parse(InboundMessage, req.body);
 
     // Dedup por (channel, message_id): descarta el duplicado en silencio.
-    const existing = findChannelMessage(db, WEB_CHANNEL, body.message_id);
+    const existing = await findChannelMessage(db, WEB_CHANNEL, body.message_id);
     if (existing) {
       return reply.status(200).send({
         deduped: true,
@@ -54,13 +54,13 @@ export function registerWebChannel(app: FastifyInstance, ctx: ApiContext): void 
       });
     }
 
-    const thread = getOrCreateThread(db, {
+    const thread = await getOrCreateThread(db, {
       channel: WEB_CHANNEL,
       sessionKey: buildSessionKey(WEB_CHANNEL, body.external_chat_id, body.thread_hint),
       projectId: body.project_id ?? null,
     });
 
-    const { message, inserted } = appendMessage(db, {
+    const { message, inserted } = await appendMessage(db, {
       threadId: thread.id,
       role: "user",
       content: body.text,
@@ -82,7 +82,7 @@ export function registerWebChannel(app: FastifyInstance, ctx: ApiContext): void 
       });
     }
 
-    publishRaw(bus, threadTopic(thread.id), {
+    await publishRaw(bus, threadTopic(thread.id), {
       type: "message.inbound",
       payload: {
         channel: WEB_CHANNEL,
@@ -92,7 +92,7 @@ export function registerWebChannel(app: FastifyInstance, ctx: ApiContext): void 
         text: body.text,
       },
     });
-    publishRaw(bus, channelTopic(WEB_CHANNEL), {
+    await publishRaw(bus, channelTopic(WEB_CHANNEL), {
       type: "message.inbound",
       payload: { thread_id: thread.id, message_id: message.id },
     });
@@ -100,7 +100,7 @@ export function registerWebChannel(app: FastifyInstance, ctx: ApiContext): void 
     // Encolar el run de Alex. Si el kill switch está activo el mensaje queda
     // persistido y se responde con el aviso (no hay run).
     try {
-      const { runId } = dispatcher.enqueueChatRun({ threadId: thread.id, text: body.text });
+      const { runId } = await dispatcher.enqueueChatRun({ threadId: thread.id, text: body.text });
       return reply.status(200).send({
         deduped: false,
         thread_id: thread.id,

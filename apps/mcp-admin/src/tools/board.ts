@@ -50,8 +50,8 @@ const DueAt = z.preprocess(
   z.number().int().nonnegative().nullable().optional(),
 );
 
-function mustGetTask(db: AgentosDb, taskId: string): Task {
-  const task = getTask(db, taskId);
+async function mustGetTask(db: AgentosDb, taskId: string): Promise<Task> {
+  const task = await getTask(db, taskId);
   if (!task) throw errors.notFound("task", taskId);
   return task;
 }
@@ -86,11 +86,11 @@ export const boardTools: AdminToolDefinition[] = [
       label: z.string().optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const assigneeAgentId = args.assignee_agent
-        ? resolveAgentRef(ctx.db, args.assignee_agent).id
+        ? (await resolveAgentRef(ctx.db, args.assignee_agent)).id
         : undefined;
-      const rows = listTasks(ctx.db, {
+      const rows = await listTasks(ctx.db, {
         projectId: args.project_id,
         status: args.status,
         assigneeAgentId,
@@ -98,7 +98,10 @@ export const boardTools: AdminToolDefinition[] = [
         personId: args.assignee_person_id,
       });
       // Una sola consulta de etiquetas para todas las filas evita N+1 al pintar el tablero.
-      const labels = listLabelsForTasks(ctx.db, rows.map((t) => t.id));
+      const labels = await listLabelsForTasks(
+        ctx.db,
+        rows.map((t) => t.id),
+      );
       const withLabels = rows.map((t) => ({ ...t, labels: labels.get(t.id) ?? [] }));
       if (!args.label) return withLabels;
       const wanted = normalizeLabel(args.label);
@@ -111,12 +114,12 @@ export const boardTools: AdminToolDefinition[] = [
     description: "Devuelve una tarea con su timeline (task_events) y artefactos.",
     schema: z.object({ task_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const task = mustGetTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await mustGetTask(ctx.db, args.task_id);
       return {
         task,
-        events: listTaskEvents(ctx.db, task.id),
-        artifacts: listArtifacts(ctx.db, task.id),
+        events: await listTaskEvents(ctx.db, task.id),
+        artifacts: await listArtifacts(ctx.db, task.id),
       };
     },
   }),
@@ -149,13 +152,14 @@ export const boardTools: AdminToolDefinition[] = [
     }),
     readOnly: false,
     async handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "tasks.create", args.idempotency_key);
+      const previous = await findIdempotentMutation(ctx, "tasks.create", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getTask(ctx.db, previous.entityId);
-        if (existing) return { task: existing, labels: listTaskLabels(ctx.db, existing.id), idempotent: true };
+        const existing = await getTask(ctx.db, previous.entityId);
+        if (existing)
+          return { task: existing, labels: await listTaskLabels(ctx.db, existing.id), idempotent: true };
       }
       const assigneeAgentId = args.assignee_agent
-        ? resolveAgentRef(ctx.db, args.assignee_agent).id
+        ? (await resolveAgentRef(ctx.db, args.assignee_agent)).id
         : null;
       // Misma regla que POST /api/tasks: la lista manda si llega; si no, la
       // entrada singular se traduce a una lista de una sola persona primaria.
@@ -171,7 +175,7 @@ export const boardTools: AdminToolDefinition[] = [
           : args.assignee_person_ids !== undefined
             ? null
             : (args.assignee_person_id ?? null);
-      const task = ctx.engine.createTask(
+      const task = await ctx.engine.createTask(
         {
           projectId: args.project_id,
           title: args.title,
@@ -205,7 +209,7 @@ export const boardTools: AdminToolDefinition[] = [
       }
       const labels =
         args.labels !== undefined ? await replaceTaskLabels(ctx.db, savedTask.id, args.labels, ctx.actor) : [];
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.create",
         entityType: "task",
         entityId: savedTask.id,
@@ -240,14 +244,15 @@ export const boardTools: AdminToolDefinition[] = [
     }),
     readOnly: false,
     async handler(ctx, args) {
-      const task = mustGetTask(ctx.db, args.task_id);
+      const task = await mustGetTask(ctx.db, args.task_id);
       if (Object.keys(args.patch).length === 0) {
         throw errors.validation("tasks.update con patch vacío: nada que hacer");
       }
       const before = taskAuditFields(task);
       // Capturado ANTES de reemplazar: si el patch sólo trae `labels`, es la
       // única forma de que la auditoría registre el cambio (igual que REST).
-      const labelsBefore = args.patch.labels !== undefined ? listTaskLabels(ctx.db, task.id) : undefined;
+      const labelsBefore =
+        args.patch.labels !== undefined ? await listTaskLabels(ctx.db, task.id) : undefined;
       const patch: Partial<Task> = {};
       if (args.patch.title !== undefined) patch.title = args.patch.title;
       if (args.patch.description !== undefined) patch.description = args.patch.description;
@@ -264,8 +269,8 @@ export const boardTools: AdminToolDefinition[] = [
       const labels =
         args.patch.labels !== undefined
           ? await replaceTaskLabels(ctx.db, task.id, args.patch.labels, ctx.actor)
-          : listTaskLabels(ctx.db, task.id);
-      auditMutation(ctx, {
+          : await listTaskLabels(ctx.db, task.id);
+      await auditMutation(ctx, {
         action: "tasks.update",
         entityType: "task",
         entityId: task.id,
@@ -291,10 +296,10 @@ export const boardTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const task = mustGetTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await mustGetTask(ctx.db, args.task_id);
       const before = { status: task.status, version: task.version };
-      const moved = ctx.engine.moveTask({
+      const moved = await ctx.engine.moveTask({
         taskId: task.id,
         to: args.to,
         expectedVersion: args.expected_version,
@@ -302,7 +307,7 @@ export const boardTools: AdminToolDefinition[] = [
         note: args.note,
         blockedReason: args.blocked_reason,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.move",
         entityType: "task",
         entityId: task.id,
@@ -323,21 +328,21 @@ export const boardTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "tasks.comment", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "tasks.comment", args.idempotency_key);
       if (previous?.entityId) return { event_id: previous.entityId, idempotent: true };
-      const task = mustGetTask(ctx.db, args.task_id);
-      const event = appendTaskEvent(ctx.db, {
+      const task = await mustGetTask(ctx.db, args.task_id);
+      const event = await appendTaskEvent(ctx.db, {
         taskId: task.id,
         kind: "comment",
         actor: ctx.actor,
         payload: { body: args.body },
       });
-      ctx.sink.publish(`board:${task.projectId}`, {
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.commented",
         payload: { taskId: task.id, eventId: event.id, actor: ctx.actor },
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.comment",
         entityType: "task_event",
         entityId: event.id,
@@ -361,11 +366,11 @@ export const boardTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       if (args.assignee_agent === undefined && args.assignee_person_id === undefined) {
         throw errors.validation("tasks.assign exige assignee_agent y/o assignee_person_id");
       }
-      const task = mustGetTask(ctx.db, args.task_id);
+      const task = await mustGetTask(ctx.db, args.task_id);
       const before = {
         assigneeAgentId: task.assigneeAgentId,
         assigneePersonId: task.assigneePersonId,
@@ -373,14 +378,14 @@ export const boardTools: AdminToolDefinition[] = [
       const patch: Partial<Task> = {};
       if (args.assignee_agent !== undefined) {
         patch.assigneeAgentId =
-          args.assignee_agent === null ? null : resolveAgentRef(ctx.db, args.assignee_agent).id;
+          args.assignee_agent === null ? null : (await resolveAgentRef(ctx.db, args.assignee_agent)).id;
       }
       if (args.assignee_person_id !== undefined) {
         patch.assigneePersonId =
-          args.assignee_person_id === null ? null : mustGetPerson(ctx.db, args.assignee_person_id).id;
+          args.assignee_person_id === null ? null : (await mustGetPerson(ctx.db, args.assignee_person_id)).id;
       }
-      const updated = updateTask(ctx.db, task.id, patch, args.expected_version);
-      appendTaskEvent(ctx.db, {
+      const updated = await updateTask(ctx.db, task.id, patch, args.expected_version);
+      await appendTaskEvent(ctx.db, {
         taskId: task.id,
         kind: "assigned",
         actor: ctx.actor,
@@ -389,7 +394,7 @@ export const boardTools: AdminToolDefinition[] = [
           assigneePersonId: updated.assigneePersonId,
         },
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.assign",
         entityType: "task",
         entityId: task.id,
@@ -418,11 +423,11 @@ export const boardTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "tasks.attach_artifact", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "tasks.attach_artifact", args.idempotency_key);
       if (previous?.entityId) return { artifact_id: previous.entityId, idempotent: true };
-      const task = mustGetTask(ctx.db, args.task_id);
-      const artifact = attachArtifact(ctx.db, {
+      const task = await mustGetTask(ctx.db, args.task_id);
+      const artifact = await attachArtifact(ctx.db, {
         taskId: task.id,
         kind: args.kind,
         title: args.title,
@@ -430,11 +435,11 @@ export const boardTools: AdminToolDefinition[] = [
         path: args.path ?? null,
         createdBy: ctx.actor,
       });
-      ctx.sink.publish(`board:${task.projectId}`, {
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.artifact_attached",
         payload: { taskId: task.id, artifactId: artifact.id },
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.attach_artifact",
         entityType: "artifact",
         entityId: artifact.id,
@@ -458,18 +463,18 @@ export const boardTools: AdminToolDefinition[] = [
       note: z.string().optional(),
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const person = mustGetPerson(ctx.db, args.person_id);
-      const task = mustGetTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const person = await mustGetPerson(ctx.db, args.person_id);
+      const task = await mustGetTask(ctx.db, args.task_id);
       const before = { status: task.status, version: task.version };
-      const moved = ctx.engine.moveTask({
+      const moved = await ctx.engine.moveTask({
         taskId: task.id,
         to: "DONE",
         expectedVersion: args.expected_version,
         actor: `person:${person.id}`,
         note: args.note,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.approve",
         entityType: "task",
         entityId: task.id,
@@ -492,18 +497,18 @@ export const boardTools: AdminToolDefinition[] = [
       note: z.string().min(1, "la nota de rechazo es obligatoria"),
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const person = mustGetPerson(ctx.db, args.person_id);
-      const task = mustGetTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const person = await mustGetPerson(ctx.db, args.person_id);
+      const task = await mustGetTask(ctx.db, args.task_id);
       const before = { status: task.status, version: task.version };
-      const moved = ctx.engine.moveTask({
+      const moved = await ctx.engine.moveTask({
         taskId: task.id,
         to: "IN_PROGRESS",
         expectedVersion: args.expected_version,
         actor: `person:${person.id}`,
         note: args.note,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.reject",
         entityType: "task",
         entityId: task.id,
@@ -526,15 +531,15 @@ export const boardTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const task = mustGetTask(ctx.db, args.task_id);
+    async handler(ctx, args) {
+      const task = await mustGetTask(ctx.db, args.task_id);
       const before = { orderKey: task.orderKey, version: task.version };
-      const updated = updateTask(ctx.db, task.id, { orderKey: args.order_key }, args.expected_version);
-      ctx.sink.publish(`board:${task.projectId}`, {
+      const updated = await updateTask(ctx.db, task.id, { orderKey: args.order_key }, args.expected_version);
+      await ctx.sink.publish(`board:${task.projectId}`, {
         type: "task.reordered",
         payload: { taskId: task.id, orderKey: updated.orderKey },
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "tasks.reorder",
         entityType: "task",
         entityId: task.id,
@@ -552,8 +557,8 @@ export const boardTools: AdminToolDefinition[] = [
       "Snapshot del tablero de un proyecto agrupado por stage × status (orden de columna).",
     schema: z.object({ project_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const rows = boardTasks(ctx.db, args.project_id);
+    async handler(ctx, args) {
+      const rows = await boardTasks(ctx.db, args.project_id);
       const stages: Record<string, Record<string, Task[]>> = {};
       for (const t of rows) {
         const byStatus = (stages[t.stage] ??= {});

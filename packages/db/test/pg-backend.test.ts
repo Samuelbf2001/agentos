@@ -13,7 +13,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { isAgentosError } from "@agentos/shared";
 
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { MockEmbeddingProvider } from "../src/embeddings.js";
 /** Repositorios SQLite bajo namespace: mismos nombres que los de PG, sin colisión. */
@@ -488,7 +488,7 @@ describePg("backend Postgres + pgvector", () => {
   // ── 6. Migración de datos SQLite → Postgres ──────────────────────────────
 
   describe("migrate-to-pg", () => {
-    function freshSqlite(): AgentosDb {
+    function freshSqlite(): AgentosSqliteDb {
       const source = openDb(":memory:");
       runMigrations(source);
       return source;
@@ -497,36 +497,36 @@ describePg("backend Postgres + pgvector", () => {
     it("copia una SQLite completa respetando FKs y es idempotente al repetir", async () => {
       const source = freshSqlite();
       // Semilla mínima que ejercita el orden topológico y las auto-FKs.
-      const org = lite.createOrganization(source, { name: "ACME Copia", kind: "client" });
-      const project = lite.createProject(source, {
+      const org = await lite.createOrganization(source, { name: "ACME Copia", kind: "client" });
+      const project = await lite.createProject(source, {
         orgId: org.id, name: "Assessment", type: "assessment", stage: "ENTENDER",
       });
-      const provider = lite.upsertProviderProfile(source, {
+      const provider = await lite.upsertProviderProfile(source, {
         slug: "p1", name: "P", kind: "claude_subscription",
       });
-      const parentAgent = lite.createAgent(source, {
+      const parentAgent = await lite.createAgent(source, {
         slug: "alex", name: "Alex", layer: "consultoria", runtime: "claude_code",
         providerProfileId: provider.id, toolsAllowlist: [], mcpAllowlist: [],
       });
-      lite.createAgent(source, {
+      await lite.createAgent(source, {
         slug: "sam", name: "Sam", layer: "implementacion", runtime: "ai_sdk",
         providerProfileId: provider.id, reportsTo: parentAgent.id,
         toolsAllowlist: [], mcpAllowlist: [],
       });
-      const padre = lite.createTask(source, {
+      const padre = await lite.createTask(source, {
         projectId: project.id, title: "Padre", stage: "ENTENDER", orderKey: "a0",
       });
-      lite.createTask(source, {
+      await lite.createTask(source, {
         projectId: project.id, title: "Hija", stage: "ENTENDER", orderKey: "a1",
         parentTaskId: padre.id, dependsOn: [padre.id],
       });
-      lite.createDoc(source, {
+      await lite.createDoc(source, {
         orgId: org.id, projectId: project.id, kind: "org_profile",
         title: "Perfil ACME", bodyMd: "Manufactura mediana con 40 personas.",
         tags: ["acme"], sourceRefs: [{ kind: "interview", id: "e1" }],
       });
-      lite.appendEvent(source, { topic: "board:x", type: "STATE_SNAPSHOT", payload: { n: 1 } });
-      lite.setConfig(source, "budget_max_cost_per_run_usd", 3);
+      await lite.appendEvent(source, { topic: "board:x", type: "STATE_SNAPSHOT", payload: { n: 1 } });
+      await lite.setConfig(source, "budget_max_cost_per_run_usd", 3);
 
       const first = await copyAllTables(source, db);
       const byTable = new Map(first.map((r) => [r.table, r]));
@@ -556,7 +556,7 @@ describePg("backend Postgres + pgvector", () => {
 
     it("--dry-run no escribe nada", async () => {
       const source = freshSqlite();
-      lite.createOrganization(source, { name: "Solo cuenta", kind: "client" });
+      await lite.createOrganization(source, { name: "Solo cuenta", kind: "client" });
       const report = await copyAllTables(source, db, { dryRun: true });
       expect(report.find((r) => r.table === "organizations")?.source).toBe(1);
       expect(report.every((r) => r.inserted === 0)).toBe(true);

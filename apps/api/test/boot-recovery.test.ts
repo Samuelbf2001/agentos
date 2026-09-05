@@ -29,20 +29,22 @@ describe("recuperación al arrancar (NFR-4)", () => {
   it("run 'running' → 'interrupted', tarea con lease → READY, approval pendiente intacta", async () => {
     // ── Sesión 1: estado "a medias" y apagado brusco ──────────────────────
     const fx1 = await makeFixture({ dbPath });
-    const task = makeReadyTask(fx1, fx1.sam);
-    const runId = createRun(fx1.db, {
-      taskId: task.id,
-      projectId: fx1.project.id,
-      agentId: fx1.sam.id,
-      trigger: "dispatcher",
-      runtime: "ai_sdk",
-      status: "queued",
-    }).id;
-    const claim = claimTask(fx1.db, { taskId: task.id, agentId: fx1.sam.slug, runId });
+    const task = await makeReadyTask(fx1, fx1.sam);
+    const runId = (
+      await createRun(fx1.db, {
+        taskId: task.id,
+        projectId: fx1.project.id,
+        agentId: fx1.sam.id,
+        trigger: "dispatcher",
+        runtime: "ai_sdk",
+        status: "queued",
+      })
+    ).id;
+    const claim = await claimTask(fx1.db, { taskId: task.id, agentId: fx1.sam.slug, runId });
     expect(claim.claimed).toBe(true);
-    updateRun(fx1.db, runId, { status: "running", startedAt: Date.now() });
+    await updateRun(fx1.db, runId, { status: "running", startedAt: Date.now() });
 
-    const approval = createApproval(fx1.db, {
+    const approval = await createApproval(fx1.db, {
       kind: "tool_call",
       payload: { tool: "email.send", args: { to: "x@y.z", subject: "s", body: "b" } },
       runId,
@@ -50,7 +52,7 @@ describe("recuperación al arrancar (NFR-4)", () => {
       projectId: fx1.project.id,
       requestedBy: "agent:sam",
     });
-    expect(getTask(fx1.db, task.id)!.status).toBe("IN_PROGRESS");
+    expect((await getTask(fx1.db, task.id))!.status).toBe("IN_PROGRESS");
     await fx1.close(); // "reinicio": el proceso muere con el run en vuelo
 
     // ── Sesión 2: boot con recuperación ───────────────────────────────────
@@ -59,16 +61,16 @@ describe("recuperación al arrancar (NFR-4)", () => {
       expect(fx2.api.ctx.recovery.interruptedRuns).toContain(runId);
       expect(fx2.api.ctx.recovery.requeuedTasks).toContain(task.id);
 
-      const run = getRun(fx2.db, runId)!;
+      const run = (await getRun(fx2.db, runId))!;
       expect(run.status).toBe("interrupted");
       expect(run.finishedAt).not.toBeNull();
 
-      const recovered = getTask(fx2.db, task.id)!;
+      const recovered = (await getTask(fx2.db, task.id))!;
       expect(recovered.status).toBe("READY");
       expect(recovered.leaseUntil).toBeNull();
 
       // La aprobación pendiente sobrevive al reinicio (CA-5.4).
-      const survived = getApproval(fx2.db, approval.id)!;
+      const survived = (await getApproval(fx2.db, approval.id))!;
       expect(survived.status).toBe("pending");
       expect(survived.actionDigest).toBe(approval.actionDigest);
     } finally {

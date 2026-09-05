@@ -1,6 +1,6 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { methodologies } from "../schema.js";
 import type { Methodology, NewMethodology } from "../types.js";
 
@@ -10,7 +10,7 @@ import type { Methodology, NewMethodology } from "../types.js";
  * actualiza (seed refresh); una versión nueva crea fila nueva — nunca se borra historial.
  */
 export function upsertMethodology(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewMethodology, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Methodology {
   const now = nowMs();
@@ -29,7 +29,7 @@ export function upsertMethodology(
 
 /** Sin `version` devuelve la última versión del slug. */
 export function getMethodology(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   slug: string,
   version?: number,
 ): Methodology | undefined {
@@ -49,7 +49,7 @@ export function getMethodology(
     .get();
 }
 
-export function listMethodologies(db: AgentosDb): Methodology[] {
+export function listMethodologies(db: AgentosSqliteDb): Methodology[] {
   return db
     .select()
     .from(methodologies)

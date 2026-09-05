@@ -43,13 +43,13 @@ interface Fixture {
   reporte: Task;
 }
 
-function cadenceFixture(): Fixture {
+async function cadenceFixture(): Promise<Fixture> {
   const db = openDb(":memory:");
   runMigrations(db);
-  seed(db, { env: {} });
+  await seed(db, { env: {} });
   const sink = recordingEventSink();
   const engine = createBoardEngine({ db, sink });
-  const r = launchModule(db, {
+  const r = await launchModule(db, {
     moduleSlug: "operacion",
     org: { name: "Nova Ops S.A." },
     inputs: { cliente: "Nova", objetivo: "Operar la promesa mes a mes." },
@@ -63,38 +63,47 @@ function cadenceFixture(): Fixture {
       (t) => [t.key, t.taskId] as const,
     ),
   );
-  return { db, engine, sink, r, reporte: getTask(db, byKey.get("reporte_semanal")!)! };
+  return { db, engine, sink, r, reporte: (await getTask(db, byKey.get("reporte_semanal")!))! };
 }
 
 /** DONE por la máquina real: humano + artefacto (regla anti-teatro). */
-function humanDone(f: Fixture, taskId: string): void {
-  let task = getTask(f.db, taskId)!;
+async function humanDone(f: Fixture, taskId: string): Promise<void> {
+  let task = (await getTask(f.db, taskId))!;
   if (task.status === "READY") {
-    f.engine.moveTask({ taskId, to: "IN_PROGRESS", expectedVersion: task.version, actor: "person:ernesto" });
-    task = getTask(f.db, taskId)!;
+    await f.engine.moveTask({
+      taskId,
+      to: "IN_PROGRESS",
+      expectedVersion: task.version,
+      actor: "person:ernesto",
+    });
+    task = (await getTask(f.db, taskId))!;
   }
-  attachArtifact(f.db, { taskId, kind: "document", title: "Evidencia" });
-  f.engine.moveTask({ taskId, to: "DONE", expectedVersion: task.version, actor: "person:ernesto" });
+  await attachArtifact(f.db, { taskId, kind: "document", title: "Evidencia" });
+  await f.engine.moveTask({ taskId, to: "DONE", expectedVersion: task.version, actor: "person:ernesto" });
 }
 
 /** Instancias de la plantilla cadence por su task_event created (mapeo real). */
-function instancesOf(db: AgentosDb, projectId: string, templateKey: string): Task[] {
-  return listTasks(db, { projectId }).filter((t) =>
-    listTaskEvents(db, t.id).some(
-      (e) => e.kind === "created" && e.payload?.["template_key"] === templateKey,
-    ),
-  );
+async function instancesOf(db: AgentosDb, projectId: string, templateKey: string): Promise<Task[]> {
+  const tasks = await listTasks(db, { projectId });
+  const result: Task[] = [];
+  for (const t of tasks) {
+    const events = await listTaskEvents(db, t.id);
+    if (events.some((e) => e.kind === "created" && e.payload?.["template_key"] === templateKey)) {
+      result.push(t);
+    }
+  }
+  return result;
 }
 
 describe("re-creación de cadencia en el hook de DONE (CA-M3.4 — M6a)", () => {
-  it("DONE de la instancia → nace la siguiente con due+periodo; la vieja sigue DONE", () => {
-    const f = cadenceFixture();
+  it("DONE de la instancia → nace la siguiente con due+periodo; la vieja sigue DONE", async () => {
+    const f = await cadenceFixture();
     expect(f.reporte.status).toBe("READY");
     expect(f.reporte.dueAt).toBe(NOW + 7 * DAY_MS);
 
-    humanDone(f, f.reporte.id);
+    await humanDone(f, f.reporte.id);
 
-    const instancias = instancesOf(f.db, f.r.project.id, "reporte_semanal");
+    const instancias = await instancesOf(f.db, f.r.project.id, "reporte_semanal");
     expect(instancias).toHaveLength(2);
     const vieja = instancias.find((t) => t.id === f.reporte.id)!;
     const nueva = instancias.find((t) => t.id !== f.reporte.id)!;
@@ -103,11 +112,11 @@ describe("re-creación de cadencia en el hook de DONE (CA-M3.4 — M6a)", () => 
     expect(nueva.title).toBe(f.reporte.title); // mismo título re-renderizado
     expect(nueva.definitionOfDone).toBe(f.reporte.definitionOfDone);
     expect(nueva.dueAt).toBe(f.reporte.dueAt! + 7 * DAY_MS); // due de la cerrada + periodo
-    expect(nueva.assigneeAgentId).toBe(getAgentBySlug(f.db, "clara")!.id); // rol datos
+    expect(nueva.assigneeAgentId).toBe((await getAgentBySlug(f.db, "clara"))!.id); // rol datos
     expect(nueva.dependsOn ?? []).toEqual([]);
 
     // El evento created de la nueva mantiene el mapeo tarea→plantilla (la cadena sigue).
-    const created = listTaskEvents(f.db, nueva.id).find((e) => e.kind === "created")!;
+    const created = (await listTaskEvents(f.db, nueva.id)).find((e) => e.kind === "created")!;
     expect(created.actor).toBe("system:cadence");
     expect(created.payload?.["template_key"]).toBe("reporte_semanal");
     expect(created.payload?.["respawn_of"]).toBe(f.reporte.id);
@@ -122,73 +131,73 @@ describe("re-creación de cadencia en el hook de DONE (CA-M3.4 — M6a)", () => 
     ).toBe(true);
   });
 
-  it("guarda-raíl anti-bucle: con la nueva instancia ABIERTA no se duplica", () => {
-    const f = cadenceFixture();
-    humanDone(f, f.reporte.id);
-    expect(instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(2);
+  it("guarda-raíl anti-bucle: con la nueva instancia ABIERTA no se duplica", async () => {
+    const f = await cadenceFixture();
+    await humanDone(f, f.reporte.id);
+    expect(await instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(2);
 
     // Segundo intento sobre la MISMA tarea DONE (p. ej. hook repetido): nada.
-    expect(respawnCadenceInstance(f.db, f.reporte.id)).toBeNull();
-    expect(instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(2);
+    expect(await respawnCadenceInstance(f.db, f.reporte.id)).toBeNull();
+    expect(await instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(2);
   });
 
-  it("la cadena continúa: cerrar la instancia re-creada crea la tercera", () => {
-    const f = cadenceFixture();
-    humanDone(f, f.reporte.id);
-    const segunda = instancesOf(f.db, f.r.project.id, "reporte_semanal").find(
+  it("la cadena continúa: cerrar la instancia re-creada crea la tercera", async () => {
+    const f = await cadenceFixture();
+    await humanDone(f, f.reporte.id);
+    const segunda = (await instancesOf(f.db, f.r.project.id, "reporte_semanal")).find(
       (t) => t.status === "READY",
     )!;
-    humanDone(f, segunda.id);
-    const instancias = instancesOf(f.db, f.r.project.id, "reporte_semanal");
+    await humanDone(f, segunda.id);
+    const instancias = await instancesOf(f.db, f.r.project.id, "reporte_semanal");
     expect(instancias).toHaveLength(3);
     const tercera = instancias.find((t) => t.status === "READY")!;
     expect(tercera.dueAt).toBe(segunda.dueAt! + 7 * DAY_MS);
   });
 
-  it("no confirmada: no nace en el launch ni renace al cerrar otras tareas", () => {
-    const f = cadenceFixture();
-    expect(instancesOf(f.db, f.r.project.id, "sprint_semanal")).toHaveLength(0);
+  it("no confirmada: no nace en el launch ni renace al cerrar otras tareas", async () => {
+    const f = await cadenceFixture();
+    expect(await instancesOf(f.db, f.r.project.id, "sprint_semanal")).toHaveLength(0);
     // Cerrar una tarea NO cadence no crea cadencias.
     const byKey = new Map(
       (f.r.launch.result as { tasks: { key: string; taskId: string }[] }).tasks.map(
         (t) => [t.key, t.taskId] as const,
       ),
     );
-    humanDone(f, byKey.get("kickoff_ops")!);
-    expect(instancesOf(f.db, f.r.project.id, "sprint_semanal")).toHaveLength(0);
-    expect(instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(1);
+    await humanDone(f, byKey.get("kickoff_ops")!);
+    expect(await instancesOf(f.db, f.r.project.id, "sprint_semanal")).toHaveLength(0);
+    expect(await instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(1);
   });
 
-  it("roster cambiado: el asignado se re-resuelve contra el roster ACTUAL (clara pausada → sally)", () => {
-    const f = cadenceFixture();
-    const clara = getAgentBySlug(f.db, "clara")!;
-    updateAgent(f.db, clara.id, { status: "paused" }, clara.version);
+  it("roster cambiado: el asignado se re-resuelve contra el roster ACTUAL (clara pausada → sally)", async () => {
+    const f = await cadenceFixture();
+    const clara = (await getAgentBySlug(f.db, "clara"))!;
+    await updateAgent(f.db, clara.id, { status: "paused" }, clara.version);
 
-    humanDone(f, f.reporte.id);
-    const nueva = instancesOf(f.db, f.r.project.id, "reporte_semanal").find(
+    await humanDone(f, f.reporte.id);
+    const nueva = (await instancesOf(f.db, f.r.project.id, "reporte_semanal")).find(
       (t) => t.status === "READY",
     )!;
-    expect(nueva.assigneeAgentId).toBe(getAgentBySlug(f.db, "sally")!.id); // capa operacion
+    expect(nueva.assigneeAgentId).toBe((await getAgentBySlug(f.db, "sally"))!.id); // capa operacion
   });
 
-  it("nadie asignable: NO se crea y queda aviso fail-soft (task_event + audit)", () => {
-    const f = cadenceFixture();
+  it("nadie asignable: NO se crea y queda aviso fail-soft (task_event + audit)", async () => {
+    const f = await cadenceFixture();
     for (const slug of ["clara", "sally"]) {
-      const agent = getAgentBySlug(f.db, slug)!;
-      updateAgent(f.db, agent.id, { status: "paused" }, agent.version);
+      const agent = (await getAgentBySlug(f.db, slug))!;
+      await updateAgent(f.db, agent.id, { status: "paused" }, agent.version);
     }
 
-    humanDone(f, f.reporte.id); // el DONE NO se cae (fail-soft)
-    expect(getTask(f.db, f.reporte.id)!.status).toBe("DONE");
-    expect(instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(1); // sin nueva
+    await humanDone(f, f.reporte.id); // el DONE NO se cae (fail-soft)
+    expect((await getTask(f.db, f.reporte.id))!.status).toBe("DONE");
+    expect(await instancesOf(f.db, f.r.project.id, "reporte_semanal")).toHaveLength(1); // sin nueva
 
-    const aviso = listTaskEvents(f.db, f.reporte.id).find(
+    const aviso = (await listTaskEvents(f.db, f.reporte.id)).find(
       (e) => e.kind === "comment" && e.payload?.["cadence_skipped"] === true,
     )!;
     expect(aviso.actor).toBe("system:cadence");
     expect(aviso.payload?.["reason"]).toBe("agent_not_assignable");
 
-    const audit = queryAudit(f.db, {
+    const audit = await queryAudit(f.db, {
       action: "modules.cadence_skipped",
       entityId: f.reporte.id,
     });
@@ -196,23 +205,23 @@ describe("re-creación de cadencia en el hook de DONE (CA-M3.4 — M6a)", () => 
     expect(audit[0]!.after?.["template_key"]).toBe("reporte_semanal");
   });
 
-  it("tareas ajenas al launch (manuales) no disparan cadencia", () => {
-    const f = cadenceFixture();
-    const manual = f.engine.createTask(
+  it("tareas ajenas al launch (manuales) no disparan cadencia", async () => {
+    const f = await cadenceFixture();
+    const manual = await f.engine.createTask(
       {
         projectId: f.r.project.id,
         title: "Tarea manual",
         stage: "OPERAR",
         definitionOfDone: "Hecha.",
-        assigneeAgentId: getAgentBySlug(f.db, "sally")!.id,
+        assigneeAgentId: (await getAgentBySlug(f.db, "sally"))!.id,
       },
       { actor: "person:ernesto" },
     );
-    const before = listTasks(f.db, { projectId: f.r.project.id }).length;
+    const before = (await listTasks(f.db, { projectId: f.r.project.id })).length;
     // BACKLOG→READY→IN_PROGRESS→DONE por humano.
-    let t = getTask(f.db, manual.id)!;
-    f.engine.moveTask({ taskId: t.id, to: "READY", expectedVersion: t.version, actor: "person:ernesto" });
-    humanDone(f, manual.id);
-    expect(listTasks(f.db, { projectId: f.r.project.id })).toHaveLength(before); // nada nuevo
+    const t = (await getTask(f.db, manual.id))!;
+    await f.engine.moveTask({ taskId: t.id, to: "READY", expectedVersion: t.version, actor: "person:ernesto" });
+    await humanDone(f, manual.id);
+    expect(await listTasks(f.db, { projectId: f.r.project.id })).toHaveLength(before); // nada nuevo
   });
 });

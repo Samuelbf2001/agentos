@@ -1,6 +1,6 @@
-import { and, asc, eq, sql } from "drizzle-orm";
-import { errors, newId, nowMs, type TaskStatus } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
+import { errors, newId, nowMs, type BlockedReason, type TaskStatus } from "@agentos/shared";
+import type { AgentosSqliteDb } from "../client.js";
 import { artifacts, taskEvents, tasks } from "../schema.js";
 import {
   insertTaskAssigneeRows,
@@ -13,7 +13,7 @@ import type { Artifact, NewArtifact, NewTask, NewTaskEvent, Task, TaskCreateInpu
 // ── CRUD ────────────────────────────────────────────────────────────────────
 
 export function createTask(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: TaskCreateInput,
 ): Task {
   const now = nowMs();
@@ -40,12 +40,12 @@ export function createTask(
   return getTask(db, row.id!)!;
 }
 
-export function getTask(db: AgentosDb, id: string): Task | undefined {
+export function getTask(db: AgentosSqliteDb, id: string): Task | undefined {
   return db.select().from(tasks).where(eq(tasks.id, id)).get();
 }
 
 export function listTasks(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: {
     projectId?: string;
     status?: TaskStatus;
@@ -72,7 +72,7 @@ export function listTasks(
 }
 
 /** Tablero de un proyecto: usa el índice tasks(project_id, status, order_key). */
-export function boardTasks(db: AgentosDb, projectId: string): Task[] {
+export function boardTasks(db: AgentosSqliteDb, projectId: string): Task[] {
   return db
     .select()
     .from(tasks)
@@ -86,7 +86,7 @@ export function boardTasks(db: AgentosDb, projectId: string): Task[] {
  * conflicto obliga a releer, no last-write-wins.
  */
 export function updateTask(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Omit<Task, "id" | "createdAt" | "version">>,
   expectedVersion: number,
@@ -140,7 +140,7 @@ export interface ClaimResult {
  * El motor completo (despachador, latido, reaper) llega en B3; el patrón SQL se valida aquí.
  */
 export function claimTask(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: { taskId: string; agentId: string; leaseMs?: number; runId?: string },
 ): ClaimResult {
   const now = nowMs();
@@ -174,7 +174,7 @@ export function claimTask(
 }
 
 /** Latido: renueva el lease de una tarea IN_PROGRESS. */
-export function renewLease(db: AgentosDb, taskId: string, leaseMs = 60_000): boolean {
+export function renewLease(db: AgentosSqliteDb, taskId: string, leaseMs = 60_000): boolean {
   const now = nowMs();
   const res = db.$client
     .prepare(
@@ -190,7 +190,7 @@ export function renewLease(db: AgentosDb, taskId: string, leaseMs = 60_000): boo
  * con attempts >= maxAttempts pasan a BLOCKED ('stuck'). Devuelve ids afectados.
  */
 export function reapExpiredLeases(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   maxAttempts = 3,
 ): { requeued: string[]; blocked: string[] } {
   const now = nowMs();
@@ -245,7 +245,7 @@ export function reapExpiredLeases(
  * (ARCHITECTURE §6) con agente asignado y lease libre, ordenadas por
  * prioridad y antigüedad. El claim atómico sigue siendo quien decide.
  */
-export function listDispatchableTasks(db: AgentosDb, at = nowMs(), limit = 20): Task[] {
+export function listDispatchableTasks(db: AgentosSqliteDb, at = nowMs(), limit = 20): Task[] {
   const rows = db.$client
     .prepare(
       `SELECT id FROM tasks
@@ -270,7 +270,7 @@ export function listDispatchableTasks(db: AgentosDb, at = nowMs(), limit = 20): 
  * resolución de asignaciones del launch elige, dentro de una capa, al agente
  * con menos carga (§13.5; desempate determinista por slug en el motor).
  */
-export function countOpenTasksByAgent(db: AgentosDb): Map<string, number> {
+export function countOpenTasksByAgent(db: AgentosSqliteDb): Map<string, number> {
   const rows = db.$client
     .prepare(
       `SELECT assignee_agent_id AS agentId, count(*) AS n FROM tasks
@@ -284,7 +284,7 @@ export function countOpenTasksByAgent(db: AgentosDb): Map<string, number> {
 // ── Timeline (task_events, append-only) ─────────────────────────────────────
 
 export function appendTaskEvent(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewTaskEvent, "id" | "createdAt"> & { id?: string },
 ): TaskEvent {
   const row: NewTaskEvent = { ...input, id: input.id ?? newId(), createdAt: nowMs() };
@@ -292,7 +292,7 @@ export function appendTaskEvent(
   return db.select().from(taskEvents).where(eq(taskEvents.id, row.id!)).get()!;
 }
 
-export function listTaskEvents(db: AgentosDb, taskId: string): TaskEvent[] {
+export function listTaskEvents(db: AgentosSqliteDb, taskId: string): TaskEvent[] {
   return db
     .select()
     .from(taskEvents)
@@ -304,7 +304,7 @@ export function listTaskEvents(db: AgentosDb, taskId: string): TaskEvent[] {
 // ── Artefactos (regla anti-teatro: nada llega a REVIEW/DONE sin artefacto) ──
 
 export function attachArtifact(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewArtifact, "id" | "createdAt"> & { id?: string },
 ): Artifact {
   const row: NewArtifact = { ...input, id: input.id ?? newId(), createdAt: nowMs() };
@@ -312,11 +312,11 @@ export function attachArtifact(
   return db.select().from(artifacts).where(eq(artifacts.id, row.id!)).get()!;
 }
 
-export function getArtifact(db: AgentosDb, id: string): Artifact | undefined {
+export function getArtifact(db: AgentosSqliteDb, id: string): Artifact | undefined {
   return db.select().from(artifacts).where(eq(artifacts.id, id)).get();
 }
 
-export function listArtifacts(db: AgentosDb, taskId: string): Artifact[] {
+export function listArtifacts(db: AgentosSqliteDb, taskId: string): Artifact[] {
   return db
     .select()
     .from(artifacts)
@@ -325,11 +325,156 @@ export function listArtifacts(db: AgentosDb, taskId: string): Artifact[] {
     .all();
 }
 
-export function countArtifacts(db: AgentosDb, taskId: string): number {
+export function countArtifacts(db: AgentosSqliteDb, taskId: string): number {
   const row = db
     .select({ n: sql<number>`count(*)` })
     .from(artifacts)
     .where(eq(artifacts.taskId, taskId))
     .get();
   return row?.n ?? 0;
+}
+
+// ── Lecturas/escrituras portables que antes vivían en core como SQL crudo ──
+// (rama feat/postgres-async: nada fuera de packages/db toca `$client`)
+
+/**
+ * Máximo `order_key` de una columna del tablero. El motor calcula a partir de
+ * él la clave "al final de la columna" (crecimiento acotado).
+ */
+export function maxOrderKey(
+  db: AgentosSqliteDb,
+  projectId: string,
+  status: TaskStatus,
+): string | null {
+  const row = db
+    .select({ mk: sql<string | null>`max(${tasks.orderKey})` })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, status)))
+    .get();
+  return row?.mk ?? null;
+}
+
+export interface TransitionTaskInput {
+  taskId: string;
+  from: TaskStatus;
+  to: TaskStatus;
+  blockedReason?: BlockedReason | null;
+  /** BLOCKED → READY reinicia el contador de intentos. */
+  resetAttempts?: boolean;
+  expectedVersion: number;
+}
+
+/**
+ * UPDATE atómico de estado con `expected_version` **y** estado origen (jamás
+ * last-write-wins — ARCHITECTURE §6). Devuelve `false` si nadie cambió: el
+ * llamante decide si es not_found, conflicto de versión o carrera de estado.
+ */
+export function transitionTaskStatus(db: AgentosSqliteDb, input: TransitionTaskInput): boolean {
+  const res = db
+    .update(tasks)
+    .set({
+      status: input.to,
+      blockedReason: input.blockedReason ?? null,
+      leaseUntil: null,
+      ...(input.resetAttempts ? { attempts: 0 } : {}),
+      version: sql`${tasks.version} + 1`,
+      updatedAt: nowMs(),
+    })
+    .where(
+      and(
+        eq(tasks.id, input.taskId),
+        eq(tasks.version, input.expectedVersion),
+        eq(tasks.status, input.from),
+      ),
+    )
+    .run();
+  return res.changes > 0;
+}
+
+/**
+ * Delegaciones YA hechas desde una tarea por un run (fan-out máx 4 por run,
+ * ARCHITECTURE §6). `runId = null` cuenta las que no tienen run.
+ */
+export function countDelegations(
+  db: AgentosSqliteDb,
+  taskId: string,
+  runId: string | null,
+): number {
+  const row = db
+    .select({ n: sql<number>`count(*)` })
+    .from(taskEvents)
+    .where(
+      and(
+        eq(taskEvents.taskId, taskId),
+        eq(taskEvents.kind, "delegated"),
+        runId === null ? isNull(taskEvents.runId) : eq(taskEvents.runId, runId),
+      ),
+    )
+    .get();
+  return row?.n ?? 0;
+}
+
+/**
+ * Instancias ABIERTAS (ni DONE ni CANCELLED) de una plantilla de launch en el
+ * proyecto — guarda-raíl anti-bucle de la re-creación de cadencias (M6a). La
+ * plantilla viaja en el `task_events.payload` del evento `created`.
+ *
+ * `json_extract` es de SQLite; el espejo Postgres usa el operador `->>`.
+ */
+export function countOpenTasksByTemplateKey(
+  db: AgentosSqliteDb,
+  projectId: string,
+  templateKey: string,
+): number {
+  const row = db
+    .select({ n: sql<number>`count(*)` })
+    .from(tasks)
+    .innerJoin(taskEvents, and(eq(taskEvents.taskId, tasks.id), eq(taskEvents.kind, "created")))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        sql`json_extract(${taskEvents.payload}, '$.template_key') = ${templateKey}`,
+      ),
+    )
+    .get();
+  return row?.n ?? 0;
+}
+
+/** Artefactos de un `kind` producidos por tareas del proyecto (cierre de fase). */
+export function countProjectArtifactsByKind(
+  db: AgentosSqliteDb,
+  projectId: string,
+  kind: string,
+): number {
+  const row = db
+    .select({ n: sql<number>`count(*)` })
+    .from(artifacts)
+    .innerJoin(tasks, eq(tasks.id, artifacts.taskId))
+    .where(and(eq(tasks.projectId, projectId), eq(artifacts.kind, kind)))
+    .get();
+  return row?.n ?? 0;
+}
+
+/**
+ * Último artefacto de un `kind` del proyecto (opcionalmente solo de tareas en
+ * un estado dado). Desempate por `id DESC`: los ids son uuidv7, monotónicos.
+ */
+export function findLatestProjectArtifact(
+  db: AgentosSqliteDb,
+  projectId: string,
+  kind: string,
+  filter: { taskStatus?: TaskStatus } = {},
+): Artifact | undefined {
+  const conds = [eq(tasks.projectId, projectId), eq(artifacts.kind, kind)];
+  if (filter.taskStatus) conds.push(eq(tasks.status, filter.taskStatus));
+  const row = db
+    .select()
+    .from(artifacts)
+    .innerJoin(tasks, eq(tasks.id, artifacts.taskId))
+    .where(and(...conds))
+    .orderBy(desc(artifacts.createdAt), desc(artifacts.id))
+    .limit(1)
+    .get();
+  return row?.artifacts;
 }

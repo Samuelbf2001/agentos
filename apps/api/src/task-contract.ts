@@ -49,8 +49,8 @@ export interface ReplaceTaskAssigneesResult {
   changed: boolean;
 }
 
-function withPerson(db: AgentosDb, row: TaskAssignee): TaskAssigneeView {
-  const person = getPerson(db, row.personId);
+async function withPerson(db: AgentosDb, row: TaskAssignee): Promise<TaskAssigneeView> {
+  const person = await getPerson(db, row.personId);
   return {
     ...row,
     ...(person
@@ -67,8 +67,9 @@ function withPerson(db: AgentosDb, row: TaskAssignee): TaskAssigneeView {
 }
 
 /** Responsables canónicos, enriquecidos con los campos actuales de people. */
-export function listTaskAssignees(db: AgentosDb, taskId: string): TaskAssigneeView[] {
-  return dbListTaskAssignees(db, taskId).map((row) => withPerson(db, row));
+export async function listTaskAssignees(db: AgentosDb, taskId: string): Promise<TaskAssigneeView[]> {
+  const rows = await dbListTaskAssignees(db, taskId);
+  return await Promise.all(rows.map((row) => withPerson(db, row)));
 }
 
 function primaryId(rows: readonly TaskAssigneeView[]): string | null {
@@ -103,16 +104,16 @@ export function normalizePersonIds(
  * interno (`is_internal`) es asignable a cualquier proyecto sin importar su
  * organización (I3).
  */
-export function validatePeopleForProject(
+export async function validatePeopleForProject(
   db: AgentosDb,
   project: Project,
   personIds: readonly string[],
   primaryPersonId?: string | null,
-): { personIds: string[]; primaryPersonId: string | null; people: Person[] } {
+): Promise<{ personIds: string[]; primaryPersonId: string | null; people: Person[] }> {
   const normalized = normalizePersonIds(personIds, primaryPersonId);
   const people: Person[] = [];
   for (const personId of normalized.personIds) {
-    const person = getPerson(db, personId);
+    const person = await getPerson(db, personId);
     if (!person) throw errors.notFound("person", personId);
     if (!person.isInternal && person.orgId !== project.orgId) {
       throw errors.validation(
@@ -131,19 +132,19 @@ export function validatePeopleForProject(
 }
 
 /** Reemplaza la lista a través del repositorio transaccional de @agentos/db. */
-export function replaceTaskAssignees(
+export async function replaceTaskAssignees(
   db: AgentosDb,
   input: ReplaceTaskAssigneesInput,
-): ReplaceTaskAssigneesResult {
-  const before = listTaskAssignees(db, input.taskId);
+): Promise<ReplaceTaskAssigneesResult> {
+  const before = await listTaskAssignees(db, input.taskId);
   const normalized = normalizePersonIds(input.personIds, input.primaryPersonId);
-  const task = getTask(db, input.taskId);
+  const task = await getTask(db, input.taskId);
   if (!task) throw errors.notFound("task", input.taskId);
-  const project = getProject(db, task.projectId);
+  const project = await getProject(db, task.projectId);
   if (!project) throw errors.notFound("project", task.projectId);
-  validatePeopleForProject(db, project, normalized.personIds, normalized.primaryPersonId);
+  await validatePeopleForProject(db, project, normalized.personIds, normalized.primaryPersonId);
 
-  const updated = dbReplaceTaskAssignees(
+  const updated = await dbReplaceTaskAssignees(
     db,
     input.taskId,
     {
@@ -154,23 +155,25 @@ export function replaceTaskAssignees(
     input.expectedVersion,
   );
   const updatedTask = updated as Task & { assignees?: TaskAssignee[] };
-  const after = (updatedTask.assignees ?? dbListTaskAssignees(db, input.taskId)).map((row) => withPerson(db, row));
+  const afterRows = updatedTask.assignees ?? (await dbListTaskAssignees(db, input.taskId));
+  const after = await Promise.all(afterRows.map((row) => withPerson(db, row)));
   const changed =
     JSON.stringify(sortedIds(before)) !== JSON.stringify(sortedIds(after)) || primaryId(before) !== primaryId(after);
   return { task: updatedTask, assignees: after, before, changed };
 }
 
-export function taskWithAssignees(db: AgentosDb, task: Task): TaskWithAssignees {
-  const fromRepo = dbGetTaskWithAssignees(db, task.id);
+export async function taskWithAssignees(db: AgentosDb, task: Task): Promise<TaskWithAssignees> {
+  const fromRepo = await dbGetTaskWithAssignees(db, task.id);
   const source = fromRepo ?? task;
-  const assignees = ("assignees" in source && Array.isArray(source.assignees)
-    ? source.assignees
-    : dbListTaskAssignees(db, task.id)
-  ).map((row) => withPerson(db, row));
-  return { ...source, assignees, labels: listTaskLabels(db, task.id) } as TaskWithAssignees;
+  const rawAssignees =
+    "assignees" in source && Array.isArray(source.assignees)
+      ? source.assignees
+      : await dbListTaskAssignees(db, task.id);
+  const assignees = await Promise.all(rawAssignees.map((row) => withPerson(db, row)));
+  return { ...source, assignees, labels: await listTaskLabels(db, task.id) } as TaskWithAssignees;
 }
 
-export function listTasksWithAssignees(
+export async function listTasksWithAssignees(
   db: AgentosDb,
   filter: {
     projectId?: string;
@@ -180,22 +183,24 @@ export function listTasksWithAssignees(
     /** Etiqueta exacta (ya normalizada) por la que filtrar el listado. */
     label?: string;
   } = {},
-): TaskWithAssignees[] {
-  const rows = dbListTasksWithAssignees(db, {
+): Promise<TaskWithAssignees[]> {
+  const rows = await dbListTasksWithAssignees(db, {
     ...(filter.projectId ? { projectId: filter.projectId } : {}),
     ...(filter.status ? { status: filter.status } : {}),
     ...(filter.assigneeAgentId ? { assigneeAgentId: filter.assigneeAgentId } : {}),
     ...(filter.assigneePersonId ? { personId: filter.assigneePersonId } : {}),
   });
-  const labels = listLabelsForTasks(
+  const labels = await listLabelsForTasks(
     db,
     rows.map((row) => row.id),
   );
-  const withLabels = rows.map((row) => ({
-    ...row,
-    assignees: row.assignees.map((assignee) => withPerson(db, assignee)),
-    labels: labels.get(row.id) ?? [],
-  }));
+  const withLabels = await Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      assignees: await Promise.all(row.assignees.map((assignee) => withPerson(db, assignee))),
+      labels: labels.get(row.id) ?? [],
+    })),
+  );
   // Una sola consulta de etiquetas sirve para pintar la tarjeta y para filtrar.
   return filter.label ? withLabels.filter((row) => row.labels.includes(filter.label!)) : withLabels;
 }

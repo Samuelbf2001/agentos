@@ -1,6 +1,6 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { errors, newId, nowMs, type RunStatus } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { runs, spans } from "../schema.js";
 import type { NewRun, NewSpan, Run, Span } from "../types.js";
 
@@ -11,7 +11,7 @@ import type { NewRun, NewSpan, Run, Span } from "../types.js";
  * si tiene padre hereda su raíz; si no, es su propia raíz.
  */
 export function createRun(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewRun, "id" | "createdAt" | "rootRunId"> & { id?: string; rootRunId?: string },
 ): Run {
   const id = input.id ?? newId();
@@ -30,12 +30,12 @@ export function createRun(
   return getRun(db, id)!;
 }
 
-export function getRun(db: AgentosDb, id: string): Run | undefined {
+export function getRun(db: AgentosSqliteDb, id: string): Run | undefined {
   return db.select().from(runs).where(eq(runs.id, id)).get();
 }
 
 export function updateRun(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Omit<Run, "id" | "createdAt" | "rootRunId">>,
 ): Run {
@@ -45,7 +45,7 @@ export function updateRun(
 }
 
 /** Árbol completo de un run raíz sin recursión (índice runs(root_run_id)). */
-export function listRunsByRoot(db: AgentosDb, rootRunId: string): Run[] {
+export function listRunsByRoot(db: AgentosSqliteDb, rootRunId: string): Run[] {
   return db
     .select()
     .from(runs)
@@ -54,14 +54,14 @@ export function listRunsByRoot(db: AgentosDb, rootRunId: string): Run[] {
     .all();
 }
 
-export function listRunsForTask(db: AgentosDb, taskId: string): Run[] {
+export function listRunsForTask(db: AgentosSqliteDb, taskId: string): Run[] {
   return db.select().from(runs).where(eq(runs.taskId, taskId)).orderBy(asc(runs.createdAt)).all();
 }
 
 // ── Extensiones B2 (RunnerPool / observabilidad §10) ────────────────────────
 
 /** Runs por estado (cola FIFO visible del RunnerPool: status='queued' consultable). */
-export function listRunsByStatus(db: AgentosDb, status: RunStatus): Run[] {
+export function listRunsByStatus(db: AgentosSqliteDb, status: RunStatus): Run[] {
   return db.select().from(runs).where(eq(runs.status, status)).orderBy(asc(runs.createdAt)).all();
 }
 
@@ -71,7 +71,7 @@ export function listRunsByStatus(db: AgentosDb, status: RunStatus): Run[] {
  * (proveedor sin coste reportado) no suman — nunca cero inferido, y el
  * presupuesto solo puede vigilar lo que se reporta.
  */
-export function sumRunCostBetween(db: AgentosDb, fromMs: number, toMs: number): number {
+export function sumRunCostBetween(db: AgentosSqliteDb, fromMs: number, toMs: number): number {
   const row = db.$client
     .prepare(
       `SELECT coalesce(sum(cost_usd), 0) AS total FROM runs WHERE created_at >= ? AND created_at < ?`,
@@ -85,7 +85,7 @@ export function sumRunCostBetween(db: AgentosDb, fromMs: number, toMs: number): 
  * sus runs (cualquier estado). Corte de presupuesto de fase del despachador y
  * exposición en system.health. NULL no suma — nunca cero inferido (CA-7.2).
  */
-export function sumRunCostForProject(db: AgentosDb, projectId: string): number {
+export function sumRunCostForProject(db: AgentosSqliteDb, projectId: string): number {
   const row = db.$client
     .prepare(`SELECT coalesce(sum(cost_usd), 0) AS total FROM runs WHERE project_id = ?`)
     .get(projectId) as { total: number };
@@ -101,7 +101,7 @@ export interface RunListFilter {
   limit?: number;
 }
 
-export function listRuns(db: AgentosDb, filter: RunListFilter = {}): Run[] {
+export function listRuns(db: AgentosSqliteDb, filter: RunListFilter = {}): Run[] {
   const conds = [];
   if (filter.status) conds.push(eq(runs.status, filter.status));
   if (filter.taskId) conds.push(eq(runs.taskId, filter.taskId));
@@ -115,7 +115,7 @@ export function listRuns(db: AgentosDb, filter: RunListFilter = {}): Run[] {
 // ── Spans ───────────────────────────────────────────────────────────────────
 
 export function addSpan(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewSpan, "id" | "startedAt"> & { id?: string; startedAt?: number },
 ): Span {
   const row: NewSpan = { ...input, id: input.id ?? newId(), startedAt: input.startedAt ?? nowMs() };
@@ -124,7 +124,7 @@ export function addSpan(
 }
 
 export function endSpan(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: { status?: string; attrs?: Record<string, unknown>; endedAt?: number } = {},
 ): Span {
@@ -137,6 +137,6 @@ export function endSpan(
   return db.select().from(spans).where(eq(spans.id, id)).get()!;
 }
 
-export function listSpans(db: AgentosDb, runId: string): Span[] {
+export function listSpans(db: AgentosSqliteDb, runId: string): Span[] {
   return db.select().from(spans).where(eq(spans.runId, runId)).orderBy(asc(spans.startedAt)).all();
 }

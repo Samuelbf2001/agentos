@@ -42,8 +42,8 @@ interface Matrix {
   alcance_sgc: string | null;
 }
 
-function samWith(f: ReturnType<typeof toolsFixture>, allowlist: string[]) {
-  return createAgent(f.db, {
+async function samWith(f: Awaited<ReturnType<typeof toolsFixture>>, allowlist: string[]) {
+  return await createAgent(f.db, {
     slug: "sam",
     name: "Sam",
     layer: "consultoria",
@@ -54,8 +54,8 @@ function samWith(f: ReturnType<typeof toolsFixture>, allowlist: string[]) {
 
 describe("iso.gap_matrix_template (F2-3)", () => {
   it("una fila por cláusula 4.1–10.3, con disclaimer literal y estado sin asignar", async () => {
-    const f = toolsFixture();
-    const sam = samWith(f, ["iso.gap_matrix_template"]);
+    const f = await toolsFixture();
+    const sam = await samWith(f, ["iso.gap_matrix_template"]);
     const m = okResult<Matrix>(
       await f.runtime.execute(f.ctxFor(sam), "iso.gap_matrix_template", {
         org_id: f.project.orgId,
@@ -77,15 +77,15 @@ describe("iso.gap_matrix_template (F2-3)", () => {
   });
 
   it("pre-enlaza procesos por iso_refs (cláusula exacta y por capítulo)", async () => {
-    const f = toolsFixture();
-    const sam = samWith(f, ["iso.gap_matrix_template"]);
-    const compras = createProcess(f.db, {
+    const f = await toolsFixture();
+    const sam = await samWith(f, ["iso.gap_matrix_template"]);
+    const compras = await createProcess(f.db, {
       orgId: f.project.orgId,
       name: "Compras y abastecimiento",
       variant: "as_is",
       isoRefs: ["8.4"],
     });
-    const produccion = createProcess(f.db, {
+    const produccion = await createProcess(f.db, {
       orgId: f.project.orgId,
       name: "Producción",
       variant: "as_is",
@@ -110,8 +110,8 @@ describe("iso.gap_matrix_template (F2-3)", () => {
   });
 
   it("respeta el filtro `clausulas`", async () => {
-    const f = toolsFixture();
-    const sam = samWith(f, ["iso.gap_matrix_template"]);
+    const f = await toolsFixture();
+    const sam = await samWith(f, ["iso.gap_matrix_template"]);
     const m = okResult<Matrix>(
       await f.runtime.execute(f.ctxFor(sam), "iso.gap_matrix_template", {
         org_id: f.project.orgId,
@@ -122,8 +122,8 @@ describe("iso.gap_matrix_template (F2-3)", () => {
   });
 
   it("fuera de la allowlist → policy_denied (fail-closed)", async () => {
-    const f = toolsFixture();
-    const sam = samWith(f, ["knowledge.get"]); // sin la tool ISO
+    const f = await toolsFixture();
+    const sam = await samWith(f, ["knowledge.get"]); // sin la tool ISO
     expect(
       await codeOf(() =>
         f.runtime.execute(f.ctxFor(sam), "iso.gap_matrix_template", { org_id: f.project.orgId }),

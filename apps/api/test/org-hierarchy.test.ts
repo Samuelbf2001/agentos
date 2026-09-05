@@ -21,27 +21,29 @@ describe("jerarquía de agentes (apps/api)", () => {
     const fx = await makeFixture();
     try {
       // sam reporta a alex.
-      updateAgent(fx.db, fx.sam.id, { reportsTo: fx.alex.id }, fx.sam.version);
-      const task = makeReadyTask(fx, fx.sam, { title: "Tarea de Sam con cadena" });
+      await updateAgent(fx.db, fx.sam.id, { reportsTo: fx.alex.id }, fx.sam.version);
+      const task = await makeReadyTask(fx, fx.sam, { title: "Tarea de Sam con cadena" });
       fx.aiRunner.setBehavior(() => ({ text: "no debería correr con la cadena rota" }));
 
       // Pausar al manager: la cascada es por cálculo (sam sigue active).
-      const alex = getAgentBySlug(fx.db, "alex")!;
-      updateAgent(fx.db, alex.id, { status: "paused" }, alex.version);
+      const alex = (await getAgentBySlug(fx.db, "alex"))!;
+      await updateAgent(fx.db, alex.id, { status: "paused" }, alex.version);
 
       const report = await fx.api.ctx.dispatcher.tick();
       expect(report.dispatched).toHaveLength(0);
-      expect(getTask(fx.db, task.id)!.status).toBe("READY");
-      expect(listRuns(fx.db, { taskId: task.id })).toHaveLength(0);
-      expect(getAgentBySlug(fx.db, "sam")!.status).toBe("active"); // no cascada persistida
+      expect((await getTask(fx.db, task.id))!.status).toBe("READY");
+      expect(await listRuns(fx.db, { taskId: task.id })).toHaveLength(0);
+      expect((await getAgentBySlug(fx.db, "sam"))!.status).toBe("active"); // no cascada persistida
 
       // Reactivar al manager restaura la asignabilidad del report.
-      const paused = getAgentBySlug(fx.db, "alex")!;
-      updateAgent(fx.db, paused.id, { status: "active" }, paused.version);
+      const paused = (await getAgentBySlug(fx.db, "alex"))!;
+      await updateAgent(fx.db, paused.id, { status: "active" }, paused.version);
 
       const report2 = await fx.api.ctx.dispatcher.tick();
       expect(report2.dispatched).toHaveLength(1);
-      await waitFor(() => listRuns(fx.db, { taskId: task.id }).length === 1, { label: "run despachado" });
+      await waitFor(async () => (await listRuns(fx.db, { taskId: task.id })).length === 1, {
+        label: "run despachado",
+      });
     } finally {
       await fx.close();
     }
@@ -50,7 +52,7 @@ describe("jerarquía de agentes (apps/api)", () => {
   it("GET /api/agents/org devuelve el árbol y la salud de cada cadena", async () => {
     const fx = await makeFixture();
     try {
-      updateAgent(fx.db, fx.sam.id, { reportsTo: fx.alex.id }, fx.sam.version);
+      await updateAgent(fx.db, fx.sam.id, { reportsTo: fx.alex.id }, fx.sam.version);
 
       const res = await fx.api.app.inject({
         method: "GET",
@@ -65,8 +67,8 @@ describe("jerarquía de agentes (apps/api)", () => {
       expect(body.health.find((h) => h.slug === "sam")!.chain.status).toBe("healthy");
 
       // Pausar al manager → la cadena de sam pasa a terminated_ancestor.
-      const alex = getAgentBySlug(fx.db, "alex")!;
-      updateAgent(fx.db, alex.id, { status: "paused" }, alex.version);
+      const alex = (await getAgentBySlug(fx.db, "alex"))!;
+      await updateAgent(fx.db, alex.id, { status: "paused" }, alex.version);
       const res2 = await fx.api.app.inject({
         method: "GET",
         url: "/api/agents/org",

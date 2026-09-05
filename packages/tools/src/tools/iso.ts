@@ -68,8 +68,8 @@ export const isoTools: ToolDefinition[] = [
         .describe("subconjunto de cláusulas a incluir; por defecto todas (4.1–10.3)"),
     }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const procesos = listProcesses(ctx.db, args.org_id);
+    async handler(ctx, args) {
+      const procesos = await listProcesses(ctx.db, args.org_id);
       const wanted = args.clausulas ? new Set(args.clausulas) : null;
       const clausulas = wanted
         ? ISO9001_CLAUSES.filter((c) => wanted.has(c.clausula))

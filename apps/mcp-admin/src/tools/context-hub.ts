@@ -29,8 +29,8 @@ export const knowledgeTools: AdminToolDefinition[] = [
     description: "Búsqueda FTS sobre el Context Hub (knowledge_docs).",
     schema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(100).optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      return searchDocs(ctx.db, args.query, args.limit ?? 20);
+    async handler(ctx, args) {
+      return await searchDocs(ctx.db, args.query, args.limit ?? 20);
     },
   }),
 
@@ -39,8 +39,8 @@ export const knowledgeTools: AdminToolDefinition[] = [
     description: "Devuelve un documento del Context Hub por id.",
     schema: z.object({ doc_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const doc = getDoc(ctx.db, args.doc_id);
+    async handler(ctx, args) {
+      const doc = await getDoc(ctx.db, args.doc_id);
       if (!doc) throw errors.notFound("knowledge_doc", args.doc_id);
       return doc;
     },
@@ -55,8 +55,8 @@ export const knowledgeTools: AdminToolDefinition[] = [
       kind: KnowledgeKind.optional(),
     }),
     readOnly: true,
-    handler(ctx, args) {
-      return listDocs(ctx.db, {
+    async handler(ctx, args) {
+      return await listDocs(ctx.db, {
         orgId: args.org_id,
         projectId: args.project_id,
         kind: args.kind,
@@ -81,14 +81,14 @@ export const knowledgeTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "knowledge.upsert_doc", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "knowledge.upsert_doc", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getDoc(ctx.db, previous.entityId);
+        const existing = await getDoc(ctx.db, previous.entityId);
         if (existing) return { doc: existing, idempotent: true };
       }
-      const before = args.id ? getDoc(ctx.db, args.id) : undefined;
-      const doc = upsertDoc(ctx.db, {
+      const before = args.id ? await getDoc(ctx.db, args.id) : undefined;
+      const doc = await upsertDoc(ctx.db, {
         id: args.id,
         orgId: args.org_id ?? before?.orgId ?? null,
         projectId: args.project_id ?? before?.projectId ?? null,
@@ -99,7 +99,7 @@ export const knowledgeTools: AdminToolDefinition[] = [
         tags: args.tags ?? before?.tags ?? null,
         createdBy: before?.createdBy ?? ctx.actor,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "knowledge.upsert_doc",
         entityType: "knowledge_doc",
         entityId: doc.id,
@@ -119,8 +119,8 @@ export const processTools: AdminToolDefinition[] = [
     description: "Lista procesos mapeados (opcionalmente por organización).",
     schema: z.object({ org_id: z.string().optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      return listProcesses(ctx.db, args.org_id);
+    async handler(ctx, args) {
+      return await listProcesses(ctx.db, args.org_id);
     },
   }),
 
@@ -129,8 +129,8 @@ export const processTools: AdminToolDefinition[] = [
     description: "Devuelve un proceso mapeado por id (pasos SIPOC, sistemas, pain points, refs ISO).",
     schema: z.object({ process_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      const process = getProcess(ctx.db, args.process_id);
+    async handler(ctx, args) {
+      const process = await getProcess(ctx.db, args.process_id);
       if (!process) throw errors.notFound("process", args.process_id);
       return process;
     },
@@ -155,14 +155,14 @@ export const processTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "processes.upsert", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "processes.upsert", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getProcess(ctx.db, previous.entityId);
+        const existing = await getProcess(ctx.db, previous.entityId);
         if (existing) return { process: existing, idempotent: true };
       }
-      const before = args.id ? getProcess(ctx.db, args.id) : undefined;
-      const process = upsertProcess(ctx.db, {
+      const before = args.id ? await getProcess(ctx.db, args.id) : undefined;
+      const process = await upsertProcess(ctx.db, {
         id: args.id,
         orgId: args.org_id,
         name: args.name,
@@ -175,7 +175,7 @@ export const processTools: AdminToolDefinition[] = [
         sourceDocIds: args.source_doc_ids ?? before?.sourceDocIds ?? null,
         status: args.status ?? before?.status ?? "draft",
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "processes.upsert",
         entityType: "process",
         entityId: process.id,
@@ -195,8 +195,8 @@ export const methodologyTools: AdminToolDefinition[] = [
     description: "Lista las metodologías registradas (todas las versiones).",
     schema: z.object({}),
     readOnly: true,
-    handler(ctx) {
-      return listMethodologies(ctx.db);
+    async handler(ctx) {
+      return await listMethodologies(ctx.db);
     },
   }),
 
@@ -205,8 +205,8 @@ export const methodologyTools: AdminToolDefinition[] = [
     description: "Devuelve una metodología por slug (última versión, o la versión pedida).",
     schema: z.object({ slug: z.string().min(1), version: z.number().int().positive().optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      const methodology = getMethodology(ctx.db, args.slug, args.version);
+    async handler(ctx, args) {
+      const methodology = await getMethodology(ctx.db, args.slug, args.version);
       if (!methodology) {
         throw errors.notFound("methodology", `${args.slug}${args.version ? ` v${args.version}` : ""}`);
       }
@@ -225,16 +225,16 @@ export const methodologyTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const current = getMethodology(ctx.db, args.slug);
+    async handler(ctx, args) {
+      const current = await getMethodology(ctx.db, args.slug);
       const nextVersion = (current?.version ?? 0) + 1;
-      const created = upsertMethodology(ctx.db, {
+      const created = await upsertMethodology(ctx.db, {
         slug: args.slug,
         version: nextVersion,
         bodyMd: args.body_md,
         changelog: args.changelog ?? `v${nextVersion} via MCP (${ctx.actor})`,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "methodology.update",
         entityType: "methodology",
         entityId: created.id,

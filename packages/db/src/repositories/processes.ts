@@ -1,6 +1,6 @@
-import { asc, eq } from "drizzle-orm";
-import { errors, newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { errors, newId, nowMs, type ProcessVariant } from "@agentos/shared";
+import type { AgentosSqliteDb } from "../client.js";
 import { processes } from "../schema.js";
 import type { NewProcess, Process } from "../types.js";
 
@@ -9,7 +9,7 @@ import type { NewProcess, Process } from "../types.js";
  * (ARCHITECTURE §8b): la unidad sobre la que se hace mejora, ISO 9001 y transformación.
  */
 export function createProcess(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewProcess, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Process {
   const now = nowMs();
@@ -19,7 +19,7 @@ export function createProcess(
 }
 
 export function upsertProcess(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewProcess, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Process {
   if (input.id && getProcess(db, input.id)) {
@@ -32,18 +32,18 @@ export function upsertProcess(
   return createProcess(db, input);
 }
 
-export function getProcess(db: AgentosDb, id: string): Process | undefined {
+export function getProcess(db: AgentosSqliteDb, id: string): Process | undefined {
   return db.select().from(processes).where(eq(processes.id, id)).get();
 }
 
-export function listProcesses(db: AgentosDb, orgId?: string): Process[] {
+export function listProcesses(db: AgentosSqliteDb, orgId?: string): Process[] {
   const base = db.select().from(processes);
   const q = orgId ? base.where(eq(processes.orgId, orgId)) : base;
   return q.orderBy(asc(processes.name)).all();
 }
 
 /** Enlaza una fuente (knowledge_doc) que sustenta el proceso — provenance obligatoria. */
-export function linkSource(db: AgentosDb, processId: string, docId: string): Process {
+export function linkSource(db: AgentosSqliteDb, processId: string, docId: string): Process {
   const proc = getProcess(db, processId);
   if (!proc) throw errors.notFound("process", processId);
   const current = proc.sourceDocIds ?? [];
@@ -54,4 +54,17 @@ export function linkSource(db: AgentosDb, processId: string, docId: string): Pro
       .run();
   }
   return getProcess(db, processId)!;
+}
+
+/** Conteo de procesos (cierre de fase — CA-M3.1: `as_is` mapeados de la org). */
+export function countProcesses(
+  db: AgentosSqliteDb,
+  filter: { orgId?: string; variant?: ProcessVariant } = {},
+): number {
+  const conds = [];
+  if (filter.orgId) conds.push(eq(processes.orgId, filter.orgId));
+  if (filter.variant) conds.push(eq(processes.variant, filter.variant));
+  const base = db.select({ n: sql<number>`count(*)` }).from(processes);
+  const row = (conds.length > 0 ? base.where(and(...conds)) : base).get();
+  return row?.n ?? 0;
 }

@@ -12,8 +12,8 @@ describe("wireName", () => {
 });
 
 describe("adaptador Vercel AI SDK", () => {
-  it("materializa el catálogo completo con el MISMO schema Zod declarado", () => {
-    const f = toolsFixture();
+  it("materializa el catálogo completo con el MISMO schema Zod declarado", async () => {
+    const f = await toolsFixture();
     const tools = asAiSdkTools(f.runtime, f.ctxFor(f.alex));
     expect(Object.keys(tools).length).toBe(f.runtime.catalog.size);
     for (const def of f.runtime.catalog.values()) {
@@ -27,7 +27,7 @@ describe("adaptador Vercel AI SDK", () => {
   });
 
   it("execute pasa por el gateway (política + audit) y devuelve el resultado", async () => {
-    const f = toolsFixture();
+    const f = await toolsFixture();
     const tools = asAiSdkTools(f.runtime, f.ctxFor(f.alex));
     const result = await tools.methodology_list!.execute!(
       {},
@@ -36,8 +36,8 @@ describe("adaptador Vercel AI SDK", () => {
     expect(result).toMatchObject({ status: "ok" });
   });
 
-  it("respeta el filtro de nombres (allowlist del agente)", () => {
-    const f = toolsFixture();
+  it("respeta el filtro de nombres (allowlist del agente)", async () => {
+    const f = await toolsFixture();
     const tools = asAiSdkTools(f.runtime, f.ctxFor(f.quinn), {
       names: f.quinn.toolsAllowlist,
     });
@@ -46,16 +46,16 @@ describe("adaptador Vercel AI SDK", () => {
 });
 
 describe("adaptador MCP (createSdkMcpServer)", () => {
-  it("crea el servidor in-process 'agentos' (namespacing mcp__agentos__<tool>)", () => {
-    const f = toolsFixture();
+  it("crea el servidor in-process 'agentos' (namespacing mcp__agentos__<tool>)", async () => {
+    const f = await toolsFixture();
     const server = asSdkMcpServer(f.runtime, f.ctxFor(f.alex));
     expect(server.type).toBe("sdk");
     expect(server.name).toBe(MCP_SERVER_NAME);
     expect(server.instance).toBeDefined();
   });
 
-  it("acepta el filtro de nombres sin romper el server", () => {
-    const f = toolsFixture();
+  it("acepta el filtro de nombres sin romper el server", async () => {
+    const f = await toolsFixture();
     const server = asSdkMcpServer(f.runtime, f.ctxFor(f.quinn), { names: f.quinn.toolsAllowlist });
     expect(server.name).toBe(MCP_SERVER_NAME);
   });

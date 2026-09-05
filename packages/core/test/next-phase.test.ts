@@ -17,7 +17,7 @@ import {
   openDb,
   runMigrations,
   seed,
-  type AgentosDb,
+  type AgentosSqliteDb,
   type LaunchModuleResult,
 } from "@agentos/db";
 import {
@@ -29,11 +29,11 @@ import {
 
 const ROADMAP_MD = "## Palancas priorizadas\n\n- Automatizar facturación\n- Pipeline CRM\n";
 
-function launchedDb(): { db: AgentosDb; r: LaunchModuleResult } {
+async function launchedDb(): Promise<{ db: AgentosSqliteDb; r: LaunchModuleResult }> {
   const db = openDb(":memory:");
   runMigrations(db);
-  seed(db, { env: {} });
-  const r = launchModule(db, {
+  await seed(db, { env: {} });
+  const r = await launchModule(db, {
     moduleSlug: "consultoria",
     org: { name: "Nova Manufactura S.A.", kind: "client" },
     inputs: {
@@ -55,7 +55,7 @@ function launchedDb(): { db: AgentosDb; r: LaunchModuleResult } {
 }
 
 /** Cierra la fase por el camino real: deliverables mínimos + roadmap aprobado. */
-function completePhase(db: AgentosDb, r: LaunchModuleResult): void {
+async function completePhase(db: AgentosSqliteDb, r: LaunchModuleResult): Promise<void> {
   const doc = (kind: string, title: string) =>
     createDoc(db, {
       orgId: r.organization.id,
@@ -64,19 +64,19 @@ function completePhase(db: AgentosDb, r: LaunchModuleResult): void {
       title,
       bodyMd: "Contenido con fuente.",
     });
-  doc("org_profile", "Perfil organizacional Nova");
-  doc("interview", "Entrevista dirección");
-  doc("interview", "Entrevista operaciones");
-  doc("finding", "Fugas de valor");
-  createProcess(db, { orgId: r.organization.id, name: "Producción", variant: "as_is" });
+  await doc("org_profile", "Perfil organizacional Nova");
+  await doc("interview", "Entrevista dirección");
+  await doc("interview", "Entrevista operaciones");
+  await doc("finding", "Fugas de valor");
+  await createProcess(db, { orgId: r.organization.id, name: "Producción", variant: "as_is" });
 
   const byKey = new Map(
     (r.launch.result as { tasks: { key: string; taskId: string }[] }).tasks.map(
       (t) => [t.key, t.taskId] as const,
     ),
   );
-  attachArtifact(db, { taskId: byKey.get("informe")!, kind: "report", title: "Informe final" });
-  attachArtifact(db, {
+  await attachArtifact(db, { taskId: byKey.get("informe")!, kind: "report", title: "Informe final" });
+  await attachArtifact(db, {
     taskId: byKey.get("roadmap")!,
     kind: "roadmap",
     title: "Roadmap",
@@ -89,9 +89,9 @@ function completePhase(db: AgentosDb, r: LaunchModuleResult): void {
 }
 
 describe("nextPhaseStatus (CA-M3.2)", () => {
-  it("recién disparado: phase_incomplete con el detalle del cierre", () => {
-    const { db, r } = launchedDb();
-    const status = nextPhaseStatus(db, r.project.id);
+  it("recién disparado: phase_incomplete con el detalle del cierre", async () => {
+    const { db, r } = await launchedDb();
+    const status = await nextPhaseStatus(db, r.project.id);
     expect(status.available).toBe(false);
     if (status.available) throw new Error("unreachable");
     expect(status.reason).toBe("phase_incomplete");
@@ -99,22 +99,22 @@ describe("nextPhaseStatus (CA-M3.2)", () => {
     expect(status.closure?.complete).toBe(false);
   });
 
-  it("deliverables completos pero gate sin aprobar: gate_pending", () => {
-    const { db, r } = launchedDb();
-    completePhase(db, r);
-    const status = nextPhaseStatus(db, r.project.id);
+  it("deliverables completos pero gate sin aprobar: gate_pending", async () => {
+    const { db, r } = await launchedDb();
+    await completePhase(db, r);
+    const status = await nextPhaseStatus(db, r.project.id);
     expect(status.available).toBe(false);
     if (status.available) throw new Error("unreachable");
     expect(status.reason).toBe("gate_pending");
   });
 
-  it("cierre completo + gate aprobado: available con implementacion y prefill", () => {
-    const { db, r } = launchedDb();
-    completePhase(db, r);
+  it("cierre completo + gate aprobado: available con implementacion y prefill", async () => {
+    const { db, r } = await launchedDb();
+    await completePhase(db, r);
     const engine = createBoardEngine({ db });
-    engine.approveGate(r.project.id, "g1_plan", getPersonByFullName(db, "Ernesto")!.id);
+    await engine.approveGate(r.project.id, "g1_plan", (await getPersonByFullName(db, "Ernesto"))!.id);
 
-    const status = nextPhaseStatus(db, r.project.id);
+    const status = await nextPhaseStatus(db, r.project.id);
     expect(status.available).toBe(true);
     if (!status.available) throw new Error("unreachable");
     expect(status.next_phase).toBe("CONSTRUIR");
@@ -134,18 +134,18 @@ describe("nextPhaseStatus (CA-M3.2)", () => {
     expect(status.prefilled.missing_required).toEqual(["fecha_objetivo"]);
   });
 
-  it("disparo de implementacion sobre el MISMO proyecto con el prefill (CA-M3.3)", () => {
-    const { db, r } = launchedDb();
-    completePhase(db, r);
+  it("disparo de implementacion sobre el MISMO proyecto con el prefill (CA-M3.3)", async () => {
+    const { db, r } = await launchedDb();
+    await completePhase(db, r);
     const engine = createBoardEngine({ db });
-    engine.approveGate(r.project.id, "g1_plan", getPersonByFullName(db, "Ernesto")!.id);
-    const status = nextPhaseStatus(db, r.project.id);
+    await engine.approveGate(r.project.id, "g1_plan", (await getPersonByFullName(db, "Ernesto"))!.id);
+    const status = await nextPhaseStatus(db, r.project.id);
     if (!status.available) throw new Error(`no disponible: ${JSON.stringify(status)}`);
 
-    const docsBefore = listDocs(db, { projectId: r.project.id }).length;
-    const tasksBefore = listTasks(db, { projectId: r.project.id }).length;
+    const docsBefore = (await listDocs(db, { projectId: r.project.id })).length;
+    const tasksBefore = (await listTasks(db, { projectId: r.project.id })).length;
 
-    const impl = launchModule(db, {
+    const impl = await launchModule(db, {
       moduleSlug: status.next_module.slug,
       org: { orgId: r.organization.id },
       inputs: { ...status.prefilled.inputs, fecha_objetivo: "2026-10-30" },
@@ -160,44 +160,44 @@ describe("nextPhaseStatus (CA-M3.2)", () => {
     expect(impl.launch.previousLaunchId).toBe(r.launch.id);
     // Backlog nuevo: kickoff + 2 diseños + 2 construcciones + integración + UAT + handoff.
     expect(impl.tasks).toHaveLength(8);
-    expect(listTasks(db, { projectId: r.project.id })).toHaveLength(tasksBefore + 8);
+    expect(await listTasks(db, { projectId: r.project.id })).toHaveLength(tasksBefore + 8);
     // Context Hub intacto: mismos docs de la fase anterior.
-    expect(listDocs(db, { projectId: r.project.id })).toHaveLength(docsBefore);
+    expect(await listDocs(db, { projectId: r.project.id })).toHaveLength(docsBefore);
   });
 
-  it("fase OPERAR: no hay siguiente (no_next_phase); proyecto sin launch: no_launch", () => {
+  it("fase OPERAR: no hay siguiente (no_next_phase); proyecto sin launch: no_launch", async () => {
     const db = openDb(":memory:");
     runMigrations(db);
-    seed(db, { env: {} });
-    const ops = launchModule(db, {
+    await seed(db, { env: {} });
+    const ops = await launchModule(db, {
       moduleSlug: "operacion",
       org: { name: "Nova Ops S.A." },
       inputs: { cliente: "Nova", objetivo: "Operar." },
       actor: "person:ernesto",
       idempotencyKey: "launch:test:next-phase:ops",
     });
-    const status = nextPhaseStatus(db, ops.project.id);
+    const status = await nextPhaseStatus(db, ops.project.id);
     expect(status).toMatchObject({ available: false, reason: "no_next_phase" });
   });
 });
 
 describe("prefillNextPhaseInputs — roadmap no parseable (no inventar)", () => {
-  it("contenido sin lista → palancas fuera del prefill y en missing_required", () => {
-    const { db, r } = launchedDb();
-    completePhase(db, r);
+  it("contenido sin lista → palancas fuera del prefill y en missing_required", async () => {
+    const { db, r } = await launchedDb();
+    await completePhase(db, r);
     // Pisar el roadmap con prosa sin lista (más reciente gana en el prefill).
     const byKey = new Map(
       (r.launch.result as { tasks: { key: string; taskId: string }[] }).tasks.map(
         (t) => [t.key, t.taskId] as const,
       ),
     );
-    attachArtifact(db, {
+    await attachArtifact(db, {
       taskId: byKey.get("roadmap")!,
       kind: "roadmap",
       title: "Roadmap narrativo",
       content: "Primero ordenar la facturación y luego el CRM, sin prioridades claras.",
     });
-    const prefill = prefillNextPhaseInputs(db, r.project.id, "implementacion");
+    const prefill = await prefillNextPhaseInputs(db, r.project.id, "implementacion");
     expect(prefill.inputs["palancas"]).toBeUndefined(); // el humano las pega
     expect(prefill.missing_required.sort()).toEqual(["fecha_objetivo", "palancas"]);
   });

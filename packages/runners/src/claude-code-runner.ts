@@ -97,8 +97,8 @@ function blockText(content: unknown): string {
 }
 
 /** Session id del CLI guardado en spans del run (para `resume` del siguiente run). */
-export function getClaudeSessionId(db: AgentosDb, runId: string): string | undefined {
-  const spans = listSpans(db, runId);
+export async function getClaudeSessionId(db: AgentosDb, runId: string): Promise<string | undefined> {
+  const spans = await listSpans(db, runId);
   for (const span of spans) {
     if (span.name === CLAUDE_SESSION_SPAN) {
       const sessionId = (span.attrs as Record<string, unknown> | null)?.["session.id"];
@@ -145,7 +145,7 @@ export class ClaudeCodeRunner implements AgentRunner {
 
   async *run(input: RunInput, ctx: RunTraceContext): AsyncIterable<AgUiEvent> {
     const db = this.db;
-    ensureRunningRun(db, input, ctx, this.runtime);
+    await ensureRunningRun(db, input, ctx, this.runtime);
 
     const abortController = new AbortController();
     this.active.set(ctx.runId, abortController);
@@ -189,17 +189,19 @@ export class ClaudeCodeRunner implements AgentRunner {
         const message = raw as SdkMessageLike;
         if (message.type === "system" && message.subtype === "init") {
           sessionId = message.session_id ?? sessionId;
-          sessionSpanId = addSpan(db, {
-            runId: ctx.runId,
-            name: CLAUDE_SESSION_SPAN,
-            kind: "internal",
-            attrs: {
-              "session.id": sessionId ?? null,
-              "gen_ai.request.model": message.model ?? null,
-              "claude_code.api_key_source": message.apiKeySource ?? null,
-              "claude_code.cwd": message.cwd ?? null,
-            },
-          }).id;
+          sessionSpanId = (
+            await addSpan(db, {
+              runId: ctx.runId,
+              name: CLAUDE_SESSION_SPAN,
+              kind: "internal",
+              attrs: {
+                "session.id": sessionId ?? null,
+                "gen_ai.request.model": message.model ?? null,
+                "claude_code.api_key_source": message.apiKeySource ?? null,
+                "claude_code.cwd": message.cwd ?? null,
+              },
+            })
+          ).id;
           continue;
         }
         if (message.type === "assistant") {
@@ -237,16 +239,18 @@ export class ClaudeCodeRunner implements AgentRunner {
                 delta: JSON.stringify(block.input ?? {}),
               };
               yield { type: "TOOL_CALL_END", timestamp: nowMs(), runId: ctx.runId, toolCallId: block.id };
-              const spanId = addSpan(db, {
-                runId: ctx.runId,
-                name: `gen_ai.execute_tool ${toolName}`,
-                kind: "tool",
-                attrs: {
-                  "gen_ai.operation.name": "execute_tool",
-                  "gen_ai.tool.name": toolName,
-                  "gen_ai.tool.call.id": block.id,
-                },
-              }).id;
+              const spanId = (
+                await addSpan(db, {
+                  runId: ctx.runId,
+                  name: `gen_ai.execute_tool ${toolName}`,
+                  kind: "tool",
+                  attrs: {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.name": toolName,
+                    "gen_ai.tool.call.id": block.id,
+                  },
+                })
+              ).id;
               openToolCalls.set(block.id, { name: toolName, spanId });
             }
           }
@@ -258,7 +262,7 @@ export class ClaudeCodeRunner implements AgentRunner {
             if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
               const info = openToolCalls.get(block.tool_use_id);
               if (info?.spanId) {
-                endSpan(db, info.spanId, { status: block.is_error ? "error" : "ok" });
+                await endSpan(db, info.spanId, { status: block.is_error ? "error" : "ok" });
               }
               openToolCalls.delete(block.tool_use_id);
               yield {
@@ -303,7 +307,7 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     // Cierre de tool-calls huérfanos (NO_ANSWER_CAME) para el turno siguiente.
     for (const [toolCallId, info] of openToolCalls) {
-      if (info.spanId) endSpan(db, info.spanId, { status: "cancelled" });
+      if (info.spanId) await endSpan(db, info.spanId, { status: "cancelled" });
       yield {
         type: "TOOL_CALL_RESULT",
         timestamp: nowMs(),
@@ -316,7 +320,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     openToolCalls.clear();
 
     if (sessionSpanId) {
-      endSpan(db, sessionSpanId, {
+      await endSpan(db, sessionSpanId, {
         status: cancelled ? "cancelled" : streamError || resultIsError ? "error" : "ok",
         attrs: {
           "session.id": sessionId ?? null,
@@ -327,7 +331,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
 
     if (cancelled) {
-      finishRunRow(db, ctx.runId, { status: "cancelled", usage, costUsd, error: "cancelled" });
+      await finishRunRow(db, ctx.runId, { status: "cancelled", usage, costUsd, error: "cancelled" });
       yield {
         type: "RUN_ERROR",
         timestamp: nowMs(),
@@ -339,18 +343,18 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
     if (streamError !== undefined) {
       const message = streamError instanceof Error ? streamError.message : String(streamError);
-      finishRunRow(db, ctx.runId, { status: "failed", usage, costUsd, error: message });
+      await finishRunRow(db, ctx.runId, { status: "failed", usage, costUsd, error: message });
       yield { type: "RUN_ERROR", timestamp: nowMs(), runId: ctx.runId, code: "provider_error", message };
       return;
     }
     if (!sawResult || resultIsError) {
       const message = resultErrorDetail ?? "el CLI terminó sin mensaje result";
-      finishRunRow(db, ctx.runId, { status: "failed", usage, costUsd, error: message });
+      await finishRunRow(db, ctx.runId, { status: "failed", usage, costUsd, error: message });
       yield { type: "RUN_ERROR", timestamp: nowMs(), runId: ctx.runId, code: "provider_error", message };
       return;
     }
 
-    finishRunRow(db, ctx.runId, { status: "succeeded", usage, costUsd });
+    await finishRunRow(db, ctx.runId, { status: "succeeded", usage, costUsd });
     yield {
       type: "RUN_FINISHED",
       timestamp: nowMs(),

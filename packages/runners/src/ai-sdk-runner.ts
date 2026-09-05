@@ -92,7 +92,7 @@ export class AiSdkRunner implements AgentRunner {
     const model = this.resolveModel(input, modelId);
     const providerName = input.provider.slug;
 
-    ensureRunningRun(db, input, ctx, this.runtime);
+    await ensureRunningRun(db, input, ctx, this.runtime);
 
     const state: ActiveRun = { abortController: new AbortController(), cancelled: false };
     this.active.set(ctx.runId, state);
@@ -156,23 +156,25 @@ export class AiSdkRunner implements AgentRunner {
       for await (const part of result.fullStream) {
         switch (part.type) {
           case "start-step": {
-            currentLlmSpanId = addSpan(db, {
-              runId: ctx.runId,
-              name: "gen_ai.chat",
-              kind: "llm",
-              attrs: {
-                "gen_ai.operation.name": "chat",
-                "gen_ai.system": providerName,
-                "gen_ai.request.model": modelId,
-              },
-            }).id;
+            currentLlmSpanId = (
+              await addSpan(db, {
+                runId: ctx.runId,
+                name: "gen_ai.chat",
+                kind: "llm",
+                attrs: {
+                  "gen_ai.operation.name": "chat",
+                  "gen_ai.system": providerName,
+                  "gen_ai.request.model": modelId,
+                },
+              })
+            ).id;
             break;
           }
           case "finish-step": {
             const stepUsage = normalizeUsage(part.usage);
             total = addUsage(total, stepUsage);
             if (currentLlmSpanId) {
-              endSpan(db, currentLlmSpanId, {
+              await endSpan(db, currentLlmSpanId, {
                 status: "ok",
                 attrs: {
                   "gen_ai.operation.name": "chat",
@@ -243,21 +245,23 @@ export class AiSdkRunner implements AgentRunner {
               };
             }
             yield { type: "TOOL_CALL_END", timestamp: nowMs(), runId: ctx.runId, toolCallId: part.toolCallId };
-            info.spanId = addSpan(db, {
-              runId: ctx.runId,
-              name: `gen_ai.execute_tool ${part.toolName}`,
-              kind: "tool",
-              attrs: {
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.name": part.toolName,
-                "gen_ai.tool.call.id": part.toolCallId,
-              },
-            }).id;
+            info.spanId = (
+              await addSpan(db, {
+                runId: ctx.runId,
+                name: `gen_ai.execute_tool ${part.toolName}`,
+                kind: "tool",
+                attrs: {
+                  "gen_ai.operation.name": "execute_tool",
+                  "gen_ai.tool.name": part.toolName,
+                  "gen_ai.tool.call.id": part.toolCallId,
+                },
+              })
+            ).id;
             break;
           }
           case "tool-result": {
             const info = openToolCalls.get(part.toolCallId);
-            if (info?.spanId) endSpan(db, info.spanId, { status: "ok" });
+            if (info?.spanId) await endSpan(db, info.spanId, { status: "ok" });
             openToolCalls.delete(part.toolCallId);
             yield {
               type: "TOOL_CALL_RESULT",
@@ -270,7 +274,7 @@ export class AiSdkRunner implements AgentRunner {
           }
           case "tool-error": {
             const info = openToolCalls.get(part.toolCallId);
-            if (info?.spanId) endSpan(db, info.spanId, { status: "error" });
+            if (info?.spanId) await endSpan(db, info.spanId, { status: "error" });
             openToolCalls.delete(part.toolCallId);
             yield {
               type: "TOOL_CALL_RESULT",
@@ -311,14 +315,14 @@ export class AiSdkRunner implements AgentRunner {
 
     // Span LLM colgado por corte/cancelación.
     if (currentLlmSpanId) {
-      endSpan(db, currentLlmSpanId, { status: "cancelled" });
+      await endSpan(db, currentLlmSpanId, { status: "cancelled" });
       currentLlmSpanId = undefined;
     }
 
     // Cierre de tool-calls huérfanos: el turno siguiente necesita UN resultado
     // por cada tool_use o el proveedor rechaza la conversación.
     for (const [toolCallId, info] of openToolCalls) {
-      if (info.spanId) endSpan(db, info.spanId, { status: "cancelled" });
+      if (info.spanId) await endSpan(db, info.spanId, { status: "cancelled" });
       yield {
         type: "TOOL_CALL_RESULT",
         timestamp: nowMs(),
@@ -334,7 +338,7 @@ export class AiSdkRunner implements AgentRunner {
     const abortish = streamError !== undefined && isAbortError(streamError);
 
     if (state.cancelled) {
-      finishRunRow(db, ctx.runId, { status: "cancelled", usage: total, costUsd, error: "cancelled" });
+      await finishRunRow(db, ctx.runId, { status: "cancelled", usage: total, costUsd, error: "cancelled" });
       yield {
         type: "RUN_ERROR",
         timestamp: nowMs(),
@@ -345,7 +349,7 @@ export class AiSdkRunner implements AgentRunner {
       return;
     }
     if (budgetExceeded) {
-      finishRunRow(db, ctx.runId, {
+      await finishRunRow(db, ctx.runId, {
         status: "failed",
         usage: total,
         costUsd,
@@ -363,7 +367,7 @@ export class AiSdkRunner implements AgentRunner {
     if (streamError !== undefined && !abortish) {
       const kind = classifyProviderError(streamError);
       const message = streamError instanceof Error ? streamError.message : String(streamError);
-      finishRunRow(db, ctx.runId, { status: "failed", usage: total, costUsd, error: `${kind}: ${message}` });
+      await finishRunRow(db, ctx.runId, { status: "failed", usage: total, costUsd, error: `${kind}: ${message}` });
       yield {
         type: "RUN_ERROR",
         timestamp: nowMs(),
@@ -374,7 +378,7 @@ export class AiSdkRunner implements AgentRunner {
       return;
     }
 
-    finishRunRow(db, ctx.runId, { status: "succeeded", usage: total, costUsd });
+    await finishRunRow(db, ctx.runId, { status: "succeeded", usage: total, costUsd });
     yield {
       type: "RUN_FINISHED",
       timestamp: nowMs(),

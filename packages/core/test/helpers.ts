@@ -8,7 +8,7 @@ import {
   openDb,
   runMigrations,
   type Agent,
-  type AgentosDb,
+  type AgentosSqliteDb,
   type Organization,
   type Person,
   type Project,
@@ -17,7 +17,7 @@ import {
 import { createBoardEngine, recordingEventSink, type BoardEngine, type EventSink } from "../src/index.js";
 
 export interface Fixture {
-  db: AgentosDb;
+  db: AgentosSqliteDb;
   sink: EventSink & { published: { topic: string; event: { type: string } }[] };
   engine: BoardEngine;
   org: Organization;
@@ -28,34 +28,34 @@ export interface Fixture {
   run: Run;
 }
 
-export function fixture(): Fixture {
+export async function fixture(): Promise<Fixture> {
   const db = openDb(":memory:");
   runMigrations(db);
-  const org = createOrganization(db, { name: "ACME S.A.", kind: "client" });
-  const person = createPerson(db, { orgId: org.id, fullName: "Ernesto", isInternal: true });
-  const project = createProject(db, { orgId: org.id, name: "Assessment ACME", type: "assessment" });
-  const alex = createAgent(db, {
+  const org = await createOrganization(db, { name: "ACME S.A.", kind: "client" });
+  const person = await createPerson(db, { orgId: org.id, fullName: "Ernesto", isInternal: true });
+  const project = await createProject(db, { orgId: org.id, name: "Assessment ACME", type: "assessment" });
+  const alex = await createAgent(db, {
     slug: "alex",
     name: "Alex",
     layer: "consultoria",
     runtime: "ai_sdk",
     toolsAllowlist: [],
   });
-  const sam = createAgent(db, {
+  const sam = await createAgent(db, {
     slug: "sam",
     name: "Sam",
     layer: "consultoria",
     runtime: "ai_sdk",
     toolsAllowlist: [],
   });
-  const run = createRun(db, { trigger: "manual", runtime: "ai_sdk", agentId: alex.id });
+  const run = await createRun(db, { trigger: "manual", runtime: "ai_sdk", agentId: alex.id });
   const sink = recordingEventSink();
   const engine = createBoardEngine({ db, sink });
   return { db, sink, engine, org, person, project, alex, sam, run };
 }
 
 /** Crea una tarea lista para trabajar (DoD + asignada) en el estado pedido. */
-export function seedTask(
+export async function seedTask(
   f: Fixture,
   overrides: {
     status?: "BACKLOG" | "READY" | "IN_PROGRESS" | "BLOCKED" | "REVIEW";
@@ -65,7 +65,7 @@ export function seedTask(
     definitionOfDone?: string | null;
   } = {},
 ) {
-  const task = f.engine.createTask(
+  const task = await f.engine.createTask(
     {
       projectId: f.project.id,
       title: "Mapear proceso de ventas",

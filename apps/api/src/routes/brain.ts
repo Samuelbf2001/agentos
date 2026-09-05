@@ -90,7 +90,7 @@ export interface BrainAgentHealth {
   slug: string;
   status: Agent["status"];
   reports_to: string | null;
-  chain: ReturnType<typeof computeOrgChainHealth>;
+  chain: Awaited<ReturnType<typeof computeOrgChainHealth>>;
 }
 
 export interface BrainModule {
@@ -480,13 +480,13 @@ function buildModules(sources: BrainSource[]): BrainModule[] {
   }));
 }
 
-function localCore(db: ApiContext["db"]): BrainOverview["core"] {
-  const people = listPeople(db);
-  const projects = listProjects(db);
-  const tasks = listTasks(db);
-  const agents = listAgents(db);
-  const docs = listDocs(db);
-  const projectSources = listProjectSources(db);
+async function localCore(db: ApiContext["db"]): Promise<BrainOverview["core"]> {
+  const people = await listPeople(db);
+  const projects = await listProjects(db);
+  const tasks = await listTasks(db);
+  const agents = await listAgents(db);
+  const docs = await listDocs(db);
+  const projectSources = await listProjectSources(db);
   return {
     counts: {
       projects: projects.length,
@@ -506,28 +506,33 @@ function localCore(db: ApiContext["db"]): BrainOverview["core"] {
   };
 }
 
-function localAgents(db: ApiContext["db"]): BrainOverview["agents"] {
-  const agents = listAgents(db);
+async function localAgents(db: ApiContext["db"]): Promise<BrainOverview["agents"]> {
+  const agents = await listAgents(db);
+  const tree = await orgForCompany(db);
   return {
     items: agents.map(mapAgent),
-    tree: orgForCompany(db).map(mapOrgNode),
-    health: agents.map((agent) => ({
-      id: agent.id,
-      slug: agent.slug,
-      status: agent.status,
-      reports_to: agent.reportsTo,
-      chain: computeOrgChainHealth(db, agent.id),
-    })),
+    tree: tree.map(mapOrgNode),
+    health: await Promise.all(
+      agents.map(async (agent) => ({
+        id: agent.id,
+        slug: agent.slug,
+        status: agent.status,
+        reports_to: agent.reportsTo,
+        chain: await computeOrgChainHealth(db, agent.id),
+      })),
+    ),
   };
 }
 
 export function registerBrainRoutes(app: FastifyInstance, ctx: ApiContext): void {
   app.get("/api/brain/overview", async (): Promise<BrainOverview> => {
     const at = checkedAt();
-    const [whatsapphub, llmWiki, notion] = await Promise.all([
+    const [whatsapphub, llmWiki, notion, core, agents] = await Promise.all([
       inspectWhatsAppHub(ctx, at),
       inspectLlmWiki(at),
       inspectNotion(at),
+      localCore(ctx.db),
+      localAgents(ctx.db),
     ]);
     const sources: BrainSource[] = [
       source({
@@ -535,7 +540,7 @@ export function registerBrainRoutes(app: FastifyInstance, ctx: ApiContext): void
         label: "AgentOS local",
         status: "connected",
         mode: "local_sqlite",
-        counts: localCore(ctx.db).counts,
+        counts: core.counts,
         detail: "Fuente de verdad local para tablero, agentes y contexto.",
         last_checked_at: at,
       }),
@@ -545,8 +550,8 @@ export function registerBrainRoutes(app: FastifyInstance, ctx: ApiContext): void
     ];
     return {
       generated_at: at,
-      core: localCore(ctx.db),
-      agents: localAgents(ctx.db),
+      core,
+      agents,
       sources,
       modules: buildModules(sources),
     };

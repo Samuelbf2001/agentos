@@ -29,4 +29,4 @@ Un seed nuevo arranca **pausado** (kill switch activo) para no gastar suscripci�
 
 ## Estado conocido (mantenlo al día en `docs/TASKS.md`)
 
-Master `cf9d822` (2026-08-28): MVP + fase 2 (jerarquía, ISO 9001 profundo, Fuentes del proyecto, Módulos de Fase, Postgres/pgvector como capa de datos). Postgres **no** corre la app end-to-end todavía (repos síncronos vs asíncronos). Commits en español; terminar con `Co-Authored-By: Claude <modelo> <noreply@anthropic.com>`.
+Master `cf9d822` (2026-08-28): MVP + fase 2 (jerarquía, ISO 9001 profundo, Fuentes del proyecto, Módulos de Fase, Postgres/pgvector como capa de datos). Postgres corre la app end-to-end desde `feat/postgres-async`: `@agentos/db` expone una sola superficie ASÍNCRONA con dos implementaciones (ver `docs/POSTGRES.md` §5). Fuera de `packages/db` no queda ningún `db.$client`. Commits en español; terminar con `Co-Authored-By: Claude <modelo> <noreply@anthropic.com>`.

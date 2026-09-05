@@ -68,12 +68,12 @@ function moduleSummary(m: PhaseModule): Record<string, unknown> {
 }
 
 /** Recibo con nombre de persona resuelto (CA-M2.4: "... por Ernesto"). */
-function launchReceipt(db: AgentosDb, launch: ModuleLaunch): Record<string, unknown> {
+async function launchReceipt(db: AgentosDb, launch: ModuleLaunch): Promise<Record<string, unknown>> {
   let actorName: string | null = null;
   if (launch.actor.startsWith("person:")) {
-    actorName = getPerson(db, launch.actor.slice("person:".length))?.fullName ?? null;
+    actorName = (await getPerson(db, launch.actor.slice("person:".length)))?.fullName ?? null;
   }
-  const moduleName = getPhaseModuleById(db, launch.moduleId)?.name ?? launch.moduleSlug;
+  const moduleName = (await getPhaseModuleById(db, launch.moduleId))?.name ?? launch.moduleSlug;
   return {
     id: launch.id,
     module_slug: launch.moduleSlug,
@@ -101,12 +101,12 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
   // ── Catálogo para el wizard ───────────────────────────────────────────────
 
   app.get("/api/modules", async () => ({
-    modules: listPhaseModules(db, { status: "active" }).map(moduleSummary),
+    modules: (await listPhaseModules(db, { status: "active" })).map(moduleSummary),
   }));
 
   app.get("/api/modules/:slug", async (req) => {
     const { slug } = req.params as { slug: string };
-    const module = listPhaseModules(db, { slug, status: "active" })[0];
+    const module = (await listPhaseModules(db, { slug, status: "active" }))[0];
     if (!module) throw errors.notFound("phase_module(active)", slug);
     const bp = module.blueprint;
     return {
@@ -131,7 +131,7 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
   app.post("/api/modules/:slug/preview", async (req) => {
     const { slug } = req.params as { slug: string };
     const body = parse(PreviewBody, req.body);
-    return previewLaunch(db, {
+    return await previewLaunch(db, {
       moduleSlug: slug,
       ...(body.version !== undefined ? { moduleVersion: body.version } : {}),
       inputs: body.inputs,
@@ -161,7 +161,7 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
       org = { name: empresa.trim() };
     }
     // Actor = persona de la SESIÓN logueada (PRD §6: disparar es siempre humano).
-    const result = launchModuleWithEvents(db, sink, {
+    const result = await launchModuleWithEvents(db, sink, {
       moduleSlug: slug,
       ...(body.version !== undefined ? { moduleVersion: body.version } : {}),
       org,
@@ -186,15 +186,16 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
 
   app.get("/api/projects/:id/launches", async (req) => {
     const { id } = req.params as { id: string };
-    if (!getProject(db, id)) throw errors.notFound("project", id);
+    if (!(await getProject(db, id))) throw errors.notFound("project", id);
+    const launches = await listLaunches(db, { projectId: id });
     return {
-      launches: listLaunches(db, { projectId: id }).map((l) => launchReceipt(db, l)),
+      launches: await Promise.all(launches.map((l) => launchReceipt(db, l))),
     };
   });
 
   app.get("/api/projects/:id/phase-status", async (req) => {
     const { id } = req.params as { id: string };
-    return { status: phaseClosureStatus(db, id) };
+    return { status: await phaseClosureStatus(db, id) };
   });
 
   /**
@@ -207,6 +208,6 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
    */
   app.get("/api/projects/:id/next-phase", async (req) => {
     const { id } = req.params as { id: string };
-    return nextPhaseStatus(db, id);
+    return await nextPhaseStatus(db, id);
   });
 }

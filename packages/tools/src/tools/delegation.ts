@@ -21,12 +21,12 @@ export const delegationTools: ToolDefinition[] = [
       parent_task_id: z.string().optional().describe("por defecto, la tarea actual del run"),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const parentTaskId = args.parent_task_id ?? ctx.task_id;
       if (!parentTaskId) {
         throw errors.validation("delegate exige parent_task_id (o un run con tarea actual)");
       }
-      return ctx.engine.delegate({
+      return await ctx.engine.delegate({
         parentTaskId,
         payload: {
           tarea: args.tarea,
@@ -51,12 +51,12 @@ export const delegationTools: ToolDefinition[] = [
       task_id: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const taskId = args.task_id ?? ctx.task_id ?? null;
-      const task = taskId ? getTask(ctx.db, taskId) : null;
+      const task = taskId ? await getTask(ctx.db, taskId) : null;
       // ApprovalKind no tiene 'question': se persiste como 'deliverable' con
       // payload.type distinguiendo pregunta vs entregable (schemas de shared son intocables).
-      const approval = ctx.engine.requestApproval({
+      const approval = await ctx.engine.requestApproval({
         kind: "deliverable",
         payload: { type: args.kind, title: args.title, body: args.body, task_id: taskId },
         runId: ctx.run_id,

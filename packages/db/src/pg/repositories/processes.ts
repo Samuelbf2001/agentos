@@ -1,6 +1,6 @@
 /** Espejo Postgres de src/repositories/processes.ts — misma superficie, asíncrona (§NFR-9). */
-import { asc, eq } from "drizzle-orm";
-import { errors, newId, nowMs } from "@agentos/shared";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { errors, newId, nowMs, type ProcessVariant } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
 import { processes } from "../schema-pg.js";
 import type { NewProcess, Process } from "../types-pg.js";
@@ -56,4 +56,17 @@ export async function linkSource(db: AgentosPgDb, processId: string, docId: stri
       .where(eq(processes.id, processId));
   }
   return (await getProcess(db, processId))!;
+}
+
+/** Conteo de procesos (cierre de fase — CA-M3.1: `as_is` mapeados de la org). */
+export async function countProcesses(
+  db: AgentosPgDb,
+  filter: { orgId?: string; variant?: ProcessVariant } = {},
+): Promise<number> {
+  const conds = [];
+  if (filter.orgId) conds.push(eq(processes.orgId, filter.orgId));
+  if (filter.variant) conds.push(eq(processes.variant, filter.variant));
+  const base = db.select({ n: sql<number>`count(*)::int` }).from(processes);
+  const [row] = await (conds.length > 0 ? base.where(and(...conds)) : base);
+  return Number(row?.n ?? 0);
 }

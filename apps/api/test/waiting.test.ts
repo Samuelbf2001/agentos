@@ -36,26 +36,26 @@ describe("bandeja Esperando por ti (H10)", () => {
     expect(empty.review_tasks).toHaveLength(0);
 
     // Un entregable llega a REVIEW con artefacto (requires_approval como en la demo).
-    const task = makeReadyTask(fx, fx.sam, {
+    const task = await makeReadyTask(fx, fx.sam, {
       title: "Informe de assessment (borrador)",
       requiresApproval: true,
       activityType: "report",
     });
     const actor = `person:${fx.person.id}`;
-    const inProgress = fx.api.ctx.engine.moveTask({
+    const inProgress = await fx.api.ctx.engine.moveTask({
       taskId: task.id,
       to: "IN_PROGRESS",
       expectedVersion: task.version,
       actor,
     });
-    attachArtifact(fx.db, {
+    await attachArtifact(fx.db, {
       taskId: task.id,
       kind: "document",
       title: "Informe v1",
       content: "# Informe\nHallazgos con provenance [doc:x].",
       createdBy: "agent:sam",
     });
-    fx.api.ctx.engine.moveTask({
+    await fx.api.ctx.engine.moveTask({
       taskId: task.id,
       to: "REVIEW",
       expectedVersion: inProgress.version,
@@ -63,7 +63,7 @@ describe("bandeja Esperando por ti (H10)", () => {
     });
 
     // Y además una aprobación pendiente (pregunta de otro agente).
-    const approval = fx.api.ctx.engine.requestApproval({
+    const approval = await fx.api.ctx.engine.requestApproval({
       kind: "deliverable",
       payload: { type: "question", title: "¿Reasigno?", body: "Falta insumo" },
       requestedBy: "agent:sam",
@@ -81,11 +81,11 @@ describe("bandeja Esperando por ti (H10)", () => {
     expect(waiting.review_tasks[0]!.artifacts[0]!.content).toContain("# Informe");
 
     // Entrar/salir de REVIEW avisa por el topic approvals (badge en vivo).
-    const events = fx.api.ctx.bus.getSince("approvals", 0);
+    const events = await fx.api.ctx.bus.getSince("approvals", 0);
     expect(events.some((e) => e.type === "review.changed")).toBe(true);
 
     // Aprobar por REST (REVIEW→DONE solo humano) la saca de la bandeja.
-    const current = getTask(fx.db, task.id)!;
+    const current = (await getTask(fx.db, task.id))!;
     const approve = await fx.api.app.inject({
       method: "POST",
       url: `/api/tasks/${task.id}/approve`,

@@ -64,7 +64,7 @@ export function createHttpServer(ctx: AdminContext, token: string): http.Server 
   });
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const token = process.env.AGENTOS_MCP_TOKEN;
   if (!token || token.trim().length === 0) {
     process.stderr.write(
@@ -78,7 +78,7 @@ function main(): void {
     process.stderr.write(`[mcp-admin] AGENTOS_MCP_PORT inválido: ${process.env.AGENTOS_MCP_PORT}\n`);
     process.exit(1);
   }
-  const ctx = createAdminContext({
+  const ctx = await createAdminContext({
     profile,
     personId: process.env.AGENTOS_MCP_PERSON_ID ?? null,
   });
@@ -94,4 +94,9 @@ const isMain =
   process.argv[1] !== undefined &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (isMain) main();
+if (isMain) {
+  main().catch((err) => {
+    process.stderr.write(`[mcp-admin] error fatal: ${err instanceof Error ? err.stack : String(err)}\n`);
+    process.exit(1);
+  });
+}

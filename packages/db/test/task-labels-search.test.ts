@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { isAgentosError } from "@agentos/shared";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { createOrganization } from "../src/repositories/organizations-people.js";
 import { createProject } from "../src/repositories/projects.js";
@@ -25,13 +25,13 @@ import {
 } from "../src/repositories/task-labels.js";
 import { searchTasks } from "../src/search.js";
 
-function freshDb(): AgentosDb {
+function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
   runMigrations(db);
   return db;
 }
 
-function fixture(db: AgentosDb) {
+function fixture(db: AgentosSqliteDb) {
   const org = createOrganization(db, { name: "Org etiquetas", kind: "client" });
   const project = createProject(db, {
     orgId: org.id,
@@ -49,7 +49,7 @@ function fixture(db: AgentosDb) {
 }
 
 function makeTask(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   projectId: string,
   patch: Partial<Parameters<typeof createTask>[1]> = {},
 ) {

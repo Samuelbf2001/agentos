@@ -16,8 +16,8 @@ import { defineAdminTool as def, type AdminToolDefinition } from "../registry.js
 const Reason = z.string().max(2000).optional();
 const IdempotencyKey = z.string().min(1).max(200).optional();
 
-function mustGetProject(db: AgentosDb, id: string): Project {
-  const project = getProject(db, id);
+async function mustGetProject(db: AgentosDb, id: string): Promise<Project> {
+  const project = await getProject(db, id);
   if (!project) throw errors.notFound("project", id);
   return project;
 }
@@ -39,8 +39,8 @@ export const projectTools: AdminToolDefinition[] = [
     description: "Lista proyectos (opcionalmente por organización).",
     schema: z.object({ org_id: z.string().optional() }),
     readOnly: true,
-    handler(ctx, args) {
-      return listProjects(ctx.db, args.org_id);
+    async handler(ctx, args) {
+      return await listProjects(ctx.db, args.org_id);
     },
   }),
 
@@ -49,8 +49,8 @@ export const projectTools: AdminToolDefinition[] = [
     description: "Devuelve un proyecto por id (tipo, etapa, estado del Gate 1).",
     schema: z.object({ project_id: z.string().min(1) }),
     readOnly: true,
-    handler(ctx, args) {
-      return mustGetProject(ctx.db, args.project_id);
+    async handler(ctx, args) {
+      return await mustGetProject(ctx.db, args.project_id);
     },
   }),
 
@@ -66,19 +66,19 @@ export const projectTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const previous = findIdempotentMutation(ctx, "projects.create", args.idempotency_key);
+    async handler(ctx, args) {
+      const previous = await findIdempotentMutation(ctx, "projects.create", args.idempotency_key);
       if (previous?.entityId) {
-        const existing = getProject(ctx.db, previous.entityId);
+        const existing = await getProject(ctx.db, previous.entityId);
         if (existing) return { project: existing, idempotent: true };
       }
-      const project = createProject(ctx.db, {
+      const project = await createProject(ctx.db, {
         orgId: args.org_id,
         name: args.name,
         type: args.type,
         workspacePath: args.workspace_path ?? null,
       });
-      auditMutation(ctx, {
+      await auditMutation(ctx, {
         action: "projects.create",
         entityType: "project",
         entityId: project.id,
@@ -105,8 +105,8 @@ export const projectTools: AdminToolDefinition[] = [
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const project = mustGetProject(ctx.db, args.project_id);
+    async handler(ctx, args) {
+      const project = await mustGetProject(ctx.db, args.project_id);
       if (Object.keys(args.patch).length === 0) {
         throw errors.validation("projects.update con patch vacío: nada que hacer");
       }
@@ -115,8 +115,8 @@ export const projectTools: AdminToolDefinition[] = [
       if (args.patch.name !== undefined) patch.name = args.patch.name;
       if (args.patch.stage !== undefined) patch.stage = args.patch.stage;
       if (args.patch.workspace_path !== undefined) patch.workspacePath = args.patch.workspace_path;
-      const updated = updateProject(ctx.db, project.id, patch, args.expected_version);
-      auditMutation(ctx, {
+      const updated = await updateProject(ctx.db, project.id, patch, args.expected_version);
+      await auditMutation(ctx, {
         action: "projects.update",
         entityType: "project",
         entityId: project.id,
@@ -140,9 +140,9 @@ export const projectTools: AdminToolDefinition[] = [
       note: z.string().optional(),
     }),
     readOnly: false,
-    handler(ctx, args) {
-      const person = mustGetPerson(ctx.db, args.person_id);
-      const project = ctx.engine.approveGate(args.project_id, GATE_G1_PLAN, person.id, args.note);
+    async handler(ctx, args) {
+      const person = await mustGetPerson(ctx.db, args.person_id);
+      const project = await ctx.engine.approveGate(args.project_id, GATE_G1_PLAN, person.id, args.note);
       return { project, gate: args.gate, approved_by: person.id };
     },
   }),

@@ -22,8 +22,8 @@ afterEach(async () => {
   await fx.close();
 });
 
-function seedOrigin(objectKind: "task" | "project", objectId: string, notionPageId: string) {
-  const run = createNotionMigrationRun(fx.db, {
+async function seedOrigin(objectKind: "task" | "project", objectId: string, notionPageId: string) {
+  const run = (await createNotionMigrationRun(fx.db, {
     sourceSchemaVersion: "esquema-de-prueba",
     capturedAt: 1_700_000_000_000,
     manifestHash: "hash-de-prueba",
@@ -31,8 +31,8 @@ function seedOrigin(objectKind: "task" | "project", objectId: string, notionPage
     mode: "full",
     status: "completed",
     immutable: true,
-  });
-  const archive = createNotionPageArchive(fx.db, {
+  }));
+  const archive = (await createNotionPageArchive(fx.db, {
     migrationRunId: run.id,
     sourceKind: objectKind,
     notionPageId,
@@ -49,8 +49,8 @@ function seedOrigin(objectKind: "task" | "project", objectId: string, notionPage
     },
     payloadHash: "a".repeat(64),
     capturedAt: 1_700_000_000_000,
-  });
-  upsertNotionImportLink(fx.db, {
+  }));
+  (await upsertNotionImportLink(fx.db, {
     migrationRunId: run.id,
     sourceKind: objectKind,
     notionPageId,
@@ -59,8 +59,8 @@ function seedOrigin(objectKind: "task" | "project", objectId: string, notionPage
     archiveId: archive.id,
     importStatus: "imported",
     sourceLastEditedAt: 1_699_000_000_000,
-  });
-  recordNotionQuarantine(fx.db, {
+  }));
+  (await recordNotionQuarantine(fx.db, {
     migrationRunId: run.id,
     sourceKind: objectKind === "task" ? "task" : "project",
     notionPageId,
@@ -68,20 +68,20 @@ function seedOrigin(objectKind: "task" | "project", objectId: string, notionPage
     reason: "campo_sin_columna_nativa",
     rawReference: "MKT",
     resolutionState: "open",
-  });
+  }));
   return { run, archive };
 }
 
 describe("GET /api/{tasks,projects}/:id/notion-origin", () => {
   it("devuelve el origen íntegro de una tarea importada", async () => {
-    const task = createTask(fx.db, {
+    const task = (await createTask(fx.db, {
       projectId: fx.project.id,
       title: "Tarea importada",
       stage: "ENTENDER",
       status: "BACKLOG",
       orderKey: "m",
-    });
-    seedOrigin("task", task.id, "task-notion-1");
+    }));
+    await seedOrigin("task", task.id, "task-notion-1");
 
     const res = await fx.api.app.inject({
       method: "GET",
@@ -112,13 +112,13 @@ describe("GET /api/{tasks,projects}/:id/notion-origin", () => {
   });
 
   it("una tarea nativa responde 200 con has_origin=false, no es un error", async () => {
-    const task = createTask(fx.db, {
+    const task = (await createTask(fx.db, {
       projectId: fx.project.id,
       title: "Tarea nativa",
       stage: "ENTENDER",
       status: "BACKLOG",
       orderKey: "m",
-    });
+    }));
     const res = await fx.api.app.inject({
       method: "GET",
       url: `/api/tasks/${task.id}/notion-origin`,
@@ -129,7 +129,7 @@ describe("GET /api/{tasks,projects}/:id/notion-origin", () => {
   });
 
   it("devuelve el origen de un proyecto", async () => {
-    seedOrigin("project", fx.project.id, "proj-notion-1");
+    await seedOrigin("project", fx.project.id, "proj-notion-1");
     const res = await fx.api.app.inject({
       method: "GET",
       url: `/api/projects/${fx.project.id}/notion-origin`,

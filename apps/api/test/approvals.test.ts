@@ -19,7 +19,7 @@ afterAll(async () => {
 
 describe("approvals (Gate 2)", () => {
   it("tool_call pending → approve → efecto ejecutado → run de reanudación con resume_of_run_id", async () => {
-    const task = makeReadyTask(fx, fx.sam, { title: "Enviar propuesta por email" });
+    const task = await makeReadyTask(fx, fx.sam, { title: "Enviar propuesta por email" });
 
     // Fase 1: el agente intenta email.send → pending_approval → BLOCKED y cierra turno.
     fx.aiRunner.setBehavior(async (input, ctx) => {
@@ -29,7 +29,7 @@ describe("approvals (Gate 2)", () => {
         body: "Adjunto la propuesta.",
       })) as { status: string; approval_id: string };
       expect(result.status).toBe("pending_approval");
-      const current = getTask(fx.db, ctx.taskId!)!;
+      const current = (await getTask(fx.db, ctx.taskId!))!;
       await callTool(input, "tasks.move", {
         task_id: current.id,
         to: "BLOCKED",
@@ -43,11 +43,11 @@ describe("approvals (Gate 2)", () => {
     expect(report.dispatched).toHaveLength(1);
     const firstRunId = report.dispatched[0]!;
 
-    await waitFor(() => getRun(fx.db, firstRunId)!.status === "succeeded");
-    expect(getTask(fx.db, task.id)!.status).toBe("BLOCKED");
-    expect(getTask(fx.db, task.id)!.blockedReason).toBe("approval");
+    await waitFor(async () => (await getRun(fx.db, firstRunId))!.status === "succeeded");
+    expect((await getTask(fx.db, task.id))!.status).toBe("BLOCKED");
+    expect((await getTask(fx.db, task.id))!.blockedReason).toBe("approval");
 
-    const pending = listPendingApprovals(fx.db);
+    const pending = await listPendingApprovals(fx.db);
     expect(pending).toHaveLength(1);
     const approval = pending[0]!;
     expect(approval.kind).toBe("tool_call");
@@ -65,14 +65,14 @@ describe("approvals (Gate 2)", () => {
 
     // Fase 2: al reanudarse, el agente cierra la tarea con evidencia.
     fx.aiRunner.setBehavior(async (input, ctx) => {
-      const current = getTask(fx.db, ctx.taskId!)!;
+      const current = (await getTask(fx.db, ctx.taskId!))!;
       await callTool(input, "tasks.attach_artifact", {
         task_id: current.id,
         kind: "email",
         title: "Email enviado (simulado)",
         content: "Propuesta enviada a cliente@acme.com",
       });
-      const after = getTask(fx.db, current.id)!;
+      const after = (await getTask(fx.db, current.id))!;
       await callTool(input, "tasks.move", {
         task_id: current.id,
         to: "REVIEW",
@@ -100,19 +100,19 @@ describe("approvals (Gate 2)", () => {
     expect(decided.resume_run_id).toBeTruthy();
 
     // Auditoría de la ejecución aprobada (el gateway escribe ANTES de actuar).
-    const audit = queryAudit(fx.db, { entityType: "tool", entityId: "email.send" });
+    const audit = await queryAudit(fx.db, { entityType: "tool", entityId: "email.send" });
     expect(audit.some((a) => a.action === "tool.execute_approved")).toBe(true);
 
     // Run de reanudación ligado al original.
-    const resumeRun = getRun(fx.db, decided.resume_run_id)!;
+    const resumeRun = (await getRun(fx.db, decided.resume_run_id))!;
     expect(resumeRun.resumeOfRunId).toBe(firstRunId);
     expect(resumeRun.trigger).toBe("approval_resume");
-    expect(resumeRun.rootRunId).toBe(getRun(fx.db, firstRunId)!.rootRunId);
+    expect(resumeRun.rootRunId).toBe((await getRun(fx.db, firstRunId))!.rootRunId);
 
-    await waitFor(() => getRun(fx.db, decided.resume_run_id)!.status === "succeeded");
-    await waitFor(() => getTask(fx.db, task.id)!.status === "REVIEW");
-    expect(listPendingApprovals(fx.db)).toHaveLength(0);
-    expect(listRuns(fx.db, { taskId: task.id })).toHaveLength(2);
+    await waitFor(async () => (await getRun(fx.db, decided.resume_run_id))!.status === "succeeded");
+    await waitFor(async () => (await getTask(fx.db, task.id))!.status === "REVIEW");
+    expect(await listPendingApprovals(fx.db)).toHaveLength(0);
+    expect(await listRuns(fx.db, { taskId: task.id })).toHaveLength(2);
   });
 
   // Fix Q2: aprobar por la ruta del MCP admin solo fija el estado (el MCP es otro
@@ -120,7 +120,7 @@ describe("approvals (Gate 2)", () => {
   // la tarjeta BLOCKED para siempre. Ahora el despachador de apps/api drena la
   // decisión: ejecuta el efecto (email.send simulado) + encola el resume.
   it("MCP decide (solo estado) → un tick del despachador reconcilia el efecto y desbloquea", async () => {
-    const task = makeReadyTask(fx, fx.sam, { title: "Enviar contrato por email (vía MCP)" });
+    const task = await makeReadyTask(fx, fx.sam, { title: "Enviar contrato por email (vía MCP)" });
 
     // Fase 1: el agente pide email.send → pending_approval → BLOCKED(approval).
     fx.aiRunner.setBehavior(async (input, ctx) => {
@@ -130,7 +130,7 @@ describe("approvals (Gate 2)", () => {
         body: "Adjunto el contrato.",
       })) as { status: string };
       expect(result.status).toBe("pending_approval");
-      const current = getTask(fx.db, ctx.taskId!)!;
+      const current = (await getTask(fx.db, ctx.taskId!))!;
       await callTool(input, "tasks.move", {
         task_id: current.id,
         to: "BLOCKED",
@@ -141,36 +141,36 @@ describe("approvals (Gate 2)", () => {
     });
 
     await fx.api.ctx.dispatcher.tick();
-    await waitFor(() => getTask(fx.db, task.id)!.status === "BLOCKED");
-    const firstRunId = listRuns(fx.db, { taskId: task.id })[0]!.id;
+    await waitFor(async () => (await getTask(fx.db, task.id))!.status === "BLOCKED");
+    const firstRunId = (await listRuns(fx.db, { taskId: task.id }))[0]!.id;
 
-    const approval = listPendingApprovals(fx.db).find((a) => a.taskId === task.id)!;
+    const approval = (await listPendingApprovals(fx.db)).find((a) => a.taskId === task.id)!;
     expect(approval.kind).toBe("tool_call");
 
-    const executedApproved = () =>
-      queryAudit(fx.db, { entityType: "tool", entityId: "email.send" }).filter(
+    const executedApproved = async () =>
+      (await queryAudit(fx.db, { entityType: "tool", entityId: "email.send" })).filter(
         (a) => a.action === "tool.execute_approved",
       ).length;
-    const executedBefore = executedApproved();
+    const executedBefore = await executedApproved();
 
     // Decidir EXACTAMENTE como el MCP admin: solo el estado (engine.decideApproval),
     // sin ejecutar el efecto ni encolar resume.
-    fx.api.ctx.engine.decideApproval(approval.id, "approved", fx.person.id, "ok por MCP");
+    await fx.api.ctx.engine.decideApproval(approval.id, "approved", fx.person.id, "ok por MCP");
 
     // Sin reconciliar: el efecto NO se ejecutó y la tarjeta sigue BLOCKED (bug Q2).
-    expect(getTask(fx.db, task.id)!.status).toBe("BLOCKED");
-    expect(executedApproved()).toBe(executedBefore);
+    expect((await getTask(fx.db, task.id))!.status).toBe("BLOCKED");
+    expect(await executedApproved()).toBe(executedBefore);
 
     // Fase 2: la reanudación cierra la tarea con evidencia.
     fx.aiRunner.setBehavior(async (input, ctx) => {
-      const current = getTask(fx.db, ctx.taskId!)!;
+      const current = (await getTask(fx.db, ctx.taskId!))!;
       await callTool(input, "tasks.attach_artifact", {
         task_id: current.id,
         kind: "email",
         title: "Email enviado (simulado)",
         content: "Contrato enviado a legal@acme.com",
       });
-      const after = getTask(fx.db, current.id)!;
+      const after = (await getTask(fx.db, current.id))!;
       await callTool(input, "tasks.move", {
         task_id: current.id,
         to: "REVIEW",
@@ -183,15 +183,17 @@ describe("approvals (Gate 2)", () => {
     await fx.api.ctx.dispatcher.tick();
 
     // El efecto SE EJECUTÓ (stub email.send simulado → nueva fila execute_approved).
-    await waitFor(() => executedApproved() > executedBefore, { label: "email.send ejecutado por el drenado" });
+    await waitFor(async () => (await executedApproved()) > executedBefore, {
+      label: "email.send ejecutado por el drenado",
+    });
 
     // La tarea salió de BLOCKED y hay un run de reanudación con resume_of_run_id.
-    const resume = await waitFor(() =>
-      listRuns(fx.db, { taskId: task.id }).find((r) => r.resumeOfRunId === firstRunId),
+    const resume = await waitFor(async () =>
+      (await listRuns(fx.db, { taskId: task.id })).find((r) => r.resumeOfRunId === firstRunId),
     );
     expect(resume.trigger).toBe("approval_resume");
-    await waitFor(() => getTask(fx.db, task.id)!.status === "REVIEW");
-    expect(listPendingApprovals(fx.db).filter((a) => a.taskId === task.id)).toHaveLength(0);
+    await waitFor(async () => (await getTask(fx.db, task.id))!.status === "REVIEW");
+    expect((await listPendingApprovals(fx.db)).filter((a) => a.taskId === task.id)).toHaveLength(0);
   });
 
   it("decidir dos veces la misma aprobación falla explícitamente (conflict)", async () => {
@@ -203,7 +205,7 @@ describe("approvals (Gate 2)", () => {
     expect(decided.statusCode).toBe(200);
 
     // La aprobación del test anterior ya está decidida.
-    const approvals = queryAudit(fx.db, { action: "approval.approved" });
+    const approvals = await queryAudit(fx.db, { action: "approval.approved" });
     expect(approvals.length).toBeGreaterThan(0);
     const approvalId = approvals[0]!.entityId!;
     const res = await fx.api.app.inject({

@@ -23,7 +23,7 @@ import {
   type ProjectType,
   type Stage,
 } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { moduleLaunches, phaseModules } from "../schema.js";
 import type { ModuleLaunch, NewModuleLaunch, NewPhaseModule, PhaseModule } from "../types.js";
 import type { ParsedModuleSeed } from "../seed-sources.js";
@@ -32,11 +32,11 @@ import { getMethodology } from "./methodologies.js";
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
 
-export function getPhaseModuleById(db: AgentosDb, id: string): PhaseModule | undefined {
+export function getPhaseModuleById(db: AgentosSqliteDb, id: string): PhaseModule | undefined {
   return db.select().from(phaseModules).where(eq(phaseModules.id, id)).get();
 }
 
-export function getActiveModule(db: AgentosDb, slug: string): PhaseModule | undefined {
+export function getActiveModule(db: AgentosSqliteDb, slug: string): PhaseModule | undefined {
   return db
     .select()
     .from(phaseModules)
@@ -45,7 +45,7 @@ export function getActiveModule(db: AgentosDb, slug: string): PhaseModule | unde
 }
 
 export function getModuleVersion(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   slug: string,
   version: number,
 ): PhaseModule | undefined {
@@ -58,7 +58,7 @@ export function getModuleVersion(
 
 /** Todas las versiones de todos los módulos (slug asc, versión desc). */
 export function listPhaseModules(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: { slug?: string; status?: PhaseModule["status"] } = {},
 ): PhaseModule[] {
   const conds = [];
@@ -93,7 +93,7 @@ export interface CreateModuleVersionInput {
  * Inserta una versión nueva SIEMPRE en `draft` (activar es un paso aparte y
  * fail-closed). El blueprint se persiste canonicalizado + hasheado.
  */
-export function createModuleVersion(db: AgentosDb, input: CreateModuleVersionInput): PhaseModule {
+export function createModuleVersion(db: AgentosSqliteDb, input: CreateModuleVersionInput): PhaseModule {
   const now = nowMs();
   const version = input.version ?? nextModuleVersion(db, input.slug);
   if (getModuleVersion(db, input.slug, version)) {
@@ -129,7 +129,7 @@ export function createModuleVersion(db: AgentosDb, input: CreateModuleVersionInp
   return getModuleVersion(db, input.slug, version)!;
 }
 
-function nextModuleVersion(db: AgentosDb, slug: string): number {
+function nextModuleVersion(db: AgentosSqliteDb, slug: string): number {
   const last = db
     .select({ v: sql<number>`coalesce(max(${phaseModules.version}), 0)` })
     .from(phaseModules)
@@ -146,7 +146,7 @@ function nextModuleVersion(db: AgentosDb, slug: string): number {
  * `agent_not_assignable` NO se comprueba aquí: es regla del momento C — la
  * asignabilidad se resuelve al disparar, contra el roster de ese instante.
  */
-export function moduleBlueprintDbIssues(db: AgentosDb, bp: ModuleBlueprint): BlueprintIssue[] {
+export function moduleBlueprintDbIssues(db: AgentosSqliteDb, bp: ModuleBlueprint): BlueprintIssue[] {
   const issues: BlueprintIssue[] = [];
   const main = getMethodology(db, bp.methodology.slug, bp.methodology.version ?? undefined);
   if (!main) {
@@ -184,7 +184,7 @@ export function moduleBlueprintDbIssues(db: AgentosDb, bp: ModuleBlueprint): Blu
  * Archiva la versión activa anterior del slug (el índice parcial garantiza
  * una sola activa).
  */
-export function activateModuleVersion(db: AgentosDb, slug: string, version: number): PhaseModule {
+export function activateModuleVersion(db: AgentosSqliteDb, slug: string, version: number): PhaseModule {
   const row = getModuleVersion(db, slug, version);
   if (!row) throw errors.notFound("phase_module", `${slug}@${version}`);
   if (row.status === "active") return row;
@@ -219,7 +219,7 @@ export function activateModuleVersion(db: AgentosDb, slug: string, version: numb
  * tocan (su recibo es un snapshot — NM-3); el slug queda sin versión activa
  * hasta el próximo publish/rollback.
  */
-export function archiveModuleVersion(db: AgentosDb, slug: string, version: number): PhaseModule {
+export function archiveModuleVersion(db: AgentosSqliteDb, slug: string, version: number): PhaseModule {
   const row = getModuleVersion(db, slug, version);
   if (!row) throw errors.notFound("phase_module", `${slug}@${version}`);
   if (row.status === "archived") return row;
@@ -239,7 +239,7 @@ export function archiveModuleVersion(db: AgentosDb, slug: string, version: numbe
  *   `version` en el archivo. Sin auto-bump: archivo y DB no divergen jamás.
  */
 export function upsertPhaseModuleFromSeed(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   seed: ParsedModuleSeed,
 ): { module: PhaseModule; created: boolean } {
   const existing = getModuleVersion(db, seed.slug, seed.version);
@@ -277,7 +277,7 @@ export function upsertPhaseModuleFromSeed(
 // consultas viven aquí por la regla del paquete: nada consulta fuera de
 // repositories/) ────────────────────────────────────────────────────────────
 
-export function getLaunch(db: AgentosDb, id: string): ModuleLaunch | undefined {
+export function getLaunch(db: AgentosSqliteDb, id: string): ModuleLaunch | undefined {
   return db.select().from(moduleLaunches).where(eq(moduleLaunches.id, id)).get();
 }
 
@@ -286,7 +286,7 @@ export function getLaunch(db: AgentosDb, id: string): ModuleLaunch | undefined {
  * launches en ninguna capa). Lo llama SOLO el motor de launch, dentro de su
  * transacción única (§13.3).
  */
-export function insertModuleLaunch(db: AgentosDb, row: NewModuleLaunch): ModuleLaunch {
+export function insertModuleLaunch(db: AgentosSqliteDb, row: NewModuleLaunch): ModuleLaunch {
   db.insert(moduleLaunches).values(row).run();
   return getLaunch(db, row.id)!;
 }
@@ -297,7 +297,7 @@ export function insertModuleLaunch(db: AgentosDb, row: NewModuleLaunch): ModuleL
  * el INSERT reviente el índice ([SÍNTESIS] Codex §13.1).
  */
 export function findLaunchByProjectAndPhase(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   projectId: string,
   phase: Stage,
 ): ModuleLaunch | undefined {
@@ -309,7 +309,7 @@ export function findLaunchByProjectAndPhase(
 }
 
 export function findLaunchByIdempotencyKey(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   idempotencyKey: string,
 ): ModuleLaunch | undefined {
   return db
@@ -321,24 +321,27 @@ export function findLaunchByIdempotencyKey(
 
 /**
  * Último launch del proyecto (M3, CA-M3.1): el recibo cuyos `deliverables`
- * efectivos definen el cierre de fase vigente. Desempate por rowid (dos
- * launches con el mismo `created_at` inyectado en tests).
+ * efectivos definen el cierre de fase vigente.
+ *
+ * Desempate por `id DESC` (dos launches con el mismo `created_at` inyectado en
+ * tests): los ids son uuidv7 —monotónicos por tiempo—, así que reproducen el
+ * orden de inserción que antes daba `rowid`, y la consulta es la MISMA en
+ * Postgres, que no tiene rowid.
  */
 export function getLatestLaunchForProject(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   projectId: string,
 ): ModuleLaunch | undefined {
-  const row = db.$client
-    .prepare(
-      `SELECT id FROM module_launches WHERE project_id = ?
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-    )
-    .get(projectId) as { id: string } | undefined;
-  return row ? getLaunch(db, row.id) : undefined;
+  return db
+    .select()
+    .from(moduleLaunches)
+    .where(eq(moduleLaunches.projectId, projectId))
+    .orderBy(desc(moduleLaunches.createdAt), desc(moduleLaunches.id))
+    .get();
 }
 
 export function listLaunches(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: { projectId?: string; moduleSlug?: string } = {},
 ): ModuleLaunch[] {
   const conds = [];
@@ -346,5 +349,7 @@ export function listLaunches(
   if (filter.moduleSlug) conds.push(eq(moduleLaunches.moduleSlug, filter.moduleSlug));
   const base = db.select().from(moduleLaunches);
   const q = conds.length > 0 ? base.where(and(...conds)) : base;
-  return q.orderBy(desc(moduleLaunches.createdAt)).all();
+  // Desempate por id: dos recibos del mismo milisegundo tenían orden arbitrario
+  // (y distinto en cada motor).
+  return q.orderBy(desc(moduleLaunches.createdAt), desc(moduleLaunches.id)).all();
 }

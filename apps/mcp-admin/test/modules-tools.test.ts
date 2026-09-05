@@ -17,8 +17,8 @@ import { getActiveModule, getModuleVersion, listTasks, parseModuleSeed } from "@
 import { adminFixture, type AdminFixture } from "./helpers.js";
 
 let f: AdminFixture;
-beforeEach(() => {
-  f = adminFixture();
+beforeEach(async () => {
+  f = await adminFixture();
 });
 
 const GLOBEX_INPUTS = {
@@ -119,7 +119,7 @@ describe("modules.validate", () => {
     expect(codes).toContain("unknown_agent_slug");
     expect(codes).toContain("unknown_methodology");
     // Nada se escribió: sigue habiendo una sola versión, la activa v1.
-    expect(getActiveModule(f.db, "consultoria")!.version).toBe(1);
+    expect((await getActiveModule(f.db, "consultoria"))!.version).toBe(1);
   });
 });
 
@@ -164,7 +164,7 @@ describe("modules.preview", () => {
     expect(res.plan.gates.map((g) => g.name)).toContain("g1_plan");
     expect(res.plan.deliverables.length).toBeGreaterThan(0);
     // Y NADA se escribió (dry-run): cero tareas nuevas fuera del seed.
-    expect(listTasks(f.db).every((t) => !t.title.includes("Globex"))).toBe(true);
+    expect((await listTasks(f.db)).every((t) => !t.title.includes("Globex"))).toBe(true);
   });
 
   it("con el toggle apagado poda matriz_iso (y la dep hacia ella)", async () => {
@@ -229,10 +229,10 @@ describe("modules.update / publish / rollback", () => {
     expect(res.module.status).toBe("draft");
     expect(res.issues).toEqual([]);
     // La activa sigue siendo la v1 con su body original.
-    const active = getActiveModule(f.db, "consultoria")!;
+    const active = (await getActiveModule(f.db, "consultoria"))!;
     expect(active.version).toBe(1);
     expect(active.bodyMd).not.toBe("Cuerpo nuevo");
-    expect(getModuleVersion(f.db, "consultoria", 2)!.bodyMd).toBe("Cuerpo nuevo");
+    expect((await getModuleVersion(f.db, "consultoria", 2))!.bodyMd).toBe("Cuerpo nuevo");
   });
 
   it("update con expected_version desfasada → version_conflict", async () => {
@@ -280,7 +280,7 @@ describe("modules.update / publish / rollback", () => {
     const codes = err.details.map((i) => i.code);
     expect(codes).toContain("unknown_role"); // regla pura
     expect(codes).toContain("unknown_agent_slug"); // regla con DB — momento B completo
-    expect(getActiveModule(f.db, "consultoria")!.version).toBe(1); // fail-closed
+    expect((await getActiveModule(f.db, "consultoria"))!.version).toBe(1); // fail-closed
 
     // Draft v3 válido → publica y archiva la v1.
     const good = await getBlueprint(1);
@@ -298,8 +298,8 @@ describe("modules.update / publish / rollback", () => {
     })) as { module: { version: number; status: string }; archived_version: number | null };
     expect(pub.module.status).toBe("active");
     expect(pub.archived_version).toBe(1);
-    expect(getActiveModule(f.db, "consultoria")!.version).toBe(3);
-    expect(getModuleVersion(f.db, "consultoria", 1)!.status).toBe("archived");
+    expect((await getActiveModule(f.db, "consultoria"))!.version).toBe(3);
+    expect((await getModuleVersion(f.db, "consultoria", 1))!.status).toBe("archived");
 
     // Rollback re-activa la v1 (re-validada momento B) y archiva la v3.
     const rb = (await f.call("agentos.modules.rollback", {
@@ -309,7 +309,7 @@ describe("modules.update / publish / rollback", () => {
     })) as { module: { version: number }; archived_version: number | null };
     expect(rb.module.version).toBe(1);
     expect(rb.archived_version).toBe(3);
-    expect(getActiveModule(f.db, "consultoria")!.version).toBe(1);
+    expect((await getActiveModule(f.db, "consultoria"))!.version).toBe(1);
   });
 
   it("publish con expected_version (activa) desfasada → version_conflict", async () => {
@@ -359,7 +359,7 @@ describe("modules.launch", () => {
     expect(res.launch.inputs["empresa"]).toBe("Globex");
     // Backlog materializado de verdad.
     expect(res.tasks_count).toBeGreaterThan(0);
-    expect(listTasks(f.db, { projectId: res.project.id }).length).toBe(res.tasks_count);
+    expect((await listTasks(f.db, { projectId: res.project.id })).length).toBe(res.tasks_count);
 
     // Idempotencia (CA-M2.6): misma key + mismos inputs = lo ya creado.
     const again = (await f.call("agentos.modules.launch", {
@@ -372,7 +372,7 @@ describe("modules.launch", () => {
     })) as { launch: { id: string }; idempotent: boolean };
     expect(again.idempotent).toBe(true);
     expect(again.launch.id).toBe(res.launch.id);
-    expect(listTasks(f.db, { projectId: res.project.id }).length).toBe(res.tasks_count);
+    expect((await listTasks(f.db, { projectId: res.project.id })).length).toBe(res.tasks_count);
 
     // Misma key con inputs DISTINTOS → idempotency_conflict.
     await expect(
@@ -447,7 +447,7 @@ describe("perfil ro sobre agentos.modules.*", () => {
       await expect(f.callRo(tool, {})).rejects.toMatchObject({ code: "read_only_profile" });
     }
     // Y nada mutó: consultoria sigue con una sola versión activa.
-    expect(getActiveModule(f.db, "consultoria")!.version).toBe(1);
+    expect((await getActiveModule(f.db, "consultoria"))!.version).toBe(1);
   });
 
   it("permite las lecturas (list/get/preview/phase_status)", async () => {
@@ -476,8 +476,8 @@ describe("modules.export", () => {
     const parsed = parseModuleSeed(res.file);
     expect(parsed.slug).toBe("consultoria");
     expect(parsed.version).toBe(1);
-    expect(parsed.blueprintHash).toBe(getActiveModule(f.db, "consultoria")!.blueprintHash);
-    expect(parsed.bodyMd).toBe(getActiveModule(f.db, "consultoria")!.bodyMd.trim());
+    expect(parsed.blueprintHash).toBe((await getActiveModule(f.db, "consultoria"))!.blueprintHash);
+    expect(parsed.bodyMd).toBe((await getActiveModule(f.db, "consultoria"))!.bodyMd.trim());
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -1,6 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { events } from "../schema.js";
 import type { NewPersistedEvent, PersistedEvent } from "../types.js";
 
@@ -11,7 +11,7 @@ import type { NewPersistedEvent, PersistedEvent } from "../types.js";
  * el unique(topic, seq) lo garantiza incluso ante errores de lógica).
  */
 export function appendEvent(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewPersistedEvent, "id" | "createdAt" | "seq"> & { id?: string },
 ): PersistedEvent {
   const insert = db.$client.prepare(
@@ -37,7 +37,7 @@ export function appendEvent(
 
 /** Relleno de huecos al reconectar: eventos de un topic con seq > sinceSeq. */
 export function listEventsSince(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   topic: string,
   sinceSeq = 0,
   limit = 500,
@@ -51,7 +51,7 @@ export function listEventsSince(
     .all();
 }
 
-export function lastSeq(db: AgentosDb, topic: string): number {
+export function lastSeq(db: AgentosSqliteDb, topic: string): number {
   const row = db.$client
     .prepare(`SELECT coalesce(max(seq), 0) AS s FROM events WHERE topic = ?`)
     .get(topic) as { s: number };

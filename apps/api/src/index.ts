@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   app.log.info(
     {
       recovery: ctx.recovery,
-      killSwitch: ctx.engine.isKillSwitchActive(),
+      killSwitch: await ctx.engine.isKillSwitchActive(),
     },
     `AgentOS API escuchando en http://${host}:${port}`,
   );

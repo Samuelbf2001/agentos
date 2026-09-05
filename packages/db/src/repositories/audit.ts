@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { auditLog } from "../schema.js";
 import type { AuditEntry, NewAuditEntry } from "../types.js";
 
@@ -10,7 +10,7 @@ import type { AuditEntry, NewAuditEntry } from "../types.js";
  * No existe update ni delete de auditoría en ninguna capa.
  */
 export function appendAudit(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewAuditEntry, "id" | "createdAt"> & { id?: string },
 ): AuditEntry {
   const row: NewAuditEntry = { ...input, id: input.id ?? newId(), createdAt: nowMs() };
@@ -19,7 +19,7 @@ export function appendAudit(
 }
 
 export function queryAudit(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: {
     entityType?: string;
     entityId?: string;
@@ -40,7 +40,7 @@ export function queryAudit(
   return q.orderBy(desc(auditLog.createdAt)).limit(filter.limit ?? 100).all();
 }
 
-export function getAuditEntry(db: AgentosDb, id: string): AuditEntry | undefined {
+export function getAuditEntry(db: AgentosSqliteDb, id: string): AuditEntry | undefined {
   return db.select().from(auditLog).where(eq(auditLog.id, id)).get();
 }
 
@@ -51,7 +51,7 @@ export function getAuditEntry(db: AgentosDb, id: string): AuditEntry | undefined
  * mutación ya ocurrió — se devuelve la entrada para recuperar la entidad.
  */
 export function findAuditByIdempotencyKey(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   action: string,
   idempotencyKey: string,
 ): AuditEntry | undefined {

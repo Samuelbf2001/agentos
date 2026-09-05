@@ -5,6 +5,7 @@
 import postgres, { type Sql } from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as pgSchema from "./schema-pg.js";
+import { markPgDb } from "../facade.js";
 
 export type AgentosPgDb = PostgresJsDatabase<typeof pgSchema> & { $client: Sql };
 
@@ -51,7 +52,8 @@ export function openPgDb(url?: string, opts: OpenPgOptions = {}): AgentosPgDb {
     // epoch ms viaja como bigint; drizzle (mode:"number") lo convierte.
     onnotice: () => {},
   });
-  return drizzle(client, { schema: pgSchema }) as AgentosPgDb;
+  // La marca es lo que permite a la fachada reconocer el handle como Postgres.
+  return markPgDb(drizzle(client, { schema: pgSchema }) as AgentosPgDb);
 }
 
 export async function closePgDb(db: AgentosPgDb): Promise<void> {

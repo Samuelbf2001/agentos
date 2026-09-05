@@ -1,5 +1,5 @@
 /** Espejo Postgres de src/repositories/knowledge.ts — misma superficie, asíncrona (§NFR-9). */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { newId, nowMs, type KnowledgeKind } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
 import { knowledgeDocs } from "../schema-pg.js";
@@ -93,4 +93,18 @@ export async function semanticSearchDocs(
   opts: SemanticSearchOptions = {},
 ): Promise<KnowledgeSemanticResult> {
   return knowledgeSemanticSearch(db, query, k, opts);
+}
+
+/** Conteo de docs del Context Hub (cierre de fase — CA-M3.1). */
+export async function countDocs(
+  db: AgentosPgDb,
+  filter: { orgId?: string; projectId?: string; kind?: KnowledgeKind } = {},
+): Promise<number> {
+  const conds = [];
+  if (filter.orgId) conds.push(eq(knowledgeDocs.orgId, filter.orgId));
+  if (filter.projectId) conds.push(eq(knowledgeDocs.projectId, filter.projectId));
+  if (filter.kind) conds.push(eq(knowledgeDocs.kind, filter.kind));
+  const base = db.select({ n: sql<number>`count(*)::int` }).from(knowledgeDocs);
+  const [row] = await (conds.length > 0 ? base.where(and(...conds)) : base);
+  return Number(row?.n ?? 0);
 }

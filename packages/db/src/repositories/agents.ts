@@ -1,13 +1,13 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { errors, newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { agents, promptVersions } from "../schema.js";
 import type { Agent, NewAgent, NewPromptVersion, PromptVersion } from "../types.js";
 
 // ── Agentes ─────────────────────────────────────────────────────────────────
 
 export function createAgent(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewAgent, "id" | "createdAt" | "updatedAt" | "version"> & { id?: string },
 ): Agent {
   const now = nowMs();
@@ -16,21 +16,21 @@ export function createAgent(
   return getAgent(db, row.id!)!;
 }
 
-export function getAgent(db: AgentosDb, id: string): Agent | undefined {
+export function getAgent(db: AgentosSqliteDb, id: string): Agent | undefined {
   return db.select().from(agents).where(eq(agents.id, id)).get();
 }
 
-export function getAgentBySlug(db: AgentosDb, slug: string): Agent | undefined {
+export function getAgentBySlug(db: AgentosSqliteDb, slug: string): Agent | undefined {
   return db.select().from(agents).where(eq(agents.slug, slug)).get();
 }
 
-export function listAgents(db: AgentosDb): Agent[] {
+export function listAgents(db: AgentosSqliteDb): Agent[] {
   return db.select().from(agents).all();
 }
 
 /** Actualización con optimistic locking (columna `version` de ARCHITECTURE §5). */
 export function updateAgent(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Omit<Agent, "id" | "createdAt" | "version">>,
   expectedVersion: number,
@@ -53,7 +53,7 @@ export function updateAgent(
  * no cambió, no toca la fila (respeta ediciones en caliente).
  */
 export function upsertAgentFromSeed(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewAgent, "id" | "createdAt" | "updatedAt" | "version">,
 ): { agent: Agent; created: boolean; seedChanged: boolean } {
   const existing = getAgentBySlug(db, input.slug);
@@ -70,7 +70,7 @@ export function upsertAgentFromSeed(
 // ── Versiones de prompt (editar crea versión, nunca sobrescribe) ────────────
 
 export function createPromptVersion(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewPromptVersion, "id" | "createdAt" | "version"> & {
     id?: string;
     activate?: boolean;
@@ -98,17 +98,17 @@ export function createPromptVersion(
   return getPromptVersion(db, row.id!)!;
 }
 
-export function getPromptVersion(db: AgentosDb, id: string): PromptVersion | undefined {
+export function getPromptVersion(db: AgentosSqliteDb, id: string): PromptVersion | undefined {
   return db.select().from(promptVersions).where(eq(promptVersions.id, id)).get();
 }
 
-export function getActivePrompt(db: AgentosDb, agentId: string): PromptVersion | undefined {
+export function getActivePrompt(db: AgentosSqliteDb, agentId: string): PromptVersion | undefined {
   const agent = getAgent(db, agentId);
   if (!agent?.activePromptVersionId) return undefined;
   return getPromptVersion(db, agent.activePromptVersionId);
 }
 
-export function listPromptVersions(db: AgentosDb, agentId: string): PromptVersion[] {
+export function listPromptVersions(db: AgentosSqliteDb, agentId: string): PromptVersion[] {
   return db
     .select()
     .from(promptVersions)
@@ -118,7 +118,7 @@ export function listPromptVersions(db: AgentosDb, agentId: string): PromptVersio
 }
 
 /** Rollback = activar una versión anterior (jamás se borra ni sobrescribe). */
-export function activatePromptVersion(db: AgentosDb, agentId: string, versionId: string): Agent {
+export function activatePromptVersion(db: AgentosSqliteDb, agentId: string, versionId: string): Agent {
   const agent = getAgent(db, agentId);
   if (!agent) throw errors.notFound("agent", agentId);
   const pv = getPromptVersion(db, versionId);

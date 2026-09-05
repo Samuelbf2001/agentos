@@ -19,9 +19,9 @@ interface OrgResult {
 
 describe("agentos.agents.set_manager", () => {
   it("fija el manager de un agente y reporta la salud de la cadena resultante", async () => {
-    const f = adminFixture();
-    const clara = getAgentBySlug(f.db, "clara")!;
-    const sam = getAgentBySlug(f.db, "sam")!;
+    const f = await adminFixture();
+    const clara = (await getAgentBySlug(f.db, "clara"))!;
+    const sam = (await getAgentBySlug(f.db, "sam"))!;
     const res = (await f.call("agentos.agents.set_manager", {
       agent: "clara",
       manager: "sam",
@@ -29,12 +29,12 @@ describe("agentos.agents.set_manager", () => {
     })) as SetManagerResult;
     expect(res.agent.reportsTo).toBe(sam.id); // clara → sam → alex
     expect(res.chain_health.status).toBe("healthy");
-    expect(getAgentBySlug(f.db, "clara")!.reportsTo).toBe(sam.id);
+    expect((await getAgentBySlug(f.db, "clara"))!.reportsTo).toBe(sam.id);
   });
 
   it("null hace al agente raíz", async () => {
-    const f = adminFixture();
-    const sam = getAgentBySlug(f.db, "sam")!;
+    const f = await adminFixture();
+    const sam = (await getAgentBySlug(f.db, "sam"))!;
     const res = (await f.call("agentos.agents.set_manager", {
       agent: "sam",
       manager: null,
@@ -44,9 +44,9 @@ describe("agentos.agents.set_manager", () => {
   });
 
   it("rechaza un ciclo con agent_not_assignable (reason=cycle) sin escribir", async () => {
-    const f = adminFixture();
+    const f = await adminFixture();
     // sam ya reporta a alex (seed). Poner a alex bajo sam cerraría el ciclo.
-    const alex = getAgentBySlug(f.db, "alex")!;
+    const alex = (await getAgentBySlug(f.db, "alex"))!;
     await expect(
       f.call("agentos.agents.set_manager", {
         agent: "alex",
@@ -55,11 +55,11 @@ describe("agentos.agents.set_manager", () => {
       }),
     ).rejects.toMatchObject({ code: ErrorCodes.AGENT_NOT_ASSIGNABLE });
     // Fail-closed: alex sigue siendo raíz.
-    expect(getAgentBySlug(f.db, "alex")!.reportsTo).toBeNull();
+    expect((await getAgentBySlug(f.db, "alex"))!.reportsTo).toBeNull();
   });
 
   it("exige expected_version (conflicto → version_conflict)", async () => {
-    const f = adminFixture();
+    const f = await adminFixture();
     await expect(
       f.call("agentos.agents.set_manager", {
         agent: "clara",
@@ -70,8 +70,8 @@ describe("agentos.agents.set_manager", () => {
   });
 
   it("perfil ro rechaza la mutación", async () => {
-    const f = adminFixture();
-    const clara = getAgentBySlug(f.db, "clara")!;
+    const f = await adminFixture();
+    const clara = (await getAgentBySlug(f.db, "clara"))!;
     await expect(
       f.callRo("agentos.agents.set_manager", {
         agent: "clara",
@@ -84,7 +84,7 @@ describe("agentos.agents.set_manager", () => {
 
 describe("agentos.agents.org", () => {
   it("devuelve el bosque (Alex y Quinn raíces) con la salud de cada cadena", async () => {
-    const f = adminFixture();
+    const f = await adminFixture();
     const org = (await f.call("agentos.agents.org")) as OrgResult;
     const roots = org.tree.map((n) => n.agent.slug);
     expect(roots).toContain("alex");
@@ -92,7 +92,7 @@ describe("agentos.agents.org", () => {
     // Todas las cadenas nacen sanas del seed.
     expect(org.health.every((h) => h.chain.status === "healthy")).toBe(true);
     // Pausar a Alex rompe la cadena de sus reports por cálculo.
-    const alex = getAgentBySlug(f.db, "alex")!;
+    const alex = (await getAgentBySlug(f.db, "alex"))!;
     await f.call("agentos.agents.set_status", {
       agent: "alex",
       status: "paused",

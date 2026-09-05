@@ -6,8 +6,10 @@
  *   ping/pong. Las ACCIONES van por REST — el WS es optimización, nunca fuente
  *   de verdad.
  * - subscribe con since_seq sirve el hueco con getSince del bus (ring buffer o
- *   DB) y sigue en vivo sin perder ni duplicar seq (todo el handler es síncrono
- *   sobre el bus mono-proceso).
+ *   DB) y sigue en vivo sin perder ni duplicar seq. Leer el hueco es ASÍNCRONO
+ *   (la DB manda), así que el orden es: suscribirse PRIMERO a un buffer en
+ *   memoria, leer el hueco, y volcar el buffer deduplicando por seq — nada
+ *   publicado durante la lectura se pierde ni se entrega dos veces.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
@@ -51,7 +53,7 @@ export function registerWs(app: FastifyInstance, ctx: ApiContext): void {
       });
     };
 
-    function subscribe(topic: string, sinceSeq: number | undefined): void {
+    async function subscribe(topic: string, sinceSeq: number | undefined): Promise<void> {
       if (!isValidTopic(topic)) {
         send({ type: "error", code: "invalid_topic", topic });
         return;
@@ -59,23 +61,39 @@ export function registerWs(app: FastifyInstance, ctx: ApiContext): void {
       subs.get(topic)?.unsubscribe();
       subs.delete(topic);
 
-      // Sin since_seq: solo en vivo desde el último seq persistido.
-      let lastSent = sinceSeq ?? ctx.bus.lastSeq(topic);
-
-      // 1) Hueco primero (síncrono: nada puede intercalarse en un solo proceso).
-      if (sinceSeq !== undefined) {
-        for (const event of ctx.bus.getSince(topic, sinceSeq)) {
-          sendEvent(event);
-          lastSent = event.seq;
-        }
-      }
-      // 2) En vivo, filtrando cualquier seq ya servido.
-      const unsubscribe = ctx.bus.subscribe(topic, (event) => {
-        if (event.seq <= lastSent) return;
+      let lastSent = 0;
+      const deliver = (event: PersistedEvent): void => {
+        if (event.seq <= lastSent) return; // dedupe por seq
         lastSent = event.seq;
         sendEvent(event);
+      };
+
+      // 1) SUSCRIPCIÓN PRIMERO, a un buffer en memoria: leer el hueco cede el
+      //    hilo (lastSeq/getSince van a la DB) y lo que se publique mientras
+      //    tanto se perdía si nos suscribíamos después.
+      let live = false;
+      const pending: PersistedEvent[] = [];
+      const unsubscribe = ctx.bus.subscribe(topic, (event) => {
+        if (live) deliver(event);
+        else pending.push(event);
       });
-      subs.set(topic, { unsubscribe });
+      const sub: Subscription = { unsubscribe };
+      subs.set(topic, sub);
+
+      // 2) Hueco. Sin since_seq: solo en vivo desde el último seq persistido.
+      lastSent = sinceSeq ?? (await ctx.bus.lastSeq(topic));
+      if (sinceSeq !== undefined) {
+        for (const event of await ctx.bus.getSince(topic, sinceSeq)) deliver(event);
+      }
+
+      // La suscripción pudo reemplazarse (otro subscribe) o cerrarse el socket
+      // mientras leíamos: en ese caso este volcado ya no es nuestro.
+      if (subs.get(topic) !== sub) return;
+
+      // 3) Volcado del buffer: `deliver` descarta lo que el hueco ya sirvió.
+      for (const event of pending) deliver(event);
+      pending.length = 0;
+      live = true;
       send({ type: "subscribed", topic, last_seq: lastSent });
     }
 
@@ -93,9 +111,13 @@ export function registerWs(app: FastifyInstance, ctx: ApiContext): void {
             send({ type: "error", code: "missing_topic" });
             return;
           }
+          const topic = msg.topic;
           const since =
             typeof msg.since_seq === "number" && msg.since_seq >= 0 ? msg.since_seq : undefined;
-          subscribe(msg.topic, since);
+          void subscribe(topic, since).catch((err: unknown) => {
+            app.log.error({ err, topic }, "ws: subscribe falló");
+            send({ type: "error", code: "subscribe_failed", topic });
+          });
           return;
         }
         case "unsubscribe": {

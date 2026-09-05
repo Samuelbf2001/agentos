@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { describe, expect, it } from "vitest";
-import { openDb, type AgentosDb } from "../src/client.js";
+import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 
 const MIGRATIONS_FOLDER = path.resolve(
@@ -19,7 +19,7 @@ const NOTION_LINEAGE_TABLES = [
   "notion_import_quarantine",
 ];
 
-function tableNames(db: AgentosDb): string[] {
+function tableNames(db: AgentosSqliteDb): string[] {
   return (
     db.$client
       .prepare(`SELECT name FROM sqlite_master WHERE type='table'`)

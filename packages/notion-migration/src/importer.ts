@@ -42,6 +42,7 @@ import {
   updateTask,
   upsertNotionIdentityMapping,
   upsertNotionImportLink,
+  withTransaction,
   type AgentosDb,
   type NotionMigrationRun,
   type NotionPageArchive,
@@ -642,35 +643,63 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
 
       const targetProjectId = projectId ?? (await ensureInboxProject());
 
+      // TODO lo que NO es base de datos se resuelve ANTES de abrir la
+      // transacción: el snapshot ya se leyó de disco al principio del bucle y
+      // el hash es cálculo puro. Dentro del cuerpo transaccional no queda ni
+      // red, ni disco, ni temporizadores — que es justo lo que exige la guarda
+      // anti-cesión de `withTransaction` en el motor SQLite.
       // I2: no duplicar el archivo si el contenido no cambió desde la última
       // corrida que archivó esta misma página.
       const payload = archivePayload(snapshot);
       const payloadHash = sha256(payload);
-      const reusableArchive = await getLatestNotionPageArchive(db, "task", notionPageId);
-      const archive: NotionPageArchive =
-        reusableArchive && reusableArchive.payloadHash === payloadHash
-          ? reusableArchive
-          : await createNotionPageArchive(db, {
-              migrationRunId: runId,
-              sourceKind: "task",
-              notionPageId,
-              originalUrl: mapped.originalUrl,
-              rawPageUri: snapshot.uris.page,
-              rawBlocksUri: snapshot.uris.blocks,
-              rawCommentsUri: snapshot.uris.comments,
-              rawFilesUri: snapshot.uris.files,
-              payload,
-              payloadHash,
-              capturedAt,
-            });
-
-      let taskId: string;
       const isUpdate = current !== undefined;
-      if (current) {
-        await updateTask(
-          db,
-          current.id,
-          {
+      // La clave de orden se calcula fuera: es una lectura del tablero más
+      // aritmética, y así el cuerpo transaccional solo escribe.
+      const orderKey = current ? null : await orderKeys.next(targetProjectId, mapped.status);
+
+      // Escritura ATÓMICA de esta tarea: archivo + tarea + responsables +
+      // artefacto + evento + enlace de linaje. Si algo falla a mitad, el
+      // ROLLBACK evita dejar media tarea importada con un enlace de linaje que
+      // mentiría en la siguiente corrida. El catch de abajo sigue registrando
+      // la cuarentena y contando el fallo (B2).
+      const taskId = await withTransaction(db, async (tx) => {
+        const reusableArchive = await getLatestNotionPageArchive(tx, "task", notionPageId);
+        const archive: NotionPageArchive =
+          reusableArchive && reusableArchive.payloadHash === payloadHash
+            ? reusableArchive
+            : await createNotionPageArchive(tx, {
+                migrationRunId: runId,
+                sourceKind: "task",
+                notionPageId,
+                originalUrl: mapped.originalUrl,
+                rawPageUri: snapshot.uris.page,
+                rawBlocksUri: snapshot.uris.blocks,
+                rawCommentsUri: snapshot.uris.comments,
+                rawFilesUri: snapshot.uris.files,
+                payload,
+                payloadHash,
+                capturedAt,
+              });
+
+        let writtenId: string;
+        if (current) {
+          await updateTask(
+            tx,
+            current.id,
+            {
+              projectId: targetProjectId,
+              title: mapped.title,
+              status: mapped.status,
+              priority: mapped.priority,
+              stage: mapped.stage,
+              blockedReason: mapped.blockedReason,
+              dueAt: mapped.dueAt,
+            },
+            current.version,
+          );
+          writtenId = current.id;
+        } else {
+          const created = await createTask(tx, {
             projectId: targetProjectId,
             title: mapped.title,
             status: mapped.status,
@@ -678,68 +707,60 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
             stage: mapped.stage,
             blockedReason: mapped.blockedReason,
             dueAt: mapped.dueAt,
-          },
-          current.version,
-        );
-        taskId = current.id;
-        report.imported.tasks_updated += 1;
-      } else {
-        const created = await createTask(db, {
-          projectId: targetProjectId,
-          title: mapped.title,
-          status: mapped.status,
-          priority: mapped.priority,
-          stage: mapped.stage,
-          blockedReason: mapped.blockedReason,
-          dueAt: mapped.dueAt,
-          dependsOn: [],
-          orderKey: await orderKeys.next(targetProjectId, mapped.status),
-        });
-        taskId = created.id;
-        report.imported.tasks_created += 1;
-      }
+            dependsOn: [],
+            orderKey: orderKey!,
+          });
+          writtenId = created.id;
+        }
 
-      if (personIds.length > 0) {
-        const beforeAssign = await getTask(db, taskId);
-        await replaceTaskAssignees(
-          db,
-          taskId,
-          { personIds, primaryPersonId: personIds[0]!, assignedBy: actor },
-          beforeAssign!.version,
-        );
-        report.identities.assignments_written += personIds.length;
-      }
+        if (personIds.length > 0) {
+          const beforeAssign = await getTask(tx, writtenId);
+          await replaceTaskAssignees(
+            tx,
+            writtenId,
+            { personIds, primaryPersonId: personIds[0]!, assignedBy: actor },
+            beforeAssign!.version,
+          );
+        }
 
-      // B3: el motor del tablero exige un artefacto para REVIEW/DONE (regla
-      // anti-teatro) — una tarea importada ya en esos estados debe poder
-      // moverse sin tropezar con `missing_artifact`.
-      if (mapped.status === "REVIEW" || mapped.status === "DONE") {
-        await attachArtifact(db, {
-          taskId,
-          kind: "notion_archive",
-          title: "Página de Notion",
-          meta: { archiveId: archive.id, notionPageId, originalUrl: mapped.originalUrl },
+        // B3: el motor del tablero exige un artefacto para REVIEW/DONE (regla
+        // anti-teatro) — una tarea importada ya en esos estados debe poder
+        // moverse sin tropezar con `missing_artifact`.
+        if (mapped.status === "REVIEW" || mapped.status === "DONE") {
+          await attachArtifact(tx, {
+            taskId: writtenId,
+            kind: "notion_archive",
+            title: "Página de Notion",
+            meta: { archiveId: archive.id, notionPageId, originalUrl: mapped.originalUrl },
+          });
+        }
+        // B3: toda tarea importada deja constancia en su línea de tiempo — no
+        // nace vacía.
+        await appendTaskEvent(tx, {
+          taskId: writtenId,
+          kind: "imported",
+          actor: "system:notion-import",
+          payload: { notionPageId, migrationRunId: runId },
         });
-      }
-      // B3: toda tarea importada deja constancia en su línea de tiempo — no
-      // nace vacía.
-      await appendTaskEvent(db, {
-        taskId,
-        kind: "imported",
-        actor: "system:notion-import",
-        payload: { notionPageId, migrationRunId: runId },
+
+        await upsertNotionImportLink(tx, {
+          migrationRunId: runId,
+          sourceKind: "task",
+          notionPageId,
+          agentosObjectKind: "task",
+          agentosObjectId: writtenId,
+          archiveId: archive.id,
+          importStatus: isUpdate ? "updated" : "imported",
+          sourceLastEditedAt: mapped.lastEditedAt,
+        });
+        return writtenId;
       });
 
-      await upsertNotionImportLink(db, {
-        migrationRunId: runId,
-        sourceKind: "task",
-        notionPageId,
-        agentosObjectKind: "task",
-        agentosObjectId: taskId,
-        archiveId: archive.id,
-        importStatus: isUpdate ? "updated" : "imported",
-        sourceLastEditedAt: mapped.lastEditedAt,
-      });
+      // Los contadores se mueven DESPUÉS del COMMIT: si la transacción
+      // revierte, el informe no cuenta una tarea que no quedó escrita.
+      if (isUpdate) report.imported.tasks_updated += 1;
+      else report.imported.tasks_created += 1;
+      if (personIds.length > 0) report.identities.assignments_written += personIds.length;
       taskIdByPage.set(normalizeNotionId(notionPageId), taskId);
     } catch (error) {
       quarantine.add({

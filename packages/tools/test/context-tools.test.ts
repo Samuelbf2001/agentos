@@ -26,7 +26,7 @@ function okResult<T>(res: unknown): T {
 
 describe("board.get (fix H2)", () => {
   it("project_id inexistente → not_found, no un tablero vacío OK", async () => {
-    const f = toolsFixture();
+    const f = await toolsFixture();
     expect(
       await codeOf(() => f.runtime.execute(f.ctxFor(f.alex), "board.get", { project_id: "assessment-acme" })),
     ).toBe(ErrorCodes.NOT_FOUND);
@@ -40,8 +40,8 @@ describe("board.get (fix H2)", () => {
 
 describe("knowledge.search + knowledge.get (fix H3)", () => {
   it("search devuelve snippet con contexto del body; get devuelve el doc completo", async () => {
-    const f = toolsFixture();
-    const doc = createDoc(f.db, {
+    const f = await toolsFixture();
+    const doc = await createDoc(f.db, {
       projectId: f.project.id,
       kind: "interview",
       title: "Entrevista: Jefe de Producción",
@@ -67,7 +67,7 @@ describe("knowledge.search + knowledge.get (fix H3)", () => {
   });
 
   it("knowledge.get con doc inexistente → not_found", async () => {
-    const f = toolsFixture();
+    const f = await toolsFixture();
     expect(
       await codeOf(() => f.runtime.execute(f.ctxFor(f.alex), "knowledge.get", { doc_id: "no-existe" })),
     ).toBe(ErrorCodes.NOT_FOUND);
@@ -76,8 +76,8 @@ describe("knowledge.search + knowledge.get (fix H3)", () => {
 
 describe("processes.upsert con provenance (fix H8)", () => {
   it("acepta source_doc_ids y los persiste", async () => {
-    const f = toolsFixture();
-    const doc = createDoc(f.db, {
+    const f = await toolsFixture();
+    const doc = await createDoc(f.db, {
       projectId: f.project.id,
       kind: "interview",
       title: "Entrevista producción",
@@ -93,11 +93,11 @@ describe("processes.upsert con provenance (fix H8)", () => {
     );
     expect(res.sourceDocIds).toEqual([doc.id]);
     expect(res.warning).toBeUndefined();
-    expect(getProcess(f.db, res.id)?.sourceDocIds).toEqual([doc.id]);
+    expect((await getProcess(f.db, res.id))?.sourceDocIds).toEqual([doc.id]);
   });
 
   it("un as_is sin fuentes se acepta pero devuelve warning de provenance", async () => {
-    const f = toolsFixture();
+    const f = await toolsFixture();
     const res = okResult<{ id: string; warning?: string }>(
       await f.runtime.execute(f.ctxFor(f.alex), "processes.upsert", {
         org_id: f.project.orgId,
@@ -107,7 +107,7 @@ describe("processes.upsert con provenance (fix H8)", () => {
     );
     expect(res.warning).toContain("source_doc_ids");
     // link_source cierra el hueco.
-    const doc = createDoc(f.db, { kind: "interview", title: "Entrevista ventas", bodyMd: "Ciclo de venta." });
+    const doc = await createDoc(f.db, { kind: "interview", title: "Entrevista ventas", bodyMd: "Ciclo de venta." });
     const linked = okResult<{ sourceDocIds: string[] | null }>(
       await f.runtime.execute(f.ctxFor(f.alex), "processes.link_source", {
         process_id: res.id,

@@ -15,7 +15,7 @@
  */
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import {
   notionIdentityMappings,
   notionImportLinks,
@@ -40,7 +40,7 @@ import type {
 // ── Corridas ────────────────────────────────────────────────────────────────
 
 export function createNotionMigrationRun(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewNotionMigrationRun, "id" | "createdAt" | "startedAt"> & {
     id?: string;
     startedAt?: number;
@@ -57,11 +57,11 @@ export function createNotionMigrationRun(
   return getNotionMigrationRun(db, row.id!)!;
 }
 
-export function getNotionMigrationRun(db: AgentosDb, id: string): NotionMigrationRun | undefined {
+export function getNotionMigrationRun(db: AgentosSqliteDb, id: string): NotionMigrationRun | undefined {
   return db.select().from(notionMigrationRuns).where(eq(notionMigrationRuns.id, id)).get();
 }
 
-export function listNotionMigrationRuns(db: AgentosDb): NotionMigrationRun[] {
+export function listNotionMigrationRuns(db: AgentosSqliteDb): NotionMigrationRun[] {
   return db.select().from(notionMigrationRuns).orderBy(desc(notionMigrationRuns.startedAt)).all();
 }
 
@@ -70,7 +70,7 @@ export function listNotionMigrationRuns(db: AgentosDb): NotionMigrationRun[] {
  * sellan estado, informe y hora final una vez, al terminar.
  */
 export function finishNotionMigrationRun(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: { status: NotionMigrationRun["status"]; report?: Record<string, unknown> },
 ): NotionMigrationRun {
@@ -84,7 +84,7 @@ export function finishNotionMigrationRun(
 // ── Archivo histórico ───────────────────────────────────────────────────────
 
 export function createNotionPageArchive(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewNotionPageArchive, "id" | "createdAt"> & { id?: string },
 ): NotionPageArchive {
   const row: NewNotionPageArchive = { ...input, id: input.id ?? newId(), createdAt: nowMs() };
@@ -92,13 +92,13 @@ export function createNotionPageArchive(
   return db.select().from(notionPageArchives).where(eq(notionPageArchives.id, row.id!)).get()!;
 }
 
-export function getNotionPageArchive(db: AgentosDb, id: string): NotionPageArchive | undefined {
+export function getNotionPageArchive(db: AgentosSqliteDb, id: string): NotionPageArchive | undefined {
   return db.select().from(notionPageArchives).where(eq(notionPageArchives.id, id)).get();
 }
 
 /** Último archivo capturado de una página (la corrida más reciente gana). */
 export function getLatestNotionPageArchive(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   sourceKind: NotionSourceKind,
   notionPageId: string,
 ): NotionPageArchive | undefined {
@@ -118,7 +118,7 @@ export function getLatestNotionPageArchive(
 // ── Enlaces idempotentes ────────────────────────────────────────────────────
 
 export function findNotionImportLink(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   sourceKind: NotionImportLink["sourceKind"],
   notionPageId: string,
 ): NotionImportLink | undefined {
@@ -135,7 +135,7 @@ export function findNotionImportLink(
 }
 
 export function findNotionImportLinkByObject(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   objectKind: NotionImportLink["agentosObjectKind"],
   objectId: string,
 ): NotionImportLink | undefined {
@@ -156,7 +156,7 @@ export function findNotionImportLinkByObject(
  * existente (y respeta el `agentos_object_id` ya emitido); sin él, inserta.
  */
 export function upsertNotionImportLink(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewNotionImportLink, "id" | "createdAt" | "importedAt"> & { importedAt?: number },
 ): { link: NotionImportLink; created: boolean } {
   const now = nowMs();
@@ -185,7 +185,7 @@ export function upsertNotionImportLink(
 }
 
 export function listNotionImportLinks(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: { migrationRunId?: string; sourceKind?: NotionImportLink["sourceKind"] } = {},
 ): NotionImportLink[] {
   const conds = [];
@@ -197,7 +197,7 @@ export function listNotionImportLinks(
 
 /** Enlaces de varias páginas de una vez (segunda pasada de relaciones). */
 export function listNotionImportLinksByPages(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   sourceKind: NotionImportLink["sourceKind"],
   notionPageIds: readonly string[],
 ): NotionImportLink[] {
@@ -217,7 +217,7 @@ export function listNotionImportLinksByPages(
 // ── Identidades ─────────────────────────────────────────────────────────────
 
 export function findNotionIdentityMapping(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   notionPersonId: string,
 ): NotionIdentityMapping | undefined {
   return db
@@ -232,7 +232,7 @@ export function findNotionIdentityMapping(
  * o `admin_decision`; cualquier otro caso entra como `unresolved`.
  */
 export function upsertNotionIdentityMapping(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewNotionIdentityMapping, "id" | "createdAt">,
 ): NotionIdentityMapping {
   const existing = findNotionIdentityMapping(db, input.notionPersonId);
@@ -257,7 +257,7 @@ export function upsertNotionIdentityMapping(
   return findNotionIdentityMapping(db, input.notionPersonId)!;
 }
 
-export function listNotionIdentityMappings(db: AgentosDb): NotionIdentityMapping[] {
+export function listNotionIdentityMappings(db: AgentosSqliteDb): NotionIdentityMapping[] {
   return db.select().from(notionIdentityMappings).all();
 }
 
@@ -265,7 +265,7 @@ export function listNotionIdentityMappings(db: AgentosDb): NotionIdentityMapping
 
 /** Anexado idempotente dentro de una corrida: la misma excepción no se duplica. */
 export function recordNotionQuarantine(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewNotionImportQuarantine, "id" | "createdAt">,
 ): NotionImportQuarantine {
   // La identidad de una excepción incluye `raw_reference`: dos responsables sin
@@ -292,7 +292,7 @@ export function recordNotionQuarantine(
 }
 
 export function listNotionQuarantine(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: {
     migrationRunId?: string;
     sourceKind?: NotionImportQuarantine["sourceKind"];
@@ -323,7 +323,7 @@ export interface NotionOriginView {
  * corrida y excepciones. Es la fuente de `GET /api/{tasks,projects}/:id/notion-origin`.
  */
 export function getNotionOrigin(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   objectKind: NotionImportLink["agentosObjectKind"],
   objectId: string,
 ): NotionOriginView | undefined {

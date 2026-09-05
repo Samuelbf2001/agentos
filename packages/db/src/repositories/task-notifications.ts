@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, lte, notInArray, or } from "drizzle-orm";
 import { errors, newId, nowMs } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { people, projects, taskNotificationLog, tasks } from "../schema.js";
 import type {
   NewTaskNotificationLog,
@@ -45,7 +45,7 @@ function defaultDedupeKey(input: CreateTaskNotificationInput, scheduledAt: numbe
     : `${input.taskId}:${input.personId}:assignment:${scheduledAt}`;
 }
 
-function validateNotificationTarget(db: AgentosDb, taskId: string, personId: string): void {
+function validateNotificationTarget(db: AgentosSqliteDb, taskId: string, personId: string): void {
   const row = db
     .select({ projectOrgId: projects.orgId, personOrgId: people.orgId, personIsInternal: people.isInternal })
     .from(tasks)
@@ -68,12 +68,12 @@ function validateNotificationTarget(db: AgentosDb, taskId: string, personId: str
   }
 }
 
-export function getTaskNotificationLog(db: AgentosDb, id: string): TaskNotificationLog | undefined {
+export function getTaskNotificationLog(db: AgentosSqliteDb, id: string): TaskNotificationLog | undefined {
   return db.select().from(taskNotificationLog).where(eq(taskNotificationLog.id, id)).get();
 }
 
 export function getTaskNotificationLogByDedupeKey(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   dedupeKey: string,
 ): TaskNotificationLog | undefined {
   return db.select().from(taskNotificationLog).where(eq(taskNotificationLog.dedupeKey, dedupeKey)).get();
@@ -84,7 +84,7 @@ export const getNotificationLogByDedupeKey = getTaskNotificationLogByDedupeKey;
 export const getNotificationLog = getTaskNotificationLog;
 
 export function listTaskNotificationLogs(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   filter: ListTaskNotificationsFilter = {},
 ): TaskNotificationLog[] {
   const conds = [];
@@ -110,7 +110,7 @@ export function listTaskNotificationLogs(
 export const listNotificationLogs = listTaskNotificationLogs;
 
 /** Avisos pendientes/reintentables cuyo horario ya llegó. */
-export function listPendingTaskNotifications(db: AgentosDb, at = nowMs()): TaskNotificationLog[] {
+export function listPendingTaskNotifications(db: AgentosSqliteDb, at = nowMs()): TaskNotificationLog[] {
   const ids = db
     .select({ id: taskNotificationLog.id })
     .from(taskNotificationLog)
@@ -134,7 +134,7 @@ export const listDueTaskNotificationLogs = listPendingTaskNotifications;
  * Crea un log idempotente. La unicidad durable de `dedupe_key` es la última
  * defensa frente a dos workers concurrentes; el catch devuelve la fila ganadora.
  */
-export function createTaskNotificationLog(db: AgentosDb, input: CreateTaskNotificationInput): CreateTaskNotificationResult {
+export function createTaskNotificationLog(db: AgentosSqliteDb, input: CreateTaskNotificationInput): CreateTaskNotificationResult {
   validateNotificationTarget(db, input.taskId, input.personId);
   const scheduledAt = input.scheduledAt ?? nowMs();
   const dedupeKey = input.dedupeKey ?? defaultDedupeKey(input, scheduledAt);
@@ -172,7 +172,7 @@ export const createTaskNotification = createTaskNotificationLog;
  * processing; repetir la llamada devuelve false y no vuelve a ejecutar el
  * efecto externo. Un aviso futuro no se reclama antes de `at`.
  */
-export function claimTaskNotificationLog(db: AgentosDb, id: string, at = nowMs()): boolean {
+export function claimTaskNotificationLog(db: AgentosSqliteDb, id: string, at = nowMs()): boolean {
   const result = db
     .update(taskNotificationLog)
     .set({ status: "processing", lastError: null })
@@ -191,7 +191,7 @@ export const claimNotificationLog = claimTaskNotificationLog;
 export const claimTaskNotification = claimTaskNotificationLog;
 
 export function claimTaskNotificationLogByDedupeKey(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   dedupeKey: string,
   at = nowMs(),
 ): boolean {
@@ -200,7 +200,7 @@ export function claimTaskNotificationLogByDedupeKey(
 }
 
 export function markTaskNotificationDelivered(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   deliveredAt = nowMs(),
 ): TaskNotificationLog {
@@ -215,7 +215,7 @@ export function markTaskNotificationDelivered(
 
 /** Actualización genérica para workers que persisten el resultado del envío. */
 export function updateTaskNotificationLog(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Pick<TaskNotificationLog, "status" | "deliveredAt" | "lastError">>,
 ): TaskNotificationLog {
@@ -224,7 +224,7 @@ export function updateTaskNotificationLog(
   return getTaskNotificationLog(db, id)!;
 }
 
-export function markTaskNotificationFailed(db: AgentosDb, id: string, lastError: string): TaskNotificationLog {
+export function markTaskNotificationFailed(db: AgentosSqliteDb, id: string, lastError: string): TaskNotificationLog {
   const result = db
     .update(taskNotificationLog)
     .set({ status: "failed", lastError, deliveredAt: null })
@@ -234,7 +234,7 @@ export function markTaskNotificationFailed(db: AgentosDb, id: string, lastError:
   return getTaskNotificationLog(db, id)!;
 }
 
-export function suppressTaskNotification(db: AgentosDb, id: string, reason: string): TaskNotificationLog {
+export function suppressTaskNotification(db: AgentosSqliteDb, id: string, reason: string): TaskNotificationLog {
   const result = db
     .update(taskNotificationLog)
     .set({ status: "suppressed", lastError: reason, deliveredAt: null })

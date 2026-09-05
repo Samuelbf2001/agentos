@@ -162,7 +162,7 @@ export interface NotificationProcessor {
     beforePrimaryPersonId?: string | null;
   }): Promise<NotificationDispatchResult>;
   processDue(now?: number): Promise<NotificationDispatchResult>;
-  listLogs(taskId?: string): NotificationLogView[];
+  listLogs(taskId?: string): Promise<NotificationLogView[]>;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -260,8 +260,8 @@ export function createEmailDeliveryFromEnv(env: NodeJS.ProcessEnv = process.env)
   };
 }
 
-function asPerson(personId: string, db: AgentosDb): Person | undefined {
-  return getPerson(db, personId);
+async function asPerson(personId: string, db: AgentosDb): Promise<Person | undefined> {
+  return await getPerson(db, personId);
 }
 
 function isTerminal(status: TaskStatus): boolean {
@@ -272,15 +272,15 @@ function normalizeIds(rows: readonly TaskAssigneeView[]): string[] {
   return [...new Set(rows.map((row) => row.personId))];
 }
 
-function listLogs(db: AgentosDb, taskId?: string): NotificationLogView[] {
-  const rows = listTaskNotificationLogs(db, taskId ? { taskId } : {});
+async function listLogs(db: AgentosDb, taskId?: string): Promise<NotificationLogView[]> {
+  const rows = await listTaskNotificationLogs(db, taskId ? { taskId } : {});
   return rows.map(normalizeLog).filter((row): row is NotificationLogView => row !== undefined);
 }
 
-function insertLog(
+async function insertLog(
   db: AgentosDb,
   input: Omit<NotificationLogView, "id" | "deliveredAt" | "createdAt"> & { createdAt?: number },
-): { row: NotificationLogView; inserted: boolean } {
+): Promise<{ row: NotificationLogView; inserted: boolean }> {
   const now = input.createdAt ?? Date.now();
   const payload = {
     taskId: input.taskId,
@@ -292,30 +292,35 @@ function insertLog(
     lastError: input.lastError,
     createdAt: now,
   };
-  const result = createTaskNotificationLog(db, payload);
+  const result = await createTaskNotificationLog(db, payload);
   const normalized = normalizeLog(result.notification);
   if (!normalized) throw new Error("No se pudo leer el log de notificación recién creado");
   return { row: normalized, inserted: result.inserted };
 }
 
-function updateLog(
+async function updateLog(
   db: AgentosDb,
   row: NotificationLogView,
   patch: Pick<NotificationLogView, "status" | "deliveredAt" | "lastError">,
-): NotificationLogView {
+): Promise<NotificationLogView> {
   const updated =
     patch.status === "delivered"
-      ? markTaskNotificationDelivered(db, row.id, patch.deliveredAt ?? Date.now())
+      ? await markTaskNotificationDelivered(db, row.id, patch.deliveredAt ?? Date.now())
       : patch.status === "failed"
-        ? markTaskNotificationFailed(db, row.id, patch.lastError ?? "Error de entrega")
-        : suppressTaskNotification(db, row.id, patch.lastError ?? "Proveedor no configurado");
+        ? await markTaskNotificationFailed(db, row.id, patch.lastError ?? "Error de entrega")
+        : await suppressTaskNotification(db, row.id, patch.lastError ?? "Proveedor no configurado");
   const normalized = normalizeLog(updated);
   if (!normalized) throw new Error("No se pudo actualizar el log de notificación");
   return normalized;
 }
 
-function auditNotification(db: AgentosDb, row: NotificationLogView, actor: string, detail: Record<string, unknown>): void {
-  appendAudit(db, {
+async function auditNotification(
+  db: AgentosDb,
+  row: NotificationLogView,
+  actor: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await appendAudit(db, {
     actor,
     source: actor.startsWith("person:") ? "ui" : "system",
     action: `notification.${row.kind}.${row.status}`,
@@ -367,7 +372,7 @@ export function createNotificationProcessor(options: NotificationProcessorOption
     const result = emptyResult();
     const initialStatus: TaskNotificationStatus = delivery.enabled ? "pending" : "suppressed";
     const initialError = delivery.enabled ? null : noEmailReason(delivery);
-    const inserted = insertLog(options.db, {
+    const inserted = await insertLog(options.db, {
       taskId: task.id,
       personId: person.id,
       kind,
@@ -385,7 +390,10 @@ export function createNotificationProcessor(options: NotificationProcessorOption
         return { result, log: row };
       }
       result.suppressed = 1;
-      auditNotification(options.db, row, actor, { reason: initialError, provider: delivery.provider ?? "off" });
+      await auditNotification(options.db, row, actor, {
+        reason: initialError,
+        provider: delivery.provider ?? "off",
+      });
       result.logs.push(row);
       return { result, log: row };
     }
@@ -394,24 +402,32 @@ export function createNotificationProcessor(options: NotificationProcessorOption
     // segundo worker no puede enviar mientras el primero está en `processing`,
     // y un fallo transitorio conserva la misma dedupe_key en vez de crear otro
     // correo. Los logs delivered/suppressed no vuelven a ejecutarse.
-    if (!claimTaskNotificationLog(options.db, row.id, now())) {
+    if (!(await claimTaskNotificationLog(options.db, row.id, now()))) {
       result.deduped = 1;
       result.skipped = 1;
       result.logs.push(row);
       return { result, log: row };
     }
-    row = normalizeLog(listTaskNotificationLogs(options.db, { taskId: row.taskId }).find((entry) => entry.id === row.id)) ?? row;
+    row =
+      normalizeLog(
+        (await listTaskNotificationLogs(options.db, { taskId: row.taskId })).find(
+          (entry) => entry.id === row.id,
+        ),
+      ) ?? row;
     result.attempted = 1;
     try {
       await delivery.send(message);
-      row = updateLog(options.db, row, { status: "delivered", deliveredAt: now(), lastError: null });
+      row = await updateLog(options.db, row, { status: "delivered", deliveredAt: now(), lastError: null });
       result.delivered = 1;
-      auditNotification(options.db, row, actor, { provider: delivery.provider ?? "configured" });
+      await auditNotification(options.db, row, actor, { provider: delivery.provider ?? "configured" });
     } catch (err) {
       const lastError = err instanceof Error ? err.message : String(err);
-      row = updateLog(options.db, row, { status: "failed", deliveredAt: null, lastError });
+      row = await updateLog(options.db, row, { status: "failed", deliveredAt: null, lastError });
       result.failed = 1;
-      auditNotification(options.db, row, actor, { error: lastError, provider: delivery.provider ?? "configured" });
+      await auditNotification(options.db, row, actor, {
+        error: lastError,
+        provider: delivery.provider ?? "configured",
+      });
     }
     result.logs.push(row);
     return { result, log: row };
@@ -438,7 +454,7 @@ export function createNotificationProcessor(options: NotificationProcessorOption
     );
     const snapshot = `${normalizeIds(input.afterAssignees).sort().join(",")}|primary=${primary ?? ""}`;
     for (const assignment of candidates) {
-      const person = asPerson(assignment.personId, options.db);
+      const person = await asPerson(assignment.personId, options.db);
       if (!person?.email) {
         result.skipped += 1;
         continue;
@@ -466,13 +482,13 @@ export function createNotificationProcessor(options: NotificationProcessorOption
 
   async function processDue(nowAt = now()): Promise<NotificationDispatchResult> {
     const result = emptyResult();
-    const tasks = listTasks(options.db);
+    const tasks = await listTasks(options.db);
     for (const task of tasks) {
       if (isTerminal(task.status) || typeof task.dueAt !== "number") {
         continue;
       }
       if (task.dueAt < nowAt || task.dueAt > nowAt + windowMs) continue;
-      let assignees = listTaskAssignees(options.db, task.id);
+      let assignees = await listTaskAssignees(options.db, task.id);
       if (assignees.length === 0 && task.assigneePersonId) {
         assignees = [
           {
@@ -485,7 +501,7 @@ export function createNotificationProcessor(options: NotificationProcessorOption
         ];
       }
       for (const assignment of assignees) {
-        const person = asPerson(assignment.personId, options.db);
+        const person = await asPerson(assignment.personId, options.db);
         if (!person?.email) {
           result.skipped += 1;
           continue;

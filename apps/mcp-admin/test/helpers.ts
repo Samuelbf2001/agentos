@@ -5,7 +5,7 @@ import {
   openDb,
   runMigrations,
   seed,
-  type AgentosDb,
+  type AgentosSqliteDb,
   type Person,
   type Project,
 } from "@agentos/db";
@@ -14,7 +14,7 @@ import { dispatchAdminTool, type AdminToolDefinition } from "../src/registry.js"
 import { buildAdminToolCatalog } from "../src/server.js";
 
 export interface AdminFixture {
-  db: AgentosDb;
+  db: AgentosSqliteDb;
   catalog: Map<string, AdminToolDefinition>;
   rw: AdminContext;
   ro: AdminContext;
@@ -26,16 +26,16 @@ export interface AdminFixture {
   callRo(name: string, args?: unknown): Promise<unknown>;
 }
 
-export function adminFixture(): AdminFixture {
+export async function adminFixture(): Promise<AdminFixture> {
   const db = openDb(":memory:");
   runMigrations(db);
   // env vacío: determinista (todo agente ai_sdk cae al fallback claude_code).
-  seed(db, { env: {} });
-  const person = getPersonByFullName(db, "Ernesto")!;
-  const project = getProjectByName(db, "Assessment ACME")!;
+  await seed(db, { env: {} });
+  const person = (await getPersonByFullName(db, "Ernesto"))!;
+  const project = (await getProjectByName(db, "Assessment ACME"))!;
   const catalog = buildAdminToolCatalog();
-  const rw = createAdminContext({ db, profile: "rw", personId: person.id, migrate: false });
-  const ro = createAdminContext({ db, profile: "ro", personId: person.id, migrate: false });
+  const rw = await createAdminContext({ db, profile: "rw", personId: person.id, migrate: false });
+  const ro = await createAdminContext({ db, profile: "ro", personId: person.id, migrate: false });
   return {
     db,
     catalog,

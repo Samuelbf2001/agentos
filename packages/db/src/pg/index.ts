@@ -48,5 +48,14 @@ export * from "./repositories/knowledge.js";
 export * from "./repositories/project-sources.js";
 export * from "./repositories/processes.js";
 export * from "./repositories/methodologies.js";
+export * from "./repositories/modules.js";
 export * from "./repositories/config.js";
+export * from "./repositories/stats.js";
 export * from "./repositories/notion-migration.js";
+
+// Registro en la fachada: importar `@agentos/db/pg` es lo que habilita el
+// despacho a Postgres desde `@agentos/db` (ver src/facade.ts). Va al final para
+// que el módulo esté completamente evaluado antes de publicarse.
+import * as self from "./index.js";
+import { registerPgBackend } from "../facade.js";
+registerPgBackend(self);

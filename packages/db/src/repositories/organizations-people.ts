@@ -1,13 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { errors, newId, nowMs, type OrgKind } from "@agentos/shared";
-import type { AgentosDb } from "../client.js";
+import type { AgentosSqliteDb } from "../client.js";
 import { organizations, people } from "../schema.js";
 import type { NewOrganization, NewPerson, Organization, Person } from "../types.js";
 
 // ── Organizaciones ──────────────────────────────────────────────────────────
 
 export function createOrganization(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewOrganization, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Organization {
   const now = nowMs();
@@ -16,21 +16,21 @@ export function createOrganization(
   return getOrganization(db, row.id!)!;
 }
 
-export function getOrganization(db: AgentosDb, id: string): Organization | undefined {
+export function getOrganization(db: AgentosSqliteDb, id: string): Organization | undefined {
   return db.select().from(organizations).where(eq(organizations.id, id)).get();
 }
 
-export function getOrganizationByName(db: AgentosDb, name: string): Organization | undefined {
+export function getOrganizationByName(db: AgentosSqliteDb, name: string): Organization | undefined {
   return db.select().from(organizations).where(eq(organizations.name, name)).get();
 }
 
-export function listOrganizations(db: AgentosDb, kind?: OrgKind): Organization[] {
+export function listOrganizations(db: AgentosSqliteDb, kind?: OrgKind): Organization[] {
   if (kind) return db.select().from(organizations).where(eq(organizations.kind, kind)).all();
   return db.select().from(organizations).all();
 }
 
 export function updateOrganization(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Omit<Organization, "id" | "createdAt">>,
 ): void {
@@ -43,7 +43,7 @@ export function updateOrganization(
 // ── Personas ────────────────────────────────────────────────────────────────
 
 export function createPerson(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   input: Omit<NewPerson, "id" | "createdAt" | "updatedAt"> & { id?: string },
 ): Person {
   const now = nowMs();
@@ -52,15 +52,15 @@ export function createPerson(
   return getPerson(db, row.id!)!;
 }
 
-export function getPerson(db: AgentosDb, id: string): Person | undefined {
+export function getPerson(db: AgentosSqliteDb, id: string): Person | undefined {
   return db.select().from(people).where(eq(people.id, id)).get();
 }
 
-export function getPersonByFullName(db: AgentosDb, fullName: string): Person | undefined {
+export function getPersonByFullName(db: AgentosSqliteDb, fullName: string): Person | undefined {
   return db.select().from(people).where(eq(people.fullName, fullName)).get();
 }
 
-export function listPeople(db: AgentosDb, orgId?: string): Person[] {
+export function listPeople(db: AgentosSqliteDb, orgId?: string): Person[] {
   if (orgId) return db.select().from(people).where(eq(people.orgId, orgId)).all();
   return db.select().from(people).all();
 }
@@ -70,12 +70,12 @@ export function listPeople(db: AgentosDb, orgId?: string): Person[] {
  * más el personal interno (`is_internal`), que puede asignarse a cualquier
  * proyecto (I3).
  */
-export function listAssignablePeople(db: AgentosDb, orgId: string): Person[] {
+export function listAssignablePeople(db: AgentosSqliteDb, orgId: string): Person[] {
   return listPeople(db).filter((person) => person.isInternal || person.orgId === orgId);
 }
 
 export function updatePerson(
-  db: AgentosDb,
+  db: AgentosSqliteDb,
   id: string,
   patch: Partial<Omit<Person, "id" | "createdAt">>,
 ): Person {
@@ -88,7 +88,7 @@ export function updatePerson(
   return updated;
 }
 
-export function listInternalPeople(db: AgentosDb, orgId: string): Person[] {
+export function listInternalPeople(db: AgentosSqliteDb, orgId: string): Person[] {
   return db
     .select()
     .from(people)

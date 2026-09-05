@@ -11,8 +11,8 @@ export const methodologyTools: ToolDefinition[] = [
     description: "Lee una metodología por slug (última versión si no se indica version).",
     schema: z.object({ slug: z.string().min(1), version: z.number().int().positive().optional() }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
-    handler(ctx, args) {
-      const m = getMethodology(ctx.db, args.slug, args.version);
+    async handler(ctx, args) {
+      const m = await getMethodology(ctx.db, args.slug, args.version);
       if (!m) throw errors.notFound("methodology", `${args.slug}${args.version ? `@${args.version}` : ""}`);
       return m;
     },

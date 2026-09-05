@@ -1,39 +1,45 @@
-// @agentos/db — persistencia AgentOS (SQLite + Drizzle; default de cero fricción).
-// Regla dura (ARCHITECTURE §5): NINGUNA consulta fuera de src/repositories/
-// (search.ts es la única otra puerta, y solo para FTS).
-//
-// El backend Postgres/Supabase vive en el entrypoint SEPARADO `@agentos/db/pg`
-// para que quien use SQLite jamás cargue `postgres-js`. Ver docs/POSTGRES.md.
-export { openDb, closeDb, resolveDbPath, REPO_ROOT, schema, type AgentosDb } from "./client.js";
+/**
+ * `@agentos/db` — persistencia AgentOS. **Superficie ASÍNCRONA única** para los
+ * dos motores (rama feat/postgres-async):
+ *
+ *   SQLite (default, cero fricción)  →  src/repositories/*      (síncronos)
+ *   Postgres/Supabase (opt-in)       →  src/pg/repositories/*   (asíncronos)
+ *
+ * Los nombres, los argumentos y los tipos de fila son los MISMOS de siempre
+ * (NFR-9). Lo único que el llamante nota es que ahora hay que `await`: es el
+ * precio irreducible de que no exista driver Postgres síncrono en Node
+ * (docs/POSTGRES.md §5). El despacho por motor vive en `facade.ts` y NO se
+ * filtra: `apps/api`, `packages/core`, `packages/tools` y `apps/mcp-admin`
+ * llaman siempre igual.
+ *
+ * Regla dura (ARCHITECTURE §5): NINGUNA consulta fuera de `repositories/`
+ * (`search.ts` / `pg/search-pg.ts` son la única otra puerta, y solo para
+ * búsqueda de texto). El backend Postgres vive en el entrypoint SEPARADO
+ * `@agentos/db/pg` para que quien use SQLite jamás cargue `postgres-js`.
+ */
+export { openDb, closeDb, resolveDbPath, REPO_ROOT, schema } from "./client.js";
+export type { AgentosSqliteDb } from "./client.js";
+/** Handle de DB del motor configurado — es lo que circula por toda la app. */
+export type { AnyDb, AnyDb as AgentosDb, PgBackend } from "./facade.js";
+export { isPgDb, withTransaction, markPgDb, requirePgBackend } from "./facade.js";
 export { resolveDriver, isPostgresDriver, type DbDriver } from "./driver.js";
+export {
+  openConfiguredDb,
+  closeAnyDb,
+  applyMigrations,
+  type OpenConfiguredOptions,
+} from "./open.js";
 // Embeddings: agnósticos del motor (el mock no toca red; sin key, `null` limpio).
 export * from "./embeddings.js";
 export { runMigrations } from "./migrate.js";
 export * from "./types.js";
-export * from "./search.js";
+export { ensureFts, type MessageSearchHit, type KnowledgeSearchHit } from "./search.js";
 export * from "./seed-sources.js";
-export { seed, countDomainTables, type SeedCounts } from "./seed.js";
 
-export * from "./repositories/organizations-people.js";
-export * from "./repositories/projects.js";
-export * from "./repositories/providers.js";
-export * from "./repositories/agents.js";
-export * from "./repositories/tasks.js";
-export * from "./repositories/task-assignees.js";
-export * from "./repositories/task-labels.js";
-export * from "./repositories/task-notifications.js";
-export * from "./repositories/runs.js";
-export * from "./repositories/events.js";
-export * from "./repositories/threads.js";
-export * from "./repositories/approvals.js";
-export * from "./repositories/audit.js";
-export * from "./repositories/knowledge.js";
-export * from "./repositories/project-sources.js";
-export * from "./repositories/processes.js";
-export * from "./repositories/methodologies.js";
-export * from "./repositories/modules.js";
-export * from "./repositories/config.js";
-export * from "./repositories/notion-migration.js";
+// Repositorios duales (SQLite síncrono / Postgres asíncrono, misma firma).
+export * from "./repos.js";
 
-// Motor de launch de Módulos de Fase (§13.3) — orquesta SOLO repositorios.
+// Motor de launch de Módulos de Fase (§13.3) y seed: escritos UNA vez contra
+// la fachada, valen para los dos motores.
 export * from "./modules/launch.js";
+export { seed, type SeedCounts } from "./seed.js";

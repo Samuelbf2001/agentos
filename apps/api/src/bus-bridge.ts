@@ -23,14 +23,14 @@ export function createBus(db: AgentosDb): EventBus {
 }
 
 /** Publica un payload arbitrario (evento de dominio o de canal) en el bus. */
-export function publishRaw(
+export async function publishRaw(
   bus: EventBus,
   topic: string,
   event: { type: string; [k: string]: unknown },
   runId?: string | null,
-): PersistedEvent {
+): Promise<PersistedEvent> {
   const withTs = { timestamp: nowMs(), ...event };
-  return bus.publish(topic, withTs as unknown as BusPayload, {
+  return await bus.publish(topic, withTs as unknown as BusPayload, {
     ...(runId ? { runId } : {}),
   });
 }
@@ -38,8 +38,8 @@ export function publishRaw(
 /** EventSink (core) → EventBus (events): el adaptador que exige ARCHITECTURE §2. */
 export function busSink(bus: EventBus): EventSink {
   return {
-    publish(topic: string, event: DomainEvent): void {
-      publishRaw(
+    async publish(topic: string, event: DomainEvent): Promise<void> {
+      await publishRaw(
         bus,
         topic,
         { type: event.type, payload: event.payload ?? {} },

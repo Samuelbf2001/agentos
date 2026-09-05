@@ -18,12 +18,12 @@ import {
 import { adminFixture, type AdminFixture } from "./helpers.js";
 
 let f: AdminFixture;
-beforeEach(() => {
-  f = adminFixture();
+beforeEach(async () => {
+  f = await adminFixture();
 });
 
-function alex(): Agent {
-  return getAgentBySlug(f.db, "alex")!;
+async function alex(): Promise<Agent> {
+  return (await getAgentBySlug(f.db, "alex"))!;
 }
 
 // ── Perfil ro ───────────────────────────────────────────────────────────────
@@ -34,11 +34,11 @@ describe("perfil ro", () => {
       f.callRo("agentos.agents.set_status", {
         agent: "alex",
         status: "paused",
-        expected_version: alex().version,
+        expected_version: (await alex()).version,
       }),
     ).rejects.toMatchObject({ code: "read_only_profile" });
     // Y el agente no cambió (fail-closed de verdad).
-    expect(alex().status).toBe("active");
+    expect((await alex()).status).toBe("active");
   });
 
   it("rechaza system.pause_all y config.set en ro", async () => {
@@ -62,8 +62,8 @@ describe("perfil ro", () => {
 
 describe("agents.update", () => {
   it("actualizar el prompt CREA prompt_version y la activa (nunca sobrescribe)", async () => {
-    const before = alex();
-    const versionsBefore = listPromptVersions(f.db, before.id);
+    const before = (await alex());
+    const versionsBefore = await listPromptVersions(f.db, before.id);
     const result = (await f.call("agentos.agents.update", {
       agent: "alex",
       expected_version: before.version,
@@ -71,7 +71,7 @@ describe("agents.update", () => {
       reason: "prueba de versionado",
     })) as { agent: Agent; prompt_version: { id: string; version: number } };
 
-    const versionsAfter = listPromptVersions(f.db, before.id);
+    const versionsAfter = await listPromptVersions(f.db, before.id);
     expect(versionsAfter.length).toBe(versionsBefore.length + 1);
     expect(result.prompt_version.version).toBe(versionsBefore.length + 1);
     expect(result.agent.activePromptVersionId).toBe(result.prompt_version.id);
@@ -81,7 +81,7 @@ describe("agents.update", () => {
   });
 
   it("respeta expected_version: conflicto explícito, no last-write-wins", async () => {
-    const stale = alex().version;
+    const stale = (await alex()).version;
     await f.call("agentos.agents.update", {
       agent: "alex",
       expected_version: stale,
@@ -128,7 +128,7 @@ describe("prompts", () => {
   it("diff unificado entre versiones y rollback en una llamada", async () => {
     await f.call("agentos.agents.update", {
       agent: "alex",
-      expected_version: alex().version,
+      expected_version: (await alex()).version,
       prompt: { stable: "LINEA-NUEVA-DE-PROMPT", changelog: "v2" },
     });
     const diff = (await f.call("agentos.prompts.diff", {
@@ -140,16 +140,16 @@ describe("prompts", () => {
     expect(diff.unified).toContain("+LINEA-NUEVA-DE-PROMPT");
     expect(diff.unified).toContain("--- alex/prompt v1");
 
-    const v1 = listPromptVersions(f.db, alex().id).find((v) => v.version === 1)!;
+    const v1 = (await listPromptVersions(f.db, (await alex()).id)).find((v) => v.version === 1)!;
     const rolled = (await f.call("agentos.prompts.rollback", {
       agent: "alex",
       to_version: 1,
-      expected_version: alex().version,
+      expected_version: (await alex()).version,
       reason: "el v2 rompió el tono",
     })) as { agent: Agent };
     expect(rolled.agent.activePromptVersionId).toBe(v1.id);
     // Rollback auditado (CA-8.2).
-    const audit = queryAudit(f.db, { action: "prompts.rollback", entityId: alex().id });
+    const audit = await queryAudit(f.db, { action: "prompts.rollback", entityId: (await alex()).id });
     expect(audit.length).toBe(1);
   });
 
@@ -212,7 +212,7 @@ describe("providers", () => {
 
 describe("approvals.decide", () => {
   it("falla con digest inválido (payload alterado tras pedir aprobación)", async () => {
-    const approval = f.rw.engine.requestApproval({
+    const approval = await f.rw.engine.requestApproval({
       kind: "tool_call",
       payload: { tool: "email.send", args: { to: "cliente@acme.com" } },
     });
@@ -231,7 +231,7 @@ describe("approvals.decide", () => {
   });
 
   it("con digest válido devuelve el payload literal a ejecutar", async () => {
-    const approval = f.rw.engine.requestApproval({
+    const approval = await f.rw.engine.requestApproval({
       kind: "tool_call",
       payload: { tool: "email.send", args: { to: "cliente@acme.com" } },
     });
@@ -246,7 +246,7 @@ describe("approvals.decide", () => {
   });
 
   it("exige un person_id que exista", async () => {
-    const approval = f.rw.engine.requestApproval({
+    const approval = await f.rw.engine.requestApproval({
       kind: "deliverable",
       payload: { entregable: "informe" },
     });
@@ -288,7 +288,7 @@ describe("tablero", () => {
   it("flujo humano completo: READY → IN_PROGRESS → REVIEW → reject → REVIEW → approve", async () => {
     let task = await createTask();
     const move = async (to: string, note?: string) => {
-      task = getTask(f.db, task.id)!;
+      task = (await getTask(f.db, task.id))!;
       return (await f.call("agentos.tasks.move", {
         task_id: task.id,
         to,
@@ -299,7 +299,7 @@ describe("tablero", () => {
     await move("READY");
     await move("IN_PROGRESS");
     // Anti-teatro: REVIEW sin artefacto se rechaza.
-    task = getTask(f.db, task.id)!;
+    task = (await getTask(f.db, task.id))!;
     await expect(
       f.call("agentos.tasks.move", { task_id: task.id, to: "REVIEW", expected_version: task.version }),
     ).rejects.toMatchObject({ code: "missing_artifact" });
@@ -311,7 +311,7 @@ describe("tablero", () => {
     });
     await move("REVIEW");
 
-    task = getTask(f.db, task.id)!;
+    task = (await getTask(f.db, task.id))!;
     const rejected = (await f.call("agentos.tasks.reject", {
       task_id: task.id,
       expected_version: task.version,
@@ -321,7 +321,7 @@ describe("tablero", () => {
     expect(rejected.status).toBe("IN_PROGRESS");
 
     await move("REVIEW");
-    task = getTask(f.db, task.id)!;
+    task = (await getTask(f.db, task.id))!;
     const approved = (await f.call("agentos.tasks.approve", {
       task_id: task.id,
       expected_version: task.version,
@@ -372,7 +372,7 @@ describe("tablero", () => {
       note: "Diagnóstico y roadmap aprobados",
     })) as { project: { gateState: string } };
     expect(result.project.gateState).toBe("approved");
-    const audit = queryAudit(f.db, { action: "gate.approve", entityId: f.project.id });
+    const audit = await queryAudit(f.db, { action: "gate.approve", entityId: f.project.id });
     expect(audit.length).toBe(1);
   });
 });
@@ -385,13 +385,18 @@ describe("etiquetas y responsables múltiples", () => {
   // "ACME S.A.". replaceTaskAssignees exige que responsable y proyecto
   // compartan organización, así que estos tests crean personas ad-hoc en la
   // org del proyecto en vez de reutilizar las del seed.
-  function makePerson(fullName: string) {
-    return createPerson(f.db, { orgId: f.project.orgId, fullName, isInternal: false, role: "Cliente" });
+  async function makePerson(fullName: string) {
+    return await createPerson(f.db, {
+      orgId: f.project.orgId,
+      fullName,
+      isInternal: false,
+      role: "Cliente",
+    });
   }
 
   it("tasks.create acepta due_at + assignee_person_ids + labels", async () => {
-    const ana = makePerson("Ana de prueba");
-    const seb = makePerson("Sebastián de prueba");
+    const ana = await makePerson("Ana de prueba");
+    const seb = await makePerson("Sebastián de prueba");
     const dueAtIso = "2026-12-01T10:00:00.000Z";
     const result = (await f.call("agentos.tasks.create", {
       project_id: f.project.id,
@@ -414,7 +419,7 @@ describe("etiquetas y responsables múltiples", () => {
   });
 
   it("tasks.list filtra por assignee_person_id (tabla puente)", async () => {
-    const seb = makePerson("Sebastián de prueba");
+    const seb = await makePerson("Sebastián de prueba");
     const { task } = (await f.call("agentos.tasks.create", {
       project_id: f.project.id,
       title: "Tarea de Sebastián",
@@ -485,7 +490,7 @@ describe("etiquetas y responsables múltiples", () => {
 
 describe("auditoría", () => {
   it("audit.query devuelve la mutación con before/after", async () => {
-    const a = alex();
+    const a = (await alex());
     await f.call("agentos.agents.set_status", {
       agent: "alex",
       status: "paused",
@@ -505,20 +510,20 @@ describe("auditoría", () => {
   });
 
   it("audit.revert aplica el before como nueva mutación auditada", async () => {
-    const a = alex();
+    const a = (await alex());
     await f.call("agentos.agents.set_status", {
       agent: "alex",
       status: "paused",
       expected_version: a.version,
     });
-    const [entry] = queryAudit(f.db, { action: "agents.set_status", entityId: a.id });
+    const [entry] = await queryAudit(f.db, { action: "agents.set_status", entityId: a.id });
     const result = (await f.call("agentos.audit.revert", {
       audit_id: entry!.id,
       reason: "falsa alarma",
     })) as { applied: Record<string, unknown> };
     expect(result.applied.status).toBe("active");
-    expect(alex().status).toBe("active");
-    const revertRows = queryAudit(f.db, { action: "audit.revert", entityId: a.id });
+    expect((await alex()).status).toBe("active");
+    const revertRows = await queryAudit(f.db, { action: "audit.revert", entityId: a.id });
     expect(revertRows.length).toBe(1);
   });
 });
@@ -529,17 +534,17 @@ describe("config y sistema", () => {
   it("system.pause_all cambia app_config y resume_all lo revierte", async () => {
     // El seed arranca seguro por defecto (kill switch activo); resume primero.
     await f.call("agentos.system.resume_all", {});
-    expect(getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(false);
+    expect(await getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(false);
     await f.call("agentos.system.pause_all", { reason: "incidente" });
-    expect(getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(true);
-    expect(f.rw.engine.isKillSwitchActive()).toBe(true);
+    expect(await getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(true);
+    expect(await f.rw.engine.isKillSwitchActive()).toBe(true);
     await f.call("agentos.system.resume_all", {});
-    expect(getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(false);
+    expect(await getConfig(f.db, ConfigKeys.KILL_SWITCH)).toBe(false);
   });
 
   it("config.set solo acepta claves permitidas", async () => {
     await f.call("agentos.config.set", { key: "agents_enabled", value: false });
-    expect(getConfig(f.db, "agents_enabled")).toBe(false);
+    expect(await getConfig(f.db, "agents_enabled")).toBe(false);
     await expect(
       f.call("agentos.config.set", { key: "kill_switch", value: true }),
     ).rejects.toMatchObject({ code: "validation_error" });

@@ -34,8 +34,8 @@ export interface OrgNode {
   reports: OrgNode[];
 }
 
-function resolve(db: AgentosDb, ref: string): Agent {
-  const agent = getAgent(db, ref) ?? getAgentBySlug(db, ref);
+async function resolve(db: AgentosDb, ref: string): Promise<Agent> {
+  const agent = (await getAgent(db, ref)) ?? (await getAgentBySlug(db, ref));
   if (!agent) throw errors.notFound("agent", ref);
   return agent;
 }
@@ -46,14 +46,14 @@ function resolve(db: AgentosDb, ref: string): Agent {
  * un manager faltante o el tope `MAX_CHAIN_DEPTH` (nunca lanza por esos casos:
  * devuelve lo recorrido; el diagnóstico fino lo da `computeOrgChainHealth`).
  */
-export function getChainOfCommand(db: AgentosDb, agentIdOrSlug: string): Agent[] {
-  const start = resolve(db, agentIdOrSlug);
+export async function getChainOfCommand(db: AgentosDb, agentIdOrSlug: string): Promise<Agent[]> {
+  const start = await resolve(db, agentIdOrSlug);
   const chain: Agent[] = [start];
   const seen = new Set<string>([start.id]);
   let current = start.reportsTo;
   while (current) {
     if (seen.has(current) || chain.length >= MAX_CHAIN_DEPTH) break;
-    const mgr = getAgent(db, current);
+    const mgr = await getAgent(db, current);
     if (!mgr) break;
     chain.push(mgr);
     seen.add(mgr.id);
@@ -68,10 +68,13 @@ export function getChainOfCommand(db: AgentosDb, agentIdOrSlug: string): Agent[]
  * su propio mensaje). Prioridad de fallo al subir: ciclo → manager faltante →
  * ancestro terminado; el primero que aparece manda.
  */
-export function computeOrgChainHealth(db: AgentosDb, agentIdOrSlug: string): OrgChainHealth {
-  const start = resolve(db, agentIdOrSlug);
-  // El núcleo puro vive en @agentos/shared (§13.3); aquí solo se inyecta la DB.
-  return computeChainHealthFrom(start, (id) => getAgent(db, id));
+export async function computeOrgChainHealth(db: AgentosDb, agentIdOrSlug: string): Promise<OrgChainHealth> {
+  const start = await resolve(db, agentIdOrSlug);
+  // El núcleo puro vive en @agentos/shared (§13.3) y su getById es SÍNCRONO:
+  // materializamos el mapa de agentes antes de invocarlo.
+  const all = await listAgents(db);
+  const byId = new Map(all.map((a) => [a.id, a] as const));
+  return computeChainHealthFrom(start, (id) => byId.get(id));
 }
 
 /**
@@ -79,33 +82,33 @@ export function computeOrgChainHealth(db: AgentosDb, agentIdOrSlug: string): Org
  * manager propuesto hasta la raíz; si reaparece el agente (o el manager es el
  * propio agente), habría ciclo. `null` = hacerse raíz, jamás crea ciclo.
  */
-export function wouldCreateCycle(
+export async function wouldCreateCycle(
   db: AgentosDb,
   agentIdOrSlug: string,
   newManagerIdOrSlug: string | null,
-): boolean {
+): Promise<boolean> {
   if (newManagerIdOrSlug == null) return false;
-  const agent = resolve(db, agentIdOrSlug);
-  const manager = resolve(db, newManagerIdOrSlug);
+  const agent = await resolve(db, agentIdOrSlug);
+  const manager = await resolve(db, newManagerIdOrSlug);
   if (manager.id === agent.id) return true;
   const seen = new Set<string>();
   let current: string | null = manager.id;
   while (current) {
     if (current === agent.id || seen.has(current)) return true;
     seen.add(current);
-    current = getAgent(db, current)?.reportsTo ?? null;
+    current = (await getAgent(db, current))?.reportsTo ?? null;
   }
   return false;
 }
 
 /** Igual que `wouldCreateCycle` pero lanza `agent_not_assignable` (reason=cycle). */
-export function assertNoCycle(
+export async function assertNoCycle(
   db: AgentosDb,
   agentIdOrSlug: string,
   newManagerIdOrSlug: string | null,
-): void {
-  if (wouldCreateCycle(db, agentIdOrSlug, newManagerIdOrSlug)) {
-    const agent = resolve(db, agentIdOrSlug);
+): Promise<void> {
+  if (await wouldCreateCycle(db, agentIdOrSlug, newManagerIdOrSlug)) {
+    const agent = await resolve(db, agentIdOrSlug);
     throw errors.notAssignable(agent.slug, "cycle", {
       agentId: agent.id,
       proposedManager: newManagerIdOrSlug,
@@ -119,8 +122,8 @@ export function assertNoCycle(
  * por slug. A prueba de ciclos: cada agente aparece exactamente una vez; un agente
  * atrapado solo en un ciclo (sin raíz alcanzable) se emite como raíz de rescate.
  */
-export function orgForCompany(db: AgentosDb): OrgNode[] {
-  const all = listAgents(db);
+export async function orgForCompany(db: AgentosDb): Promise<OrgNode[]> {
+  const all = await listAgents(db);
   const byId = new Map(all.map((a) => [a.id, a] as const));
   const childrenOf = new Map<string, Agent[]>();
   const roots: Agent[] = [];
