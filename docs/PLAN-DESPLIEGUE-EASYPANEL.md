@@ -21,7 +21,9 @@ WhatsAppHub, su PostgreSQL, Redis, CRM, conversaciones y reuniones siguen siendo
 
 - El proyecto `whatsfull` ya tiene en funcionamiento `2brain-backend`, varias interfaces, PostgreSQL y Redis.
 - `2brain-backend` procede del repositorio de WhatsAppHub, ruta `/backend`, y no tiene despliegue automático activado.
-- La copia local de AgentOS no tiene un remoto Git configurado y el runtime principal sigue siendo SQLite. El paquete de datos ya contiene el esquema y migraciones PostgreSQL, pero API, MCP y workflow deben completar el cambio síncrono a asíncrono antes de que PostgreSQL sea una opción de producción.
+- **El motor de producción es PostgreSQL.** La rama `feat/postgres-async` ya corre la aplicación end-to-end con `AGENTOS_DB_DRIVER=postgres` + `AGENTOS_PG_URL`: la fachada asíncrona está portada y el esquema y las migraciones PG viven en el paquete de datos. SQLite sigue siendo el default local de cero fricción, no el runtime de producción.
+- Esto **deja sin efecto** la recomendación de `docs/EVALUACION.md` §6 («el plan es sensato: SQLite en volumen primero», «Postgres end-to-end solo cuando se dispare uno de los criterios de ARCHITECTURE §5»), escrita antes de que esa rama existiera. Para EasyPanel el motor es Postgres desde el primer arranque; la evaluación se corrige cuando `feat/postgres-async` entre a `master`.
+- La copia local de AgentOS todavía no tiene un remoto Git configurado: falta definir el origen de despliegue (repositorio privado o acceso SSH dedicado).
 - La licencia actual de EasyPanel alcanzó el máximo de tres proyectos. Por ello AgentOS convivirá como servicios con prefijo `agentos-` dentro del proyecto técnico `whatsfull`, pero con contenedores, volúmenes, usuarios de base de datos, variables y dominios propios. No significa que comparta el dominio de datos de WhatsAppHub.
 - El 2026-09-04 se generó y validó un dump previo de la base operativa histórica `whatsfull/db` (`db`, aproximadamente 144 MB). El archivo de restauración está fuera de los volúmenes de aplicación, tiene SHA-256 registrado en el VPS y `pg_restore` de PostgreSQL 17 confirmó 228 entradas. No se modificó la base de origen.
 - El servicio `whatsfull/agentos-db` fue creado como PostgreSQL 17 + pgvector independiente. Su almacenamiento está en `/etc/easypanel/projects/whatsfull/agentos-db/data`, distinto de `/etc/easypanel/projects/whatsfull/db/data`; la base, el usuario inicial y la extensión `vector` se verificaron sin exponer su contraseña.
@@ -33,18 +35,18 @@ Por tanto, **no se reutilizará `whatsfull/db`** para AgentOS. Compartir instanc
 No se crea un servicio hasta tener todos los puntos siguientes:
 
 1. Un origen versionado para AgentOS: repositorio privado y rama de despliegue, o acceso SSH con usuario explícito para instalar desde una ruta dedicada. Nunca se copia código a mano a un contenedor efímero.
-2. Runtime PostgreSQL funcional en `apps/api`, `apps/mcp-admin` y worker, con SQLite aún como default local. El simple esquema PG no es suficiente.
-3. `Dockerfile` reproducible, lockfile respetado, usuario no root en runtime, healthcheck y versión/commit visibles sin exponer configuración.
-4. Variables de secreto creadas en EasyPanel, no en Git ni en imágenes: URL de PostgreSQL, claves de sesiones/proveedores y credenciales de los conectores necesarios.
+2. Runtime PostgreSQL funcional en `apps/api`, `apps/mcp-admin` y worker, con SQLite aún como default local. **Cumplido en `feat/postgres-async`** (la app arranca y opera con `AGENTOS_DB_DRIVER=postgres`); lo pendiente es integrar esa rama en la rama de despliegue antes de construir el artefacto.
+3. `Dockerfile` reproducible, lockfile respetado, usuario no root en runtime, healthcheck y versión/commit visibles sin exponer configuración. **Cumplido**: `Dockerfile.api` y `Dockerfile.web` son multi-stage con pnpm 11.24.0 (la versión del lockfile), usuario `agentos` uid 10001, `HEALTHCHECK` a `/api/health` y `GIT_SHA` en `org.opencontainers.image.revision`. Operativa en `deploy/README.md`.
+4. Variables de secreto creadas en EasyPanel, no en Git ni en imágenes: URL de PostgreSQL, claves de sesiones/proveedores y credenciales de los conectores necesarios. Los NOMBRES y su significado están en `deploy/.env.production.example`; los valores nunca salen del gestor de secretos.
 5. Política de acceso: usuarios/equipo autenticados en la web; MCP y DB no expuestos al Internet público; HTTPS antes de una URL de equipo.
-6. Backups del volumen de PostgreSQL, retención y una prueba de restauración en un destino aislado.
+6. Backups del volumen de PostgreSQL (`pg_dump` contra `agentos-db`), retención y una prueba de restauración en un destino aislado. Procedimiento y el caso SQLite (`deploy/backup-sqlite.sh`) en `deploy/README.md` §6.
 
 ## 4. Secuencia de despliegue
 
 ### Fase D1 — Preparar código y artefacto
 
 1. Completar la adaptación a PostgreSQL y las pruebas de API/MCP/worker.
-2. Añadir imagen de producción multi-stage para API, web y worker. La imagen recibe configuración solo en runtime.
+2. Añadir imagen de producción multi-stage para API, web y worker. La imagen recibe configuración solo en runtime. **Hecho para API y web** (`Dockerfile.api`, `Dockerfile.web`); el worker aún no tiene imagen propia porque no se levanta en el primer despliegue.
 3. Ejecutar `typecheck`, tests completos, build de web/API e integración real contra un PostgreSQL temporal con las mismas extensiones permitidas por producción.
 4. Etiquetar el commit y producir una imagen o referencia Git inmutable. Ningún despliegue usa una rama sin SHA registrado.
 
@@ -52,7 +54,7 @@ No se crea un servicio hasta tener todos los puntos siguientes:
 
 ### Fase D2 — Crear infraestructura aislada
 
-1. Crear `agentos-db` con una base y rol exclusivos, volumen persistente, sin puerto público. Usar PostgreSQL 16 o 17. `pgvector` se activa solo si la imagen gestionada lo soporta; la búsqueda debe degradar a texto si no está disponible.
+1. `agentos-db` **ya existe** en el proyecto `whatsfull` (`pgvector/pgvector:pg17`, usuario `agentos`, base y volumen propios en `/etc/easypanel/projects/whatsfull/agentos-db/data`, sin puerto público, extensión `vector` verificada). En esta fase solo se comprueba su estado y se emite el DSN interno para `AGENTOS_PG_URL`; no se recrea.
 2. Crear `agentos-api` con acceso interno únicamente a `agentos-db` y sin dominio público inicial.
 3. Crear `agentos-web` apuntando a la API interna o al mismo dominio mediante proxy `/api`; el navegador nunca conoce credenciales de base de datos.
 4. Crear `agentos-notion-archive` como volumen privado montado únicamente en el job de migración. No se monta en la web, el MCP ni WhatsAppHub.
@@ -107,4 +109,4 @@ No habrá rollback que borre tareas, fuentes o auditoría selectivamente. Una im
 4. Publicar AgentOS en producción inicial D5.
 5. Realizar la migración completa y el corte operativo únicamente después de su conciliación.
 
-El bloqueo actual para D0 es operativo, no de EasyPanel: falta un origen de despliegue para el checkout local de AgentOS (remoto Git privado o usuario SSH explícito). La API de EasyPanel ya está disponible para crear la infraestructura cuando el artefacto sea reproducible.
+El bloqueo actual para D0 es operativo, no técnico: (a) falta un origen de despliegue para el checkout local de AgentOS (remoto Git privado o usuario SSH explícito) y (b) falta integrar `feat/postgres-async` en la rama de despliegue. El artefacto ya es reproducible (`Dockerfile.api`, `Dockerfile.web`, `deploy/`) y la API de EasyPanel está disponible para crear la infraestructura restante.

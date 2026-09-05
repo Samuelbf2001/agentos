@@ -1,20 +1,48 @@
+# Contexto de build de Dockerfile.api / Dockerfile.web.
+# Regla: fuera todo lo que sea estado local, secreto o reconstruible; dentro
+# todo lo que la imagen necesita (apps/, packages/, agents/, methodologies/,
+# modules/, manifiestos y pnpm-lock.yaml).
+
+# Historia y herramientas locales
 .git
+.gitattributes
+.claude
+.vscode
+.idea
+
+# Secretos y configuración local (nunca entran a una imagen)
 .env
 .env.*
+**/.env
+**/.env.*
+
+# Dependencias y artefactos reconstruibles dentro del contenedor
 node_modules
 **/node_modules
-data
-**/data
-coverage
-**/coverage
 dist
 **/dist
 build
 **/build
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
+coverage
+**/coverage
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Estado en disco: DB, artefactos, workspaces de runners, snapshots
+data
+**/data
 workspaces
+**/workspaces
+*.db
+**/*.db
+*.db-journal
+**/*.db-journal
+*.db-wal
+**/*.db-wal
+*.db-shm
+**/*.db-shm
+*.log
+**/*.log
+
 .DS_Store
 Thumbs.db

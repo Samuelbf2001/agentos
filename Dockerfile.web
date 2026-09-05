@@ -1,19 +1,64 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim AS build
+# Imagen de producción de apps/web (SPA de Vite servida por nginx).
+# El bundle es estático: no lleva secretos y habla con la API por el mismo
+# origen (/api y /ws), que nginx reenvía al servicio interno de EasyPanel.
 
-WORKDIR /app
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG PNPM_VERSION=11.24.0
+ARG NGINX_IMAGE=nginx:1.27-alpine
+
+# --------------------------------------------------------------------------
+# 1) Build del bundle. pnpm 11 = versión que generó pnpm-lock.yaml.
+# --------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS build
+ARG PNPM_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+ENV CI=true
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+WORKDIR /app
 
-COPY . .
-RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @agentos/web build
+# Manifiestos primero: --frozen-lockfile valida todo el workspace y así la capa
+# de dependencias se cachea mientras el lockfile no cambie.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json apps/api/
+COPY apps/mcp-admin/package.json apps/mcp-admin/
+COPY apps/web/package.json apps/web/
+COPY packages/core/package.json packages/core/
+COPY packages/db/package.json packages/db/
+COPY packages/events/package.json packages/events/
+COPY packages/notion-migration/package.json packages/notion-migration/
+COPY packages/providers/package.json packages/providers/
+COPY packages/runners/package.json packages/runners/
+COPY packages/shared/package.json packages/shared/
+COPY packages/tools/package.json packages/tools/
+RUN pnpm install --frozen-lockfile --filter "@agentos/web..."
 
-FROM nginx:1.27-alpine AS runtime
-COPY deploy/agentos-web.nginx.conf /etc/nginx/conf.d/default.conf
+COPY tsconfig.base.json ./
+COPY apps/web ./apps/web
+# Vite escribe en apps/web/dist (default, sin build.outDir en vite.config.ts).
+RUN pnpm --filter @agentos/web build && test -f apps/web/dist/index.html
+
+# --------------------------------------------------------------------------
+# 2) nginx sirviendo el bundle + proxy interno a la API.
+# --------------------------------------------------------------------------
+FROM ${NGINX_IMAGE} AS runtime
+
+# Nombre Swarm de EasyPanel: <proyecto>_<servicio>. Se puede sobreescribir en
+# build (--build-arg) o en runtime (variable de entorno del servicio).
+ARG AGENTOS_API_UPSTREAM=http://whatsfull_agentos-api:4300
+ENV AGENTOS_API_UPSTREAM=${AGENTOS_API_UPSTREAM}
+
+# Plantilla: el entrypoint de nginx la pasa por envsubst a /etc/nginx/conf.d/.
+COPY deploy/agentos-web.nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.title="agentos-web" \
+      org.opencontainers.image.description="SPA de AgentOS Sixteam" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.licenses="UNLICENSED"
