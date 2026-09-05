@@ -1,206 +1,273 @@
 /**
- * Shell (spec B5 §2): sidebar con navegación + badges, header con selector de
- * proyecto, indicador de kill switch (banner rojo) y botón Pausar/Reanudar
- * agentes (US-11). Rutas de las 8 vistas.
+ * Shell (PLAN-v1.5 §Navegación nueva).
+ *
+ * El proyecto es el objeto raíz. Cuatro entradas globales —Hoy, Proyectos,
+ * Sistema y Activo Sixteam— y un segundo nivel de pestañas dentro del proyecto.
+ * Desaparecen el selector de proyecto del header, los emoji como icono de
+ * navegación y la impresión de `location.pathname`.
+ *
+ * La barra superior flota: es translúcida con desenfoque y el contenido pasa
+ * por debajo, encontrándose con ella en un degradado y no en una línea de un
+ * píxel. `prefers-reduced-transparency` la vuelve sólida y
+ * `prefers-reduced-motion` cambia el desplazamiento por un fundido.
  */
-import { useEffect } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { NavLink, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { useStore } from "./state/store";
 import { Spinner, Toasts } from "./components/ui";
+import { paths } from "./lib/paths";
 import LoginView from "./views/LoginView";
-import ChatView from "./views/ChatView";
-import BoardView from "./views/BoardView";
+import HoyView from "./views/HoyView";
 import MyTasksView from "./views/MyTasksView";
-import BrainView from "./views/BrainView";
-import MeetingProcessingView from "./views/MeetingProcessingView";
-import SwarmView from "./views/SwarmView";
-import RunsView from "./views/RunsView";
+import ProjectsView from "./views/ProjectsView";
+import ProjectLayout from "./views/ProjectLayout";
+import SystemLayout from "./views/SystemLayout";
+import AssetView from "./views/AssetView";
 import RunDetailView from "./views/RunDetailView";
-import WaitingView from "./views/WaitingView";
-import ContextView from "./views/ContextView";
-import AdminView from "./views/AdminView";
 import NewProjectWizard from "./views/NewProjectWizard";
+import SearchOverlay from "./views/SearchOverlay";
 import { TaskDrawer } from "./views/TaskDrawer";
 
-const NAV = [
-  { to: "/chat", label: "Chat", icon: "💬" },
-  { to: "/board", label: "Tablero", icon: "🗂️" },
-  { to: "/my-tasks", label: "Mis tareas", icon: "✅" },
-  { to: "/brain", label: "Cerebro", icon: "◈" },
-  { to: "/meetings", label: "Reuniones", icon: "🎙️" },
-  { to: "/swarm", label: "Enjambre", icon: "🕸️" },
-  { to: "/runs", label: "Runs", icon: "🛰️" },
-  { to: "/waiting", label: "Esperando por ti", icon: "✋" },
-  { to: "/context", label: "Contexto", icon: "📚" },
-  { to: "/admin", label: "Admin", icon: "⚙️" },
+interface NavEntry {
+  to: string;
+  label: string;
+  isActive: (pathname: string) => boolean;
+  badge?: "decisions" | "failed";
+}
+
+const GLOBAL_NAV: NavEntry[] = [
+  {
+    to: "/hoy",
+    label: "Hoy",
+    isActive: (p) => p === "/" || p.startsWith("/hoy") || p.startsWith("/mis-tareas"),
+    badge: "decisions",
+  },
+  {
+    to: "/proyectos",
+    label: "Proyectos",
+    isActive: (p) => p.startsWith("/proyectos") || p.startsWith("/nuevo-proyecto"),
+  },
+  { to: "/sistema", label: "Sistema", isActive: (p) => p.startsWith("/sistema"), badge: "failed" },
+  { to: "/activo", label: "Activo Sixteam", isActive: (p) => p.startsWith("/activo") },
 ];
 
-function Badge({ count, tone }: { count: number; tone: "rose" | "amber" }) {
+function NavBadge({ count, tone }: { count: number; tone: "decide" | "broken" }) {
   if (count <= 0) return null;
-  const cls = tone === "rose" ? "bg-rose-600" : "bg-amber-500";
   return (
-    <span className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white ${cls}`}>
+    <span
+      className={`ml-1 inline-flex min-w-4 items-center justify-center rounded-full px-1 text-label font-bold tabular-nums ${
+        tone === "decide" ? "bg-decide text-surface" : "bg-broken text-surface"
+      }`}
+    >
       {count}
     </span>
   );
 }
 
+/** Redirección de las rutas viejas: ningún enlace guardado se rompe. */
+function LegacyRun() {
+  const { runId } = useParams<{ runId: string }>();
+  return <Navigate to={runId ? paths.run(runId) : paths.sistema("actividad")} replace />;
+}
+
 function Shell() {
   const person = useStore((s) => s.person);
-  const projects = useStore((s) => s.projects);
-  const activeProjectId = useStore((s) => s.activeProjectId);
-  const setActiveProject = useStore((s) => s.setActiveProject);
   const killSwitch = useStore((s) => s.killSwitch);
   const setKillSwitch = useStore((s) => s.setKillSwitch);
-  // Badge de la bandeja: aprobaciones pendientes + entregables en REVIEW (H10).
-  const approvalsCount = useStore((s) => s.approvals.length + s.reviewTasks.length);
+  const decisionsCount = useStore((s) => s.approvals.length + s.reviewTasks.length);
   const failedRuns = useStore((s) => s.failedRunsCount);
   const wsStatus = useStore((s) => s.wsStatus);
   const refreshBadges = useStore((s) => s.refreshBadges);
+  const activeProjectId = useStore((s) => s.activeProjectId);
   const logout = useStore((s) => s.logout);
   const location = useLocation();
-  const navigate = useNavigate();
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => void refreshBadges(), 15_000);
     return () => clearInterval(t);
   }, [refreshBadges]);
 
+  // `/` abre la búsqueda de tareas desde cualquier pantalla, salvo mientras se
+  // escribe en un campo.
+  const onKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+    event.preventDefault();
+    setSearchOpen(true);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onKeyDown]);
+
+  const badges = useMemo(
+    () => ({ decisions: decisionsCount, failed: failedRuns }),
+    [decisionsCount, failedRuns],
+  );
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col bg-canvas">
       {killSwitch ? (
-        <div className="flex flex-wrap items-center justify-center gap-2 bg-rose-600 px-3 py-1.5 text-xs font-medium text-white sm:gap-3 sm:px-4 sm:text-sm">
-          ⛔ Kill switch activo: los agentes están pausados y no arrancan runs nuevos.
+        <div className="flex flex-wrap items-center justify-center gap-3 bg-broken-bg px-4 py-1.5 text-small text-broken">
+          <span className="font-semibold">Los agentes están pausados: no arrancan runs nuevos.</span>
           <button
             onClick={() => void setKillSwitch(false)}
-            className="rounded bg-white/20 px-2 py-0.5 text-xs font-semibold hover:bg-white/30"
+            className="press rounded-tight border border-broken-line bg-surface px-2.5 py-1 text-small font-semibold text-broken"
           >
             Reanudar agentes
           </button>
         </div>
       ) : null}
-      <div className="flex min-h-0 min-w-0 flex-1">
-        <aside className="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-white sm:flex">
-          <div className="border-b border-slate-200 px-4 py-3">
-            <p className="text-sm font-bold tracking-tight">AgentOS</p>
-            <p className="text-[11px] text-slate-400">Sixteam · Entender → Construir → Operar</p>
-          </div>
-          <nav className="flex-1 space-y-0.5 p-2">
-            {NAV.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
-                    isActive
-                      ? "bg-slate-900 font-medium text-white"
-                      : "text-slate-600 hover:bg-slate-100"
-                  }`
-                }
-              >
-                <span aria-hidden>{item.icon}</span>
-                {item.label}
-                {item.to === "/waiting" ? <Badge count={approvalsCount} tone="rose" /> : null}
-                {item.to === "/runs" ? <Badge count={failedRuns} tone="amber" /> : null}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="border-t border-slate-200 p-3 text-xs text-slate-500">
-            <p className="flex items-center gap-1.5">
-              <span
-                className={`inline-block h-2 w-2 rounded-full ${
-                  wsStatus === "open" ? "bg-emerald-500" : wsStatus === "connecting" ? "bg-amber-400" : "bg-rose-500"
-                }`}
-              />
-              WS {wsStatus === "open" ? "en vivo" : wsStatus === "connecting" ? "conectando…" : "desconectado"}
-            </p>
-            <p className="mt-1 truncate font-medium text-slate-700">{person?.full_name}</p>
-            <button onClick={logout} className="mt-1 text-slate-400 underline hover:text-slate-600">
-              Cerrar sesión
-            </button>
-          </div>
-        </aside>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:gap-3 sm:px-4">
-            <label className="text-xs text-slate-500" htmlFor="project-select">
-              Proyecto
-            </label>
-            <select
-              id="project-select"
-              value={activeProjectId ?? ""}
-              onChange={(e) => void setActiveProject(e.target.value || null)}
-              className="min-w-0 max-w-[11rem] flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm sm:max-w-none sm:flex-none"
-            >
-              {projects.length === 0 ? <option value="">(sin proyectos)</option> : null}
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} · {p.stage}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => navigate("/new-project")}
-              className="hidden rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 sm:block"
-            >
-              ＋ Nuevo proyecto
-            </button>
-            <span className="hidden text-[11px] text-slate-400 sm:inline">{location.pathname}</span>
-            <div className="ml-auto flex items-center gap-2">
-              {!killSwitch ? (
-                <button
-                  onClick={() => void setKillSwitch(true)}
-                  className="rounded-md border border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50"
-                >
-                  ⏸ Pausar agentes
-                </button>
-              ) : (
-                <button
-                  onClick={() => void setKillSwitch(false)}
-                  className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-                >
-                  ▶ Reanudar agentes
-                </button>
-              )}
-            </div>
-          </header>
-          <nav className="overflow-x-auto border-b border-slate-200 bg-white px-2 py-1.5 sm:hidden" aria-label="Navegación principal">
-            <div className="flex min-w-max gap-1">
-              {NAV.map((item) => (
+
+      <header className="chrome sticky top-0 z-40 shrink-0">
+        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-3 px-4 py-2.5 sm:gap-4 sm:px-5">
+          <span className="flex items-center gap-2.5 font-semibold tracking-tight">
+            <span
+              aria-hidden="true"
+              className="block h-[22px] w-[22px] rounded-[7px] bg-gradient-to-br from-ink to-muted"
+            />
+            AgentOS
+          </span>
+          <nav aria-label="Navegación principal" className="flex gap-0.5 rounded-[11px] bg-canvas-deep p-[3px]">
+            {GLOBAL_NAV.map((item) => {
+              const active = item.isActive(location.pathname);
+              return (
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  className={({ isActive }) =>
-                    `inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-xs ${
-                      isActive ? "bg-slate-900 font-medium text-white" : "text-slate-600 hover:bg-slate-100"
-                    }`
-                  }
+                  aria-current={active ? "page" : undefined}
+                  className={`press inline-flex min-h-8 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
+                    active ? "bg-surface text-ink shadow-rest" : "text-muted hover:text-ink-2"
+                  }`}
                 >
-                  <span aria-hidden>{item.icon}</span>
                   {item.label}
+                  {item.badge ? (
+                    <NavBadge
+                      count={badges[item.badge]}
+                      tone={item.badge === "decisions" ? "decide" : "broken"}
+                    />
+                  ) : null}
                 </NavLink>
-              ))}
-            </div>
+              );
+            })}
           </nav>
-          <main className="min-h-0 flex-1 overflow-auto">
-            <Routes>
-              <Route path="/" element={<Navigate to="/chat" replace />} />
-              <Route path="/chat" element={<ChatView />} />
-              <Route path="/board" element={<BoardView />} />
-              <Route path="/my-tasks" element={<MyTasksView />} />
-              <Route path="/brain" element={<BrainView />} />
-              <Route path="/meetings" element={<MeetingProcessingView />} />
-              <Route path="/new-project" element={<NewProjectWizard />} />
-              <Route path="/swarm" element={<SwarmView />} />
-              <Route path="/runs" element={<RunsView />} />
-              <Route path="/runs/:runId" element={<RunDetailView />} />
-              <Route path="/waiting" element={<WaitingView />} />
-              <Route path="/context" element={<ContextView />} />
-              <Route path="/admin" element={<AdminView />} />
-              <Route path="*" element={<Navigate to="/chat" replace />} />
-            </Routes>
-          </main>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="press hidden min-h-8 items-center gap-2 rounded-tight border border-line bg-surface px-2.5 py-1 text-small text-muted sm:inline-flex"
+            >
+              Buscar tareas
+              <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">/</kbd>
+            </button>
+            {killSwitch ? (
+              <button
+                onClick={() => void setKillSwitch(false)}
+                className="press min-h-8 rounded-tight border border-done-line bg-done-bg px-2.5 py-1 text-small font-semibold text-done"
+              >
+                Reanudar agentes
+              </button>
+            ) : (
+              <button
+                onClick={() => void setKillSwitch(true)}
+                className="press min-h-8 rounded-tight border border-line bg-surface px-2.5 py-1 text-small font-semibold text-muted"
+              >
+                Pausar agentes
+              </button>
+            )}
+            <span className="hidden items-center gap-2 border-l border-line pl-3 text-small text-muted lg:flex">
+              <span
+                title={
+                  wsStatus === "open"
+                    ? "Conexión en vivo"
+                    : wsStatus === "connecting"
+                      ? "Conectando"
+                      : "Sin conexión en vivo"
+                }
+                className={`inline-block h-2 w-2 rounded-full ${
+                  wsStatus === "open" ? "bg-done" : wsStatus === "connecting" ? "bg-work" : "bg-broken"
+                }`}
+              />
+              <span className="max-w-32 truncate font-medium text-ink-2">{person?.full_name}</span>
+              <button onClick={logout} className="press text-small text-faint hover:text-muted">
+                Salir
+              </button>
+            </span>
+          </div>
         </div>
-      </div>
+      </header>
+      <div className="scroll-edge sticky top-[52px] z-30 shrink-0" aria-hidden="true" />
+
+      <main className="min-h-0 flex-1 overflow-auto">
+        <Routes>
+          <Route path="/" element={<Navigate to="/hoy" replace />} />
+          <Route path="/hoy" element={<HoyView />} />
+          <Route path="/mis-tareas" element={<MyTasksView />} />
+          <Route path="/proyectos" element={<ProjectsView />} />
+          <Route path="/proyectos/:projectId" element={<ProjectLayout />} />
+          <Route path="/proyectos/:projectId/:tab" element={<ProjectLayout />} />
+          <Route path="/nuevo-proyecto" element={<NewProjectWizard />} />
+          <Route path="/sistema" element={<Navigate to={paths.sistema("ahora")} replace />} />
+          <Route path="/sistema/actividad/:runId" element={<RunDetailView />} />
+          <Route path="/sistema/:tab" element={<SystemLayout />} />
+          <Route path="/activo" element={<AssetView />} />
+
+          {/* Rutas anteriores: se conservan como redirección, no como destino. */}
+          <Route path="/waiting" element={<Navigate to="/hoy" replace />} />
+          <Route path="/my-tasks" element={<Navigate to="/mis-tareas" replace />} />
+          <Route path="/brain" element={<Navigate to={paths.sistema("salud")} replace />} />
+          <Route path="/swarm" element={<Navigate to={paths.sistema("ahora")} replace />} />
+          <Route path="/admin" element={<Navigate to={paths.sistema("ajustes")} replace />} />
+          <Route path="/runs" element={<Navigate to={paths.sistema("actividad")} replace />} />
+          <Route path="/runs/:runId" element={<LegacyRun />} />
+          <Route
+            path="/board"
+            element={
+              <Navigate
+                to={activeProjectId ? paths.proyecto(activeProjectId, "tablero") : "/proyectos"}
+                replace
+              />
+            }
+          />
+          <Route
+            path="/chat"
+            element={
+              <Navigate
+                to={activeProjectId ? paths.proyecto(activeProjectId, "conversacion") : "/proyectos"}
+                replace
+              />
+            }
+          />
+          <Route
+            path="/context"
+            element={
+              <Navigate
+                to={activeProjectId ? paths.proyecto(activeProjectId, "contexto") : "/proyectos"}
+                replace
+              />
+            }
+          />
+          <Route
+            path="/meetings"
+            element={
+              <Navigate
+                to={activeProjectId ? paths.proyecto(activeProjectId, "contexto") : "/proyectos"}
+                replace
+              />
+            }
+          />
+          <Route path="*" element={<Navigate to="/hoy" replace />} />
+        </Routes>
+      </main>
+
+      <SearchOverlay
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        {...(activeProjectId ? { projectId: activeProjectId } : {})}
+      />
       <TaskDrawer />
     </div>
   );

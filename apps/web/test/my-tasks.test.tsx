@@ -3,7 +3,7 @@
  * de navegación desde el shell.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "../src/App";
 import { useStore } from "../src/state/store";
@@ -135,7 +135,7 @@ describe("Navegación: entrada Mis tareas", () => {
     localStorage.clear();
   });
 
-  it("existe un enlace 'Mis tareas' que apunta a /my-tasks", async () => {
+  it("«Mis tareas» deja de ser entrada global y se alcanza desde Hoy; la ruta vieja redirige", async () => {
     localStorage.setItem("agentos_token", "tok");
     localStorage.setItem("agentos_person", JSON.stringify(person));
     mockFetch([
@@ -149,16 +149,26 @@ describe("Navegación: entrada Mis tareas", () => {
       { path: "/api/labels", body: { labels: [] } },
     ]);
 
-    render(
+    const { unmount } = render(
       <MemoryRouter initialEntries={["/my-tasks"]}>
         <App />
       </MemoryRouter>,
     );
 
-    // El shell repite la navegación (sidebar de escritorio + barra móvil): ambas
-    // deben apuntar a la misma ruta.
-    const links = await screen.findAllByRole("link", { name: /Mis tareas/ });
-    expect(links.length).toBeGreaterThan(0);
-    for (const link of links) expect(link.getAttribute("href")).toBe("/my-tasks");
+    // La ruta vieja aterriza en la vista nueva, no en un 404.
+    expect(await screen.findByRole("heading", { level: 1, name: /Mis tareas/ })).toBeTruthy();
+    // Y ya no ocupa un sitio en la navegación global de cuatro entradas.
+    const nav = screen.getByRole("navigation", { name: "Navegación principal" });
+    expect(within(nav).queryByText("Mis tareas")).toBeNull();
+    unmount();
+
+    // Desde Hoy siempre hay un camino de vuelta a tu propio trabajo.
+    render(
+      <MemoryRouter initialEntries={["/hoy"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const link = await screen.findByRole("link", { name: "Ver mis tareas" });
+    expect(link.getAttribute("href")).toBe("/mis-tareas");
   });
 });
