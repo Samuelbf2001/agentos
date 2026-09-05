@@ -483,13 +483,19 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
           before: { assigneePersonIds: [], primaryAssigneePersonId: null },
           after: { assigneePersonIds: selection.personIds, primaryAssigneePersonId: selection.primaryPersonId },
         });
-        await ctx.notifications.notifyAssignment({
-          task: savedTask,
-          beforePersonIds: [],
-          afterAssignees: assigned.assignees,
-          actor: personActor(req),
-          beforePrimaryPersonId: null,
-        });
+        try {
+          await ctx.notifications.notifyAssignment({
+            task: savedTask,
+            beforePersonIds: [],
+            afterAssignees: assigned.assignees,
+            actor: personActor(req),
+            beforePrimaryPersonId: null,
+          });
+        } catch (err) {
+          // La tarea y la asignación ya quedaron escritas: un fallo al avisar
+          // (proveedor caído, etc.) no debe reportarse como error de la petición.
+          req.log.warn({ err, taskId: savedTask.id }, "No se pudo enviar el aviso de asignación de la tarea");
+        }
       }
     }
     if (body.labels && body.labels.length > 0) {
@@ -705,13 +711,19 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       });
     }
     if (assignmentChanged) {
-      await ctx.notifications.notifyAssignment({
-        task,
-        beforePersonIds: beforeAssignees.map((row) => row.personId),
-        afterAssignees,
-        actor: personActor(req),
-        beforePrimaryPersonId: beforeAssignees.find((row) => row.isPrimary)?.personId ?? null,
-      });
+      try {
+        await ctx.notifications.notifyAssignment({
+          task,
+          beforePersonIds: beforeAssignees.map((row) => row.personId),
+          afterAssignees,
+          actor: personActor(req),
+          beforePrimaryPersonId: beforeAssignees.find((row) => row.isPrimary)?.personId ?? null,
+        });
+      } catch (err) {
+        // La asignación ya quedó escrita: un fallo al avisar no debe tumbar la
+        // petición ni reportarse como error al cliente.
+        req.log.warn({ err, taskId: id }, "No se pudo enviar el aviso de asignación de la tarea");
+      }
     }
     return { task: taskWithAssignees(db, task), assignees: afterAssignees };
   });

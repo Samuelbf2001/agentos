@@ -4,11 +4,20 @@
  * y subida/descarga de artefactos por archivo, incluyendo la regla
  * anti-teatro (missing_artifact) al mover a DONE.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { attachArtifact, createOrganization, createPerson, createProject, createTask, getTask } from "@agentos/db";
+import {
+  attachArtifact,
+  createOrganization,
+  createPerson,
+  createProject,
+  createTask,
+  getTask,
+  listTaskAssignees,
+  listTaskNotificationLogs,
+} from "@agentos/db";
 import { makeFixture, type TestFixture } from "./helpers.js";
 
 describe("Tareas — etiquetas, filtros y búsqueda", () => {
@@ -346,6 +355,84 @@ describe("Tareas — etiquetas, filtros y búsqueda", () => {
     const peopleIds = (people.json() as { people: Array<{ id: string }> }).people.map((p) => p.id);
     expect(peopleIds).toContain(internalPerson.id);
     expect(peopleIds).not.toContain(externalPerson.id);
+  });
+
+  it("POST /api/tasks con responsable interno en proyecto de OTRA organización crea la tarea, la asignación y el aviso (sin 400)", async () => {
+    const fixture = await fx();
+    const otherOrg = createOrganization(fixture.db, { name: "ACME Otra Org", kind: "client" });
+    const otherOrgProject = createProject(fixture.db, {
+      orgId: otherOrg.id,
+      name: "Proyecto ACME",
+      type: "assessment",
+      stage: "ENTENDER",
+      gateState: "pending",
+    });
+    const internalPerson = createPerson(fixture.db, {
+      orgId: fixture.org.id,
+      fullName: "Interno Sixteam con correo",
+      email: "interno@sixteam.test",
+      isInternal: true,
+      role: "Consultor",
+    });
+
+    const created = await fixture.api.app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      headers: fixture.authHeaders,
+      payload: {
+        project_id: otherOrgProject.id,
+        title: "Tarea para interno con aviso",
+        stage: "ENTENDER",
+        assignee_person_ids: [internalPerson.id],
+        primary_assignee_person_id: internalPerson.id,
+      },
+    });
+    // El aviso ya no debe hacer fallar la petición: la tarea se creó y se
+    // devuelve 201 aunque la persona sea de otra organización que el proyecto.
+    expect(created.statusCode).toBe(201);
+    const taskId = (created.json() as { task: { id: string } }).task.id;
+
+    const assignees = listTaskAssignees(fixture.db, taskId);
+    expect(assignees.map((row) => row.personId)).toEqual([internalPerson.id]);
+
+    // Sin proveedor configurado en el fixture, el aviso queda auditado como
+    // `suppressed`; con proveedor habría quedado `delivered`/`failed`.
+    const logs = listTaskNotificationLogs(fixture.db, { taskId });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]?.personId).toBe(internalPerson.id);
+    expect(logs[0]?.status).toBe("suppressed");
+  });
+
+  it("si el adaptador de avisos lanza, la creación de la tarea sigue respondiendo éxito y el error queda en el log", async () => {
+    const fixture = await fx();
+    const other = createPerson(fixture.db, {
+      orgId: fixture.org.id,
+      fullName: "Persona con correo",
+      email: "persona@acme.test",
+      isInternal: true,
+      role: "Operadora",
+    });
+    const warnSpy = vi.spyOn(fixture.api.app.log, "warn");
+    vi.spyOn(fixture.api.ctx.notifications, "notifyAssignment").mockRejectedValueOnce(
+      new Error("proveedor de correo caído"),
+    );
+
+    const created = await fixture.api.app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      headers: fixture.authHeaders,
+      payload: {
+        project_id: fixture.project.id,
+        title: "Tarea pese a fallo de aviso",
+        stage: "ENTENDER",
+        assignee_person_ids: [other.id],
+        primary_assignee_person_id: other.id,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const taskId = (created.json() as { task: { id: string } }).task.id;
+    expect(listTaskAssignees(fixture.db, taskId).map((row) => row.personId)).toEqual([other.id]);
+    expect(warnSpy).toHaveBeenCalled();
   });
 });
 
