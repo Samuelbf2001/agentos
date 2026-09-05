@@ -25,7 +25,7 @@ describe("REST", () => {
     expect(health.statusCode).toBe(200);
     const healthBody = health.json() as { ok: boolean; counts: { tables: number } };
     expect(healthBody.ok).toBe(true);
-    expect(healthBody.counts.tables).toBe(26); // 23 existentes + task_assignees + task_notification_log + task_labels
+    expect(healthBody.counts.tables).toBe(31); // 25 previas + task_labels (0006) + las 5 de linaje de Notion (0007)
 
     const people = await fx.api.app.inject({ method: "GET", url: "/api/auth/people" });
     expect(people.statusCode).toBe(200);

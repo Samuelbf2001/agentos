@@ -15,7 +15,9 @@ function has(name: string): boolean {
 
 function help(): void {
   console.log("Uso: pnpm notion:snapshot -- --env-file <ruta-secreta> [--output-dir <ruta>] [--use-operational-token]");
+  console.log("       [--no-attachments] [--no-archived]");
   console.log("Lee exclusivamente Tasks y Projects; no crea ni modifica páginas de Notion.");
+  console.log("Por defecto descarga los adjuntos alojados en Notion (con SHA-256) e intenta las páginas archivadas.");
 }
 
 if (has("--help") || has("-h")) {
@@ -35,10 +37,16 @@ try {
     allowOperationalToken: has("--use-operational-token"),
     outputDirectory: option("--output-dir"),
   });
-  const reader = new NotionApiReader({ apiVersion: settings.apiVersion, token: settings.token });
+  const reader = new NotionApiReader({
+    apiVersion: settings.apiVersion,
+    token: settings.token,
+    maxAttachmentBytes: settings.maxAttachmentBytes,
+  });
   const result = await createNotionSnapshot({
     outputDirectory: settings.outputDirectory,
     reader,
+    downloadAttachments: !has("--no-attachments"),
+    includeArchived: !has("--no-archived"),
     sources: [
       { key: "tasks", databaseId: settings.tasksDatabaseId },
       { key: "projects", databaseId: settings.projectsDatabaseId },
@@ -46,7 +54,13 @@ try {
   });
   const counts = result.manifest.sources.map((source) => `${source.key}=${source.pages_captured}`).join(" ");
   const exceptions = result.manifest.sources.reduce((total, source) => total + source.exceptions.length, 0);
+  const archived = result.manifest.sources.reduce((total, source) => total + source.archived_captured, 0);
+  const files = result.manifest.sources.reduce(
+    (total, source) => total + source.attachments_downloaded,
+    0,
+  );
   console.log(`Snapshot ${result.manifest.status}: ${counts} excepciones=${exceptions}`);
+  console.log(`Archivadas capturadas: ${archived} · adjuntos descargados: ${files}`);
   console.log(`Archivo local: ${result.runDirectory}`);
 } catch (error) {
   // El motivo se informa sin exponer el secreto ni el contenido capturado.

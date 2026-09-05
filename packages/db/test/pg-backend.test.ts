@@ -90,14 +90,14 @@ describePg("backend Postgres + pgvector", () => {
   // ── 1. Esquema ────────────────────────────────────────────────────────────
 
   describe("migración de esquema", () => {
-    it("crea las 25 tablas del dominio", async () => {
+    it("crea las 31 tablas del dominio", async () => {
       const rows = await db.execute<{ table_name: string }>(sql`
         SELECT table_name FROM information_schema.tables
          WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
       `);
       const names = rows.map((r) => r.table_name);
       for (const t of PG_TABLE_ORDER) expect(names).toContain(t);
-      expect(PG_TABLE_ORDER).toHaveLength(26);
+      expect(PG_TABLE_ORDER).toHaveLength(31);
     });
 
     it("respeta las convenciones de portabilidad: id TEXT, *_at bigint, JSON→jsonb, boolean nativo", async () => {

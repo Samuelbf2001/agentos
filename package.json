@@ -8,7 +8,8 @@
     "dev": "pnpm --filter @agentos/api dev",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
-    "notion:snapshot": "pnpm --filter @agentos/notion-migration snapshot"
+    "notion:snapshot": "pnpm --filter @agentos/notion-migration snapshot",
+    "notion:import": "pnpm --filter @agentos/notion-migration import"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

@@ -635,6 +635,137 @@ export const moduleLaunches = pgTable(
   ],
 );
 
+// ── Linaje de la migración de Notion — espejo de `schema.ts` ────────────────
+
+export const notionMigrationRuns = pgTable(
+  "notion_migration_runs",
+  {
+    id: text("id").primaryKey(),
+    sourceSchemaVersion: text("source_schema_version").notNull(),
+    capturedAt: epochMs("captured_at").notNull(),
+    manifestHash: text("manifest_hash").notNull(),
+    snapshotRunId: text("snapshot_run_id").notNull(),
+    mode: text("mode").$type<"dry_run" | "pilot" | "full">().notNull(),
+    status: text("status")
+      .$type<"running" | "completed" | "completed_with_exceptions" | "failed">()
+      .notNull()
+      .default("running"),
+    report: jsonb("report").$type<Record<string, unknown>>(),
+    immutable: boolean("immutable").notNull().default(true),
+    startedAt: epochMs("started_at").notNull(),
+    finishedAt: epochMs("finished_at"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [index("idx_notion_migration_runs_snapshot").on(t.snapshotRunId)],
+);
+
+export const notionPageArchives = pgTable(
+  "notion_page_archives",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    sourceKind: text("source_kind").$type<"task" | "project">().notNull(),
+    notionPageId: text("notion_page_id").notNull(),
+    originalUrl: text("original_url"),
+    rawPageUri: text("raw_page_uri"),
+    rawBlocksUri: text("raw_blocks_uri"),
+    rawCommentsUri: text("raw_comments_uri"),
+    rawFilesUri: text("raw_files_uri"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    capturedAt: epochMs("captured_at").notNull(),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_notion_page_archives_run_page").on(t.migrationRunId, t.sourceKind, t.notionPageId),
+    index("idx_notion_page_archives_page").on(t.sourceKind, t.notionPageId),
+  ],
+);
+
+export const notionImportLinks = pgTable(
+  "notion_import_links",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    sourceKind: text("source_kind").$type<"task" | "project" | "inbox">().notNull(),
+    notionPageId: text("notion_page_id").notNull(),
+    agentosObjectKind: text("agentos_object_kind").$type<"task" | "project">().notNull(),
+    agentosObjectId: text("agentos_object_id").notNull(),
+    archiveId: text("archive_id").references(() => notionPageArchives.id),
+    importStatus: text("import_status")
+      .$type<"imported" | "updated" | "inbox_container" | "skipped">()
+      .notNull(),
+    sourceLastEditedAt: epochMs("source_last_edited_at"),
+    importedAt: epochMs("imported_at").notNull(),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_notion_import_links_source").on(t.sourceKind, t.notionPageId),
+    index("idx_notion_import_links_object").on(t.agentosObjectKind, t.agentosObjectId),
+    index("idx_notion_import_links_run").on(t.migrationRunId),
+  ],
+);
+
+export const notionIdentityMappings = pgTable(
+  "notion_identity_mappings",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    notionPersonId: text("notion_person_id").notNull(),
+    notionEmail: text("notion_email"),
+    agentosPersonId: text("agentos_person_id").references(() => people.id),
+    matchMethod: text("match_method")
+      .$type<"confirmed_email" | "admin_decision" | "unresolved">()
+      .notNull(),
+    validationState: text("validation_state")
+      .$type<"confirmed" | "pending_review">()
+      .notNull()
+      .default("pending_review"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: epochMs("reviewed_at"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("uq_notion_identity_mappings_person").on(t.notionPersonId)],
+);
+
+export const notionImportQuarantine = pgTable(
+  "notion_import_quarantine",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    sourceKind: text("source_kind").$type<"task" | "project" | "identity">().notNull(),
+    notionPageId: text("notion_page_id").notNull(),
+    fieldName: text("field_name").notNull(),
+    reason: text("reason").notNull(),
+    rawReference: text("raw_reference"),
+    resolutionState: text("resolution_state")
+      .$type<"open" | "resolved" | "accepted">()
+      .notNull()
+      .default("open"),
+    resolvedBy: text("resolved_by"),
+    resolvedAt: epochMs("resolved_at"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_notion_import_quarantine_entry").on(
+      t.migrationRunId,
+      t.sourceKind,
+      t.notionPageId,
+      t.fieldName,
+      t.rawReference,
+    ),
+    index("idx_notion_import_quarantine_state").on(t.resolutionState, t.reason),
+  ],
+);
+
 /**
  * Orden TOPOLÓGICO de inserción (FKs satisfechas) — lo consume la herramienta
  * de migración de datos `migrate-to-pg.ts` y la limpieza de los tests PG.
@@ -669,6 +800,11 @@ export const PG_TABLE_ORDER = [
   "audit_log",
   "app_config",
   "module_launches",
+  "notion_migration_runs",
+  "notion_page_archives",
+  "notion_import_links",
+  "notion_identity_mappings",
+  "notion_import_quarantine",
 ] as const;
 
 export type PgTableName = (typeof PG_TABLE_ORDER)[number];

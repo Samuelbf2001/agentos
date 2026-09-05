@@ -2,6 +2,17 @@
 
 **Estado:** plan de ejecución posterior al staging de AgentOS. No modifica páginas, bases, vistas ni permisos de Notion.
 
+> **Actualización 2026-09-05 (rama `feat/notion-import`).** Las fases N1 (snapshot),
+> N2 (normalización) y N3 (piloto idempotente) están **implementadas y probadas**:
+> capturador con adjuntos y archivadas, mapa de campos tipado, las cinco tablas de
+> linaje (migraciones `0007` SQLite / `0003` Postgres) e importador idempotente con
+> informe de conciliación. El piloto y la importación completa se ejecutaron sobre
+> **copias temporales** de la base; la base viva sigue intacta. N4 (importación a
+> producción) y N5 (corte de las escrituras de WhatsAppHub) siguen pendientes de la
+> aprobación de Ernesto. El estado real, el mapa de campos decidido, el
+> procedimiento exacto y el inventario verificado de escrituras de WhatsAppHub
+> están en `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` §5 y §10–§13.
+
 ## 1. Alcance y principio de preservación
 
 Se migran exclusivamente las bases **Tasks** y **Projects** de `Projects & Tasks (1)`. Notion continúa como archivo histórico de consulta; no se borra, archiva masivamente ni se reemplaza hasta completar conciliación y una ventana de reversión.

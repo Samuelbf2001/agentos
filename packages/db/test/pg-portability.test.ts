@@ -47,15 +47,15 @@ function tableNames(mod: Record<string, unknown>): string[] {
 }
 
 describe("esquema Postgres = esquema SQLite", () => {
-  it("las 26 tablas existen en los dos motores, con los mismos nombres", () => {
+  it("las 31 tablas existen en los dos motores, con los mismos nombres", () => {
     const lite = tableNames(liteSchema);
     const pg = tableNames(pgSchema);
-    expect(lite).toHaveLength(26);
+    expect(lite).toHaveLength(31);
     expect(pg).toEqual(lite);
   });
 
-  it("PG_TABLE_ORDER cubre las 26 tablas sin repetir", () => {
-    expect(new Set(PG_TABLE_ORDER).size).toBe(26);
+  it("PG_TABLE_ORDER cubre las 31 tablas sin repetir", () => {
+    expect(new Set(PG_TABLE_ORDER).size).toBe(31);
     expect([...PG_TABLE_ORDER].sort()).toEqual(tableNames(liteSchema));
   });
 
@@ -94,8 +94,8 @@ describe("esquema Postgres = esquema SQLite", () => {
     }
   });
 
-  it("TABLE_PAIRS empareja las 26 tablas en el mismo orden topológico", () => {
-    expect(TABLE_PAIRS).toHaveLength(26);
+  it("TABLE_PAIRS empareja las 31 tablas en el mismo orden topológico", () => {
+    expect(TABLE_PAIRS).toHaveLength(31);
     expect(TABLE_PAIRS.map((p) => p.name)).toEqual([...PG_TABLE_ORDER]);
     for (const pair of TABLE_PAIRS) {
       expect(getTableName(pair.from)).toBe(pair.name);

@@ -46,7 +46,7 @@ const EXPECTED_TABLES = [
 ];
 
 describe("migración desde cero", () => {
-  it("crea exactamente las 26 tablas de dominio (§5/§8b + responsables, avisos y etiquetas)", () => {
+  it("crea exactamente las 31 tablas de dominio (§5/§8b + responsables, avisos, etiquetas y linaje de Notion)", () => {
     const db = freshDb();
     const names = (
       db.$client
@@ -54,7 +54,7 @@ describe("migración desde cero", () => {
         .all() as { name: string }[]
     ).map((r) => r.name);
     for (const t of EXPECTED_TABLES) expect(names, `falta tabla ${t}`).toContain(t);
-    expect(countDomainTables(db)).toBe(26);
+    expect(countDomainTables(db)).toBe(31);
   });
 
   it("crea las tablas FTS5 espejo (messages_fts, knowledge_fts)", () => {
@@ -78,7 +78,7 @@ describe("migración desde cero", () => {
   it("es idempotente (migrar dos veces no falla)", () => {
     const db = freshDb();
     expect(() => runMigrations(db)).not.toThrow();
-    expect(countDomainTables(db)).toBe(26);
+    expect(countDomainTables(db)).toBe(31);
   });
 });
 
@@ -95,7 +95,7 @@ describe("seeds", () => {
     expect(counts.phaseModules).toBe(3); // consultoria, implementacion, operacion (§13 CA-M1.1)
     expect(counts.projects).toBe(1);
     expect(counts.tasks).toBe(12);
-    expect(counts.tables).toBe(26);
+    expect(counts.tables).toBe(31);
     // ai_sdk sin credencial → claude_subscription/claude_code (ARCHITECTURE §3)
     expect([...counts.agentsFallback].sort()).toEqual(["alex", "clara", "sally", "sam"]);
     const alex = getAgentBySlug(db, "alex")!;
