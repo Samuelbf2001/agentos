@@ -19,6 +19,8 @@
  * enlace de linaje `source_kind='inbox'`.
  */
 import {
+  appendTaskEvent,
+  attachArtifact,
   createNotionMigrationRun,
   createNotionPageArchive,
   boardTasks,
@@ -26,6 +28,7 @@ import {
   createProject,
   createTask,
   finishNotionMigrationRun,
+  getLatestNotionPageArchive,
   getOrganizationByName,
   getProjectByOrgAndName,
   getProject,
@@ -41,6 +44,7 @@ import {
   upsertNotionImportLink,
   type AgentosDb,
   type NotionMigrationRun,
+  type NotionPageArchive,
 } from "@agentos/db";
 import {
   bindProjectSchema,
@@ -232,6 +236,8 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
   const allTaskIds = await reader.pageIds("tasks");
   const quarantine = new Quarantine();
   const orderKeys = new OrderKeys(db);
+  /** B2: cuenta los fallos de escritura de tarea/proyecto — decide el `status` final. */
+  let writeErrors = 0;
 
   // ── Selección del lote ────────────────────────────────────────────────────
   // El piloto NO es un prefijo: se elige por cobertura de rasgos (ver
@@ -286,12 +292,15 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
   const capturedAt = capturedAtMs(manifest.captured_at);
 
   // ── Organización destino ──────────────────────────────────────────────────
+  // Se lee (nunca se crea) también en dry-run: el directorio de identidades de
+  // abajo necesita saber cuál es la organización destino para filtrar
+  // responsables, aunque el ensayo no vaya a escribir la organización.
   const organizationName = options.organizationName ?? DEFAULT_ORGANIZATION;
-  let organizationId = "";
+  const existingOrganization = await getOrganizationByName(db, organizationName);
+  let organizationId = existingOrganization?.id ?? "";
   if (!dryRun) {
-    const existing = await getOrganizationByName(db, organizationName);
     const organization =
-      existing ?? (await createOrganization(db, { name: organizationName, kind: "internal" }));
+      existingOrganization ?? (await createOrganization(db, { name: organizationName, kind: "internal" }));
     organizationId = organization.id;
   }
 
@@ -314,10 +323,50 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
   // Se construye también en dry-run: leer no escribe, y sin él el ensayo daría
   // "todas las identidades sin resolver", que es exactamente lo que se quiere
   // saber ANTES de importar de verdad.
+  //
+  // Solo cuentan personas de la organización destino o personas internas
+  // (isInternal === true) — la misma regla que aplica el resto del sistema al
+  // asignar responsables (validateTaskAssigneeOrganization en
+  // packages/db/src/repositories/task-assignees.ts). Un correo que solo
+  // exista en OTRA organización no interna no resuelve: la cuarentena lo dice
+  // explícitamente (persona_de_otra_organizacion) en vez de fallar la
+  // escritura de la tarea o, peor, abortar la corrida entera (B2).
   const byEmail = new Map<string, string>();
-  for (const person of await listPeople(db)) {
-    if (person.email) byEmail.set(person.email.toLowerCase(), person.id);
+  const otherOrgEmails = new Set<string>();
+  const ambiguousEmails = new Set<string>();
+  {
+    const candidatesByEmail = new Map<string, { personId: string; orgId: string }[]>();
+    for (const person of await listPeople(db)) {
+      if (!person.email) continue;
+      const email = person.email.toLowerCase();
+      if (person.orgId === organizationId || person.isInternal) {
+        const candidates = candidatesByEmail.get(email) ?? [];
+        candidates.push({ personId: person.id, orgId: person.orgId });
+        candidatesByEmail.set(email, candidates);
+      } else {
+        otherOrgEmails.add(email);
+      }
+    }
+    for (const [email, candidates] of candidatesByEmail) {
+      // Dos personas de distintas organizaciones comparten correo: no se
+      // decide el orden de filas (last-write-wins de un Map sería arbitrario).
+      if (new Set(candidates.map((c) => c.orgId)).size > 1) {
+        ambiguousEmails.add(email);
+        continue;
+      }
+      byEmail.set(email, candidates[0]!.personId);
+    }
   }
+
+  /** Motivo de cuarentena fino para un responsable que no resolvió. */
+  const identityQuarantineReason = (person: NotionPerson): string => {
+    const email = person.email?.toLowerCase();
+    if (!email) return "identidad_no_confirmada_por_correo";
+    if (ambiguousEmails.has(email)) return "correo_ambiguo";
+    if (otherOrgEmails.has(email)) return "persona_de_otra_organizacion";
+    return "identidad_no_confirmada_por_correo";
+  };
+
   const identityCache = new Map<string, ReturnType<typeof resolveIdentity>>();
 
   const resolvePerson = async (person: NotionPerson): Promise<string | null> => {
@@ -345,6 +394,10 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
     return resolution.agentosPersonId;
   };
 
+  // B2: try/finally alrededor de la corrida completa — la cuarentena
+  // acumulada se vuelca y la corrida se cierra pase lo que pase; nunca queda
+  // una fila en `running`.
+  try {
   // ── Pasada 1a: proyectos ──────────────────────────────────────────────────
   /** `notion_page_id` normalizado → `projects.id`. */
   const projectIdByPage = new Map<string, string>();
@@ -355,35 +408,76 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
     quarantine.addFieldExceptions("project", notionPageId, mapped.exceptions);
 
     if (dryRun) {
-      report.imported.projects_created += 1;
+      // El ensayo distingue would_create de would_update mirando el enlace
+      // existente (lectura pura, no escribe nada) en vez de contar todo como
+      // alta nueva.
+      if (await findNotionImportLink(db, "project", notionPageId)) {
+        report.imported.projects_updated += 1;
+      } else {
+        report.imported.projects_created += 1;
+      }
       projectIdByPage.set(normalizeNotionId(notionPageId), `dry-run:${notionPageId}`);
       continue;
     }
 
-    const payload = archivePayload(snapshot);
-    const archive = await createNotionPageArchive(db, {
-      migrationRunId: runId,
-      sourceKind: "project",
-      notionPageId,
-      originalUrl: mapped.originalUrl,
-      rawPageUri: snapshot.uris.page,
-      rawBlocksUri: snapshot.uris.blocks,
-      rawCommentsUri: snapshot.uris.comments,
-      rawFilesUri: snapshot.uris.files,
-      payload,
-      payloadHash: sha256(payload),
-      capturedAt,
-    });
+    // B2: un proyecto que falla al escribir no debe abortar la corrida ni
+    // perder la cuarentena acumulada hasta ahora — se anota y se sigue.
+    try {
+      const existingLink = await findNotionImportLink(db, "project", notionPageId);
+      const current = existingLink ? await getProject(db, existingLink.agentosObjectId) : undefined;
 
-    const existingLink = await findNotionImportLink(db, "project", notionPageId);
-    let projectId: string;
-    if (existingLink) {
-      const current = await getProject(db, existingLink.agentosObjectId);
-      if (current) {
+      if (existingLink && current) {
+        // I1: reejecutar no debe pisar una edición humana posterior a la
+        // última importación.
+        if (current.updatedAt > existingLink.importedAt) {
+          quarantine.add({
+            sourceKind: "project",
+            notionPageId,
+            fieldName: "*",
+            reason: "editado_en_agentos_tras_importar",
+          });
+          projectIdByPage.set(normalizeNotionId(notionPageId), current.id);
+          continue;
+        }
+        // I1: Notion no cambió desde la última importación — no se toca nada.
+        if (
+          mapped.lastEditedAt !== null &&
+          existingLink.sourceLastEditedAt !== null &&
+          mapped.lastEditedAt <= existingLink.sourceLastEditedAt
+        ) {
+          projectIdByPage.set(normalizeNotionId(notionPageId), current.id);
+          continue;
+        }
+      }
+
+      // I2: no duplicar el archivo si el contenido no cambió desde la última
+      // corrida que archivó esta misma página.
+      const payload = archivePayload(snapshot);
+      const payloadHash = sha256(payload);
+      const reusableArchive = await getLatestNotionPageArchive(db, "project", notionPageId);
+      const archive: NotionPageArchive =
+        reusableArchive && reusableArchive.payloadHash === payloadHash
+          ? reusableArchive
+          : await createNotionPageArchive(db, {
+              migrationRunId: runId,
+              sourceKind: "project",
+              notionPageId,
+              originalUrl: mapped.originalUrl,
+              rawPageUri: snapshot.uris.page,
+              rawBlocksUri: snapshot.uris.blocks,
+              rawCommentsUri: snapshot.uris.comments,
+              rawFilesUri: snapshot.uris.files,
+              payload,
+              payloadHash,
+              capturedAt,
+            });
+
+      let projectId: string;
+      if (existingLink && current) {
         await updateProject(db, current.id, { name: mapped.name }, current.version);
         projectId = current.id;
         report.imported.projects_updated += 1;
-      } else {
+      } else if (existingLink) {
         // El enlace apunta a un proyecto que ya no existe: se recrea y el enlace
         // se repunta. La corrida anterior queda registrada igualmente.
         const created = await createProject(db, {
@@ -394,29 +488,38 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
         });
         projectId = created.id;
         report.imported.projects_created += 1;
+      } else {
+        const created = await createProject(db, {
+          orgId: organizationId,
+          name: mapped.name,
+          type: mapped.type,
+          stage: mapped.stage,
+        });
+        projectId = created.id;
+        report.imported.projects_created += 1;
       }
-    } else {
-      const created = await createProject(db, {
-        orgId: organizationId,
-        name: mapped.name,
-        type: mapped.type,
-        stage: mapped.stage,
-      });
-      projectId = created.id;
-      report.imported.projects_created += 1;
-    }
 
-    await upsertNotionImportLink(db, {
-      migrationRunId: runId,
-      sourceKind: "project",
-      notionPageId,
-      agentosObjectKind: "project",
-      agentosObjectId: projectId,
-      archiveId: archive.id,
-      importStatus: existingLink ? "updated" : "imported",
-      sourceLastEditedAt: mapped.lastEditedAt,
-    });
-    projectIdByPage.set(normalizeNotionId(notionPageId), projectId);
+      await upsertNotionImportLink(db, {
+        migrationRunId: runId,
+        sourceKind: "project",
+        notionPageId,
+        agentosObjectKind: "project",
+        agentosObjectId: projectId,
+        archiveId: archive.id,
+        importStatus: existingLink ? "updated" : "imported",
+        sourceLastEditedAt: mapped.lastEditedAt,
+      });
+      projectIdByPage.set(normalizeNotionId(notionPageId), projectId);
+    } catch (error) {
+      quarantine.add({
+        sourceKind: "project",
+        notionPageId,
+        fieldName: "*",
+        reason: "error_al_escribir_proyecto",
+        rawReference: error instanceof Error ? error.message : String(error),
+      });
+      writeErrors += 1;
+    }
   }
 
   // ── Bandeja de Notion (contenedor de tareas sin proyecto) ─────────────────
@@ -489,7 +592,7 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
           sourceKind: "identity",
           notionPageId,
           fieldName: taskBinding.peopleProperty ?? "Asignado",
-          reason: "identidad_no_confirmada_por_correo",
+          reason: identityQuarantineReason(person),
           rawReference: person.notionPersonId,
         });
       }
@@ -497,36 +600,91 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
 
     if (dryRun) {
       // El ensayo recorre el MISMO camino de decisión, cuarentena incluida: su
-      // informe es la previsión honesta de lo que hará la corrida real.
-      report.imported.tasks_created += 1;
+      // informe es la previsión honesta de lo que hará la corrida real —
+      // would_create vs would_update según haya o no un enlace existente.
+      if (await findNotionImportLink(db, "task", notionPageId)) {
+        report.imported.tasks_updated += 1;
+      } else {
+        report.imported.tasks_created += 1;
+      }
       continue;
     }
 
-    const targetProjectId = projectId ?? (await ensureInboxProject());
+    // B2: una tarea que falla al escribir no debe abortar la corrida ni
+    // perder la cuarentena acumulada hasta ahora — se anota y se sigue.
+    try {
+      const existingLink = await findNotionImportLink(db, "task", notionPageId);
+      const current = existingLink ? await getTask(db, existingLink.agentosObjectId) : undefined;
 
-    const payload = archivePayload(snapshot);
-    const archive = await createNotionPageArchive(db, {
-      migrationRunId: runId,
-      sourceKind: "task",
-      notionPageId,
-      originalUrl: mapped.originalUrl,
-      rawPageUri: snapshot.uris.page,
-      rawBlocksUri: snapshot.uris.blocks,
-      rawCommentsUri: snapshot.uris.comments,
-      rawFilesUri: snapshot.uris.files,
-      payload,
-      payloadHash: sha256(payload),
-      capturedAt,
-    });
+      if (existingLink && current) {
+        // I1: reejecutar no debe pisar una edición humana posterior a la
+        // última importación.
+        if (current.updatedAt > existingLink.importedAt) {
+          quarantine.add({
+            sourceKind: "task",
+            notionPageId,
+            fieldName: "*",
+            reason: "editado_en_agentos_tras_importar",
+          });
+          taskIdByPage.set(normalizeNotionId(notionPageId), current.id);
+          continue;
+        }
+        // I1: Notion no cambió desde la última importación — no se toca nada.
+        if (
+          mapped.lastEditedAt !== null &&
+          existingLink.sourceLastEditedAt !== null &&
+          mapped.lastEditedAt <= existingLink.sourceLastEditedAt
+        ) {
+          taskIdByPage.set(normalizeNotionId(notionPageId), current.id);
+          continue;
+        }
+      }
 
-    const existingLink = await findNotionImportLink(db, "task", notionPageId);
-    let taskId: string;
-    const current = existingLink ? await getTask(db, existingLink.agentosObjectId) : undefined;
-    if (current) {
-      await updateTask(
-        db,
-        current.id,
-        {
+      const targetProjectId = projectId ?? (await ensureInboxProject());
+
+      // I2: no duplicar el archivo si el contenido no cambió desde la última
+      // corrida que archivó esta misma página.
+      const payload = archivePayload(snapshot);
+      const payloadHash = sha256(payload);
+      const reusableArchive = await getLatestNotionPageArchive(db, "task", notionPageId);
+      const archive: NotionPageArchive =
+        reusableArchive && reusableArchive.payloadHash === payloadHash
+          ? reusableArchive
+          : await createNotionPageArchive(db, {
+              migrationRunId: runId,
+              sourceKind: "task",
+              notionPageId,
+              originalUrl: mapped.originalUrl,
+              rawPageUri: snapshot.uris.page,
+              rawBlocksUri: snapshot.uris.blocks,
+              rawCommentsUri: snapshot.uris.comments,
+              rawFilesUri: snapshot.uris.files,
+              payload,
+              payloadHash,
+              capturedAt,
+            });
+
+      let taskId: string;
+      const isUpdate = current !== undefined;
+      if (current) {
+        await updateTask(
+          db,
+          current.id,
+          {
+            projectId: targetProjectId,
+            title: mapped.title,
+            status: mapped.status,
+            priority: mapped.priority,
+            stage: mapped.stage,
+            blockedReason: mapped.blockedReason,
+            dueAt: mapped.dueAt,
+          },
+          current.version,
+        );
+        taskId = current.id;
+        report.imported.tasks_updated += 1;
+      } else {
+        const created = await createTask(db, {
           projectId: targetProjectId,
           title: mapped.title,
           status: mapped.status,
@@ -534,49 +692,65 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
           stage: mapped.stage,
           blockedReason: mapped.blockedReason,
           dueAt: mapped.dueAt,
-        },
-        current.version,
-      );
-      taskId = current.id;
-      report.imported.tasks_updated += 1;
-    } else {
-      const created = await createTask(db, {
-        projectId: targetProjectId,
-        title: mapped.title,
-        status: mapped.status,
-        priority: mapped.priority,
-        stage: mapped.stage,
-        blockedReason: mapped.blockedReason,
-        dueAt: mapped.dueAt,
-        dependsOn: [],
-        orderKey: await orderKeys.next(targetProjectId, mapped.status),
-      });
-      taskId = created.id;
-      report.imported.tasks_created += 1;
-    }
+          dependsOn: [],
+          orderKey: await orderKeys.next(targetProjectId, mapped.status),
+        });
+        taskId = created.id;
+        report.imported.tasks_created += 1;
+      }
 
-    if (personIds.length > 0) {
-      const beforeAssign = await getTask(db, taskId);
-      await replaceTaskAssignees(
-        db,
+      if (personIds.length > 0) {
+        const beforeAssign = await getTask(db, taskId);
+        await replaceTaskAssignees(
+          db,
+          taskId,
+          { personIds, primaryPersonId: personIds[0]!, assignedBy: actor },
+          beforeAssign!.version,
+        );
+        report.identities.assignments_written += personIds.length;
+      }
+
+      // B3: el motor del tablero exige un artefacto para REVIEW/DONE (regla
+      // anti-teatro) — una tarea importada ya en esos estados debe poder
+      // moverse sin tropezar con `missing_artifact`.
+      if (mapped.status === "REVIEW" || mapped.status === "DONE") {
+        await attachArtifact(db, {
+          taskId,
+          kind: "notion_archive",
+          title: "Página de Notion",
+          meta: { archiveId: archive.id, notionPageId, originalUrl: mapped.originalUrl },
+        });
+      }
+      // B3: toda tarea importada deja constancia en su línea de tiempo — no
+      // nace vacía.
+      await appendTaskEvent(db, {
         taskId,
-        { personIds, primaryPersonId: personIds[0]!, assignedBy: actor },
-        beforeAssign!.version,
-      );
-      report.identities.assignments_written += personIds.length;
-    }
+        kind: "imported",
+        actor: "system:notion-import",
+        payload: { notionPageId, migrationRunId: runId },
+      });
 
-    await upsertNotionImportLink(db, {
-      migrationRunId: runId,
-      sourceKind: "task",
-      notionPageId,
-      agentosObjectKind: "task",
-      agentosObjectId: taskId,
-      archiveId: archive.id,
-      importStatus: current ? "updated" : "imported",
-      sourceLastEditedAt: mapped.lastEditedAt,
-    });
-    taskIdByPage.set(normalizeNotionId(notionPageId), taskId);
+      await upsertNotionImportLink(db, {
+        migrationRunId: runId,
+        sourceKind: "task",
+        notionPageId,
+        agentosObjectKind: "task",
+        agentosObjectId: taskId,
+        archiveId: archive.id,
+        importStatus: isUpdate ? "updated" : "imported",
+        sourceLastEditedAt: mapped.lastEditedAt,
+      });
+      taskIdByPage.set(normalizeNotionId(notionPageId), taskId);
+    } catch (error) {
+      quarantine.add({
+        sourceKind: "task",
+        notionPageId,
+        fieldName: "*",
+        reason: "error_al_escribir_tarea",
+        rawReference: error instanceof Error ? error.message : String(error),
+      });
+      writeErrors += 1;
+    }
   }
 
   // ── Pasada 2: relaciones entre tareas ─────────────────────────────────────
@@ -628,41 +802,69 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
       if (parentTaskId && current.parentTaskId !== parentTaskId) patch.parentTaskId = parentTaskId;
       if (Object.keys(patch).length > 0) {
         await updateTask(db, taskId, patch, current.version);
+        // I1: esta escritura es del propio importador, no una edición humana.
+        // Si no se refresca `importedAt` aquí, la siguiente corrida vería
+        // `current.updatedAt > link.importedAt` (el link se selló en la
+        // pasada 1, ANTES de esta) y confundiría su propio trabajo con una
+        // edición humana posterior.
+        await upsertNotionImportLink(db, {
+          migrationRunId: runId,
+          sourceKind: "task",
+          notionPageId: mapped.notionPageId,
+          agentosObjectKind: "task",
+          agentosObjectId: taskId,
+          importStatus: "updated",
+          sourceLastEditedAt: mapped.lastEditedAt,
+        });
       }
       report.relations.depends_on_edges += dependsOn.length;
       if (parentTaskId) report.relations.parent_task_links += 1;
     }
   }
 
-  // ── Cuarentena y cierre ───────────────────────────────────────────────────
-  report.quarantine = { total: quarantine.entries.length, by_reason: quarantine.byReason() };
+  } finally {
+    // ── Cuarentena y cierre ─────────────────────────────────────────────────
+    // SIEMPRE se ejecuta, incluso si algo por encima lanzó sin ser atrapado
+    // por un try/catch puntual: la cuarentena acumulada hasta ese punto no se
+    // pierde y la corrida nunca queda colgada en `running` (B2).
+    report.quarantine = { total: quarantine.entries.length, by_reason: quarantine.byReason() };
 
-  if (!dryRun) {
-    for (const entry of quarantine.entries) {
-      await recordNotionQuarantine(db, {
-        migrationRunId: runId,
-        sourceKind: entry.sourceKind,
-        notionPageId: entry.notionPageId,
-        fieldName: entry.fieldName,
-        reason: entry.reason,
-        rawReference: entry.rawReference ?? null,
-        resolutionState: "open",
+    if (!dryRun) {
+      for (const entry of quarantine.entries) {
+        await recordNotionQuarantine(db, {
+          migrationRunId: runId,
+          sourceKind: entry.sourceKind,
+          notionPageId: entry.notionPageId,
+          fieldName: entry.fieldName,
+          reason: entry.reason,
+          rawReference: entry.rawReference ?? null,
+          resolutionState: "open",
+        });
+      }
+      const links = await listNotionImportLinks(db, {});
+      report.destination_counts = {
+        projects: links.filter((link) => link.sourceKind === "project").length,
+        tasks: links.filter((link) => link.sourceKind === "task").length,
+      };
+      const status: NotionMigrationRun["status"] =
+        writeErrors > 0
+          ? "failed"
+          : quarantine.entries.length > 0
+            ? "completed_with_exceptions"
+            : "completed";
+      await finishNotionMigrationRun(db, runId, {
+        status,
+        report: report as unknown as Record<string, unknown>,
       });
+    } else {
+      // Solo esta corrida (would_create + would_update de este lote), no el
+      // total histórico de la base — eso solo tiene sentido para una corrida
+      // real, que sí escribió algo.
+      report.destination_counts = {
+        projects: report.imported.projects_created + report.imported.projects_updated,
+        tasks: report.imported.tasks_created + report.imported.tasks_updated,
+      };
     }
-    const links = await listNotionImportLinks(db, {});
-    report.destination_counts = {
-      projects: links.filter((link) => link.sourceKind === "project").length,
-      tasks: links.filter((link) => link.sourceKind === "task").length,
-    };
-    await finishNotionMigrationRun(db, runId, {
-      status: quarantine.entries.length > 0 ? "completed_with_exceptions" : "completed",
-      report: report as unknown as Record<string, unknown>,
-    });
-  } else {
-    report.destination_counts = {
-      projects: report.imported.projects_created,
-      tasks: report.imported.tasks_created,
-    };
   }
 
   return report;

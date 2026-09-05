@@ -37,7 +37,11 @@ try {
     allowOperationalToken: has("--use-operational-token"),
     outputDirectory: option("--output-dir"),
   });
-  const reader = new NotionApiReader({ apiVersion: settings.apiVersion, token: settings.token });
+  const reader = new NotionApiReader({
+    apiVersion: settings.apiVersion,
+    token: settings.token,
+    maxAttachmentBytes: settings.maxAttachmentBytes,
+  });
   const result = await createNotionSnapshot({
     outputDirectory: settings.outputDirectory,
     reader,

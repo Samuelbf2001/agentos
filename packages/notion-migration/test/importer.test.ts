@@ -2,17 +2,21 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createBoardEngine } from "@agentos/core";
 import {
   closeDb,
   createOrganization,
   createPerson,
+  findNotionImportLinkByObject,
   getProject,
   getTask,
+  listArtifacts,
   listNotionIdentityMappings,
   listNotionMigrationRuns,
   listNotionQuarantine,
   listProjects,
   listTaskAssignees,
+  listTaskEvents,
   listTasks,
   openDb,
   runMigrations,
@@ -56,9 +60,11 @@ async function fixtureReader(options: Parameters<typeof writeSnapshotFixture>[0]
   return new SnapshotReader(fixture.root);
 }
 
-function baseFixture() {
+function baseFixture(lastEditedTime?: string) {
   return {
-    projects: [projectPage({ id: "proj-1", name: "Cliente Alfa", fase: "Implementacion" })],
+    projects: [
+      projectPage({ id: "proj-1", name: "Cliente Alfa", fase: "Implementacion", lastEditedTime }),
+    ],
     tasks: [
       taskPage({
         id: "task-1",
@@ -68,6 +74,7 @@ function baseFixture() {
         due: { start: "2026-09-05" },
         people: [{ id: "user-ernesto", email: "ernesto@sixteam.pro" }],
         projectIds: ["proj-1"],
+        lastEditedTime,
       }),
       taskPage({
         id: "task-2",
@@ -75,6 +82,7 @@ function baseFixture() {
         estado: "Sin empezar",
         projectIds: ["proj-1"],
         blockedByIds: ["task-1"],
+        lastEditedTime,
       }),
     ],
   };
@@ -114,12 +122,17 @@ describe("importador idempotente", () => {
   });
 
   it("dos corridas seguidas dan los mismos conteos: nada se duplica", async () => {
-    const fixture = baseFixture();
-    const first = await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+    const first = await importNotionSnapshot({ db, reader: await fixtureReader(baseFixture()) });
     const projectsAfterFirst = listProjects(db).length;
     const tasksAfterFirst = listTasks(db).length;
 
-    const second = await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+    // I1: reejecutar con el MISMO `last_edited_time` no reescribe nada (Notion
+    // no cambió); esta segunda corrida simula una edición real posterior en
+    // Notion para seguir ejerciendo el camino de actualización.
+    const second = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(baseFixture("2026-02-03T00:00:00.000Z")),
+    });
 
     expect(listProjects(db)).toHaveLength(projectsAfterFirst);
     expect(listTasks(db)).toHaveLength(tasksAfterFirst);
@@ -142,6 +155,30 @@ describe("importador idempotente", () => {
     expect(listProjects(db)).toHaveLength(0);
     expect(listTasks(db)).toHaveLength(0);
     expect(listNotionMigrationRuns(db)).toHaveLength(0);
+  });
+
+  it("--dry-run distingue would_create de would_update y destination_counts cuenta solo esta corrida", async () => {
+    const fixture = baseFixture();
+    // Corrida real: dos altas.
+    await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+
+    // Ensayo sobre el MISMO lote (ya enlazado) + una tarea nueva: todo lo ya
+    // enlazado es would_update, la tarea nueva es would_create.
+    const reader = await fixtureReader({
+      projects: fixture.projects,
+      tasks: [...fixture.tasks, taskPage({ id: "task-3", title: "Nueva", projectIds: ["proj-1"] })],
+    });
+    const report = await importNotionSnapshot({ db, reader, dryRun: true });
+
+    expect(report.imported.projects_updated).toBe(1);
+    expect(report.imported.projects_created).toBe(0);
+    expect(report.imported.tasks_updated).toBe(2);
+    expect(report.imported.tasks_created).toBe(1);
+    // Solo esta corrida (1 proyecto + 3 tareas seleccionadas), no un total
+    // histórico de la base.
+    expect(report.destination_counts).toEqual({ projects: 1, tasks: 3 });
+    // El ensayo de verdad no escribió nada.
+    expect(listTasks(db)).toHaveLength(2);
   });
 });
 
@@ -375,5 +412,221 @@ describe("archivo histórico", () => {
     const project = getProject(db, task.projectId)!;
     expect(getNotionOrigin(db, "project", project.id)?.link.notionPageId).toBe("proj-1");
     expect(getTask(db, task.id)?.title).toBe("Primera");
+  });
+});
+
+describe("responsables de otra organización no abortan la corrida (B2)", () => {
+  it("un correo que solo existe en otra organización no interna va a cuarentena; la tarea se importa sin ese responsable y la corrida termina", async () => {
+    const other = createOrganization(db, { name: "ACME", kind: "client" });
+    createPerson(db, {
+      orgId: other.id,
+      fullName: "Cliente ACME",
+      email: "cliente@acme.test",
+      isInternal: false,
+    });
+    const reader = await fixtureReader({
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [
+        taskPage({
+          id: "task-1",
+          title: "Con responsable ajeno",
+          people: [{ id: "user-acme", email: "cliente@acme.test" }],
+          projectIds: ["proj-1"],
+        }),
+      ],
+    });
+    const report = await importNotionSnapshot({ db, reader });
+
+    expect(report.quarantine.by_reason.persona_de_otra_organizacion).toBe(1);
+    const task = listTasks(db).find((t) => t.title === "Con responsable ajeno")!;
+    expect(task).toBeDefined();
+    expect(listTaskAssignees(db, task.id)).toHaveLength(0);
+    // La corrida terminó (nunca queda en "running") con un status coherente:
+    // hubo excepciones, pero ninguna escritura falló.
+    const run = listNotionMigrationRuns(db)[0]!;
+    expect(run.status).not.toBe("running");
+    expect(run.status).toBe("completed_with_exceptions");
+  });
+
+  it("un error al escribir una tarea va a cuarentena, no aborta la corrida y deja status=failed", async () => {
+    const other = createOrganization(db, { name: "ACME", kind: "client" });
+    const foreigner = createPerson(db, { orgId: other.id, fullName: "Foráneo", isInternal: false });
+    const reader = await fixtureReader({
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [
+        taskPage({
+          id: "task-1",
+          title: "Rompe",
+          people: [{ id: "user-x", email: null, name: "X" }],
+          projectIds: ["proj-1"],
+        }),
+        taskPage({ id: "task-2", title: "Sigue", projectIds: ["proj-1"] }),
+      ],
+    });
+    // La decisión explícita del administrador SALTA el filtro de organización
+    // (es la vía deliberada para excepciones) y por eso puede producir una
+    // asignación inválida que `replaceTaskAssignees` rechaza al escribir —
+    // exactamente el error que el try/catch de B2 debe atrapar.
+    const report = await importNotionSnapshot({
+      db,
+      reader,
+      adminDecisions: new Map([["user-x", foreigner.id]]),
+    });
+
+    expect(report.quarantine.by_reason.error_al_escribir_tarea).toBe(1);
+    // La otra tarea del lote se procesó igual: la corrida no abortó.
+    expect(listTasks(db).find((t) => t.title === "Sigue")).toBeDefined();
+    const run = listNotionMigrationRuns(db)[0]!;
+    expect(run.status).toBe("failed");
+  });
+
+  it("dos personas de distintas organizaciones con el mismo correo: no se decide el orden, va a correo_ambiguo", async () => {
+    const other = createOrganization(db, { name: "ACME", kind: "client" });
+    // El correo compartido califica DOS VECES por vías distintas: Ernesto
+    // (Sixteam, la organización destino) y este homónimo (otra organización,
+    // pero marcado interno) — ambos pasan el filtro de organización/interno
+    // por separado, así que no hay forma correcta de elegir uno sin decidir
+    // por orden de fila.
+    createPerson(db, {
+      orgId: other.id,
+      fullName: "Homónimo ACME",
+      email: "ernesto@sixteam.pro",
+      isInternal: true,
+    });
+    const reader = await fixtureReader({
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [
+        taskPage({
+          id: "task-1",
+          title: "Correo compartido",
+          people: [{ id: "user-ambiguo", email: "ernesto@sixteam.pro" }],
+          projectIds: ["proj-1"],
+        }),
+      ],
+    });
+    const report = await importNotionSnapshot({ db, reader });
+
+    expect(report.quarantine.by_reason.correo_ambiguo).toBe(1);
+    const task = listTasks(db).find((t) => t.title === "Correo compartido")!;
+    expect(listTaskAssignees(db, task.id)).toHaveLength(0);
+  });
+});
+
+describe("tareas importadas en REVIEW/DONE llevan artefacto y evento (B3)", () => {
+  it("'En validación' → 1 artefacto y un humano puede moverla REVIEW→DONE sin missing_artifact", async () => {
+    const reader = await fixtureReader({
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [
+        taskPage({ id: "task-1", title: "Revisar", estado: "En validación", projectIds: ["proj-1"] }),
+      ],
+    });
+    await importNotionSnapshot({ db, reader });
+    const task = listTasks(db).find((t) => t.title === "Revisar")!;
+    expect(task.status).toBe("REVIEW");
+
+    const artifacts = listArtifacts(db, task.id);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.kind).toBe("notion_archive");
+    expect(artifacts[0]?.title).toBe("Página de Notion");
+    expect(listTaskEvents(db, task.id).some((event) => event.kind === "imported")).toBe(true);
+
+    const approver = createPerson(db, { orgId: organizationId, fullName: "Aprobador", isInternal: true });
+    const engine = createBoardEngine({ db });
+    const moved = engine.moveTask({
+      taskId: task.id,
+      to: "DONE",
+      expectedVersion: task.version,
+      actor: `person:${approver.id}`,
+    });
+    expect(moved.status).toBe("DONE");
+  });
+
+  it("'Completada' → 1 artefacto y evento imported", async () => {
+    const reader = await fixtureReader({
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [
+        taskPage({ id: "task-1", title: "Cerrada", estado: "Completada", projectIds: ["proj-1"] }),
+      ],
+    });
+    await importNotionSnapshot({ db, reader });
+    const task = listTasks(db).find((t) => t.title === "Cerrada")!;
+    expect(task.status).toBe("DONE");
+    expect(listArtifacts(db, task.id)).toHaveLength(1);
+    expect(listTaskEvents(db, task.id).some((event) => event.kind === "imported")).toBe(true);
+  });
+});
+
+describe("reimportar respeta ediciones humanas (I1)", () => {
+  it("si la fila cambió en AgentOS después de la última importación, no se pisa y va a cuarentena", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(baseFixture()) });
+    const task = listTasks(db).find((t) => t.title === "Primera")!;
+    const link = findNotionImportLinkByObject(db, "task", task.id)!;
+
+    // Simula una edición humana en AgentOS POSTERIOR a la última importación.
+    db.$client
+      .prepare(`UPDATE tasks SET title = 'Editada a mano', updated_at = ? WHERE id = ?`)
+      .run(link.importedAt + 60_000, task.id);
+
+    // Reimporta con un last_edited_time MÁS NUEVO (Notion sí cambió), para
+    // ejercer el guard de edición humana y no el de "Notion no cambió".
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(baseFixture("2026-02-03T00:00:00.000Z")),
+    });
+
+    expect(report.quarantine.by_reason.editado_en_agentos_tras_importar).toBeGreaterThan(0);
+    expect(getTask(db, task.id)?.title).toBe("Editada a mano");
+  });
+
+  it("si Notion no cambió desde la última importación, no se toca nada (ni cuarentena)", async () => {
+    const fixture = baseFixture();
+    await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+    const before = listTasks(db).find((t) => t.title === "Primera")!;
+
+    const report = await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+
+    expect(report.imported.tasks_updated).toBe(0);
+    expect(report.imported.projects_updated).toBe(0);
+    expect(report.quarantine.by_reason.editado_en_agentos_tras_importar).toBeUndefined();
+    const after = listTasks(db).find((t) => t.title === "Primera")!;
+    expect(after.version).toBe(before.version);
+  });
+});
+
+describe("no duplicar el archivo entre corridas (I2)", () => {
+  it("dos corridas sobre la misma página reutilizan el mismo archivo cuando el contenido no cambió", async () => {
+    const fixture = {
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [taskPage({ id: "task-1", title: "Primera", projectIds: ["proj-1"] })],
+    };
+    await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+    const firstTask = listTasks(db).find((t) => t.title === "Primera")!;
+    const archiveCount = (): number =>
+      (
+        db.$client
+          .prepare(
+            `SELECT count(*) n FROM notion_page_archives WHERE source_kind='task' AND notion_page_id='task-1'`,
+          )
+          .get() as { n: number }
+      ).n;
+    expect(archiveCount()).toBe(1);
+    const firstArchiveId = getNotionOrigin(db, "task", firstTask.id)!.archive!.id;
+
+    // Simula una corrida previa que archivó la página pero se interrumpió
+    // ANTES de escribir el enlace (p. ej. un crash a mitad de camino): el
+    // archivo queda, el enlace no.
+    db.$client
+      .prepare(`DELETE FROM notion_import_links WHERE source_kind='task' AND notion_page_id='task-1'`)
+      .run();
+
+    // Reintenta con el MISMO contenido: no debe crear un segundo archivo.
+    await importNotionSnapshot({ db, reader: await fixtureReader(fixture) });
+    expect(archiveCount()).toBe(1);
+
+    const newTask = listTasks(db)
+      .filter((t) => t.title === "Primera")
+      .find((t) => t.id !== firstTask.id)!;
+    const newLink = findNotionImportLinkByObject(db, "task", newTask.id);
+    expect(newLink?.archiveId).toBe(firstArchiveId);
   });
 });

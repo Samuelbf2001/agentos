@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { NotionReadError, type JsonObject, type NotionReader, type PaginatedJson } from "./notion-client.js";
+import {
+  AttachmentTooLargeError,
+  NotionReadError,
+  type JsonObject,
+  type NotionReader,
+  type PaginatedJson,
+} from "./notion-client.js";
 
 export interface SnapshotSource {
   databaseId: string;
@@ -232,6 +238,21 @@ const EXTENSION_BY_CONTENT_TYPE: Readonly<Record<string, string>> = {
   "audio/mpeg": ".mp3",
 };
 
+/**
+ * Las URLs de adjunto de Notion son S3 firmadas: `host+pathname` identifica el
+ * objeto; la query trae la firma temporal, que caduca y no debe quedar
+ * archivada como si fuera una credencial reutilizable. La descarga en sí usa
+ * la URL completa (sin sanear) — solo lo que se ARCHIVA se recorta.
+ */
+function sanitizeSourceUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
 function extensionFor(name: string | null, contentType: string | null): string {
   const fromName = name ? path.extname(name) : "";
   if (/^\.[A-Za-z0-9]{1,8}$/u.test(fromName)) return fromName.toLowerCase();
@@ -267,7 +288,7 @@ async function captureAttachments(
       content_type: null,
       stored_uri: null,
       reason: null,
-      source_url: url,
+      source_url: sanitizeSourceUrl(url),
     };
     if (ref.urlKind === "external") {
       external += 1;
@@ -297,7 +318,12 @@ async function captureAttachments(
       records.push({
         ...base,
         status: "failed",
-        reason: error instanceof NotionReadError ? `http_${error.status}` : "descarga_fallida",
+        reason:
+          error instanceof AttachmentTooLargeError
+            ? "adjunto_supera_tope_de_tamano"
+            : error instanceof NotionReadError
+              ? `http_${error.status}`
+              : "descarga_fallida",
       });
     }
   }

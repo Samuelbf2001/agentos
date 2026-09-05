@@ -207,6 +207,10 @@ importers:
       '@agentos/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      '@agentos/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/providers:
     dependencies:

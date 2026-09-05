@@ -15,5 +15,8 @@
   "dependencies": {
     "@agentos/db": "workspace:*",
     "@agentos/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@agentos/core": "workspace:*"
   }
 }

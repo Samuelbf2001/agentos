@@ -439,7 +439,15 @@ export interface MappedTask {
   projectPageIds: string[];
   /** Ids de página de Notion de las tareas de las que depende. */
   dependsOnPageIds: string[];
-  /** Página madre cuando Notion la expone (`parent.page_id`); casi siempre null. */
+  /**
+   * Página madre cuando Notion la expone (`parent.page_id`). En la práctica
+   * las filas de una base de datos SIEMPRE llegan con `parent.type ===
+   * "database_id"` (ver `fixtures.ts` / captura real): Notion no anida una
+   * fila de base bajo otra página. Este campo queda por si algún día una fila
+   * SÍ trae `page_id` (p. ej. una base incrustada dentro de otra página en vez
+   * de en la barra lateral); hoy siempre resuelve a `null` — ver
+   * `field-map.test.ts` ("parentPageId con parent.database_id").
+   */
   parentPageId: string | null;
   assignees: NotionPerson[];
   originalUrl: string | null;

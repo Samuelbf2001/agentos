@@ -142,7 +142,12 @@ export function taskPage(input: TaskPageInput): JsonObject {
   };
 }
 
-export function projectPage(input: { id: string; name: string; fase?: string }): JsonObject {
+export function projectPage(input: {
+  id: string;
+  name: string;
+  fase?: string;
+  lastEditedTime?: string;
+}): JsonObject {
   return {
     object: "page",
     id: input.id,
@@ -150,7 +155,7 @@ export function projectPage(input: { id: string; name: string; fase?: string }):
     archived: false,
     in_trash: false,
     created_time: "2026-01-01T00:00:00.000Z",
-    last_edited_time: "2026-02-02T00:00:00.000Z",
+    last_edited_time: input.lastEditedTime ?? "2026-02-02T00:00:00.000Z",
     parent: { type: "database_id", database_id: PROJECTS_DB_ID },
     properties: {
       Name: titleValue(input.name),

@@ -261,6 +261,17 @@ describe("página completa", () => {
     const mapped = mapTaskPage(taskPage({ id: "task-3", title: "" }), binding);
     expect(mapped.exceptions.map((exception) => exception.reason)).toContain("titulo_vacio_en_origen");
   });
+
+  it("parentPageId con parent.database_id (rama que hoy no aplica): una fila de base siempre resuelve null", () => {
+    // `taskPage` fabrica el `parent` exactamente como lo hace Notion para una
+    // fila de una base de datos: `{ type: "database_id", database_id: ... }`.
+    // `parent.page_id` no existe en esa forma — por eso `parentPageId` da
+    // `null` hoy. Ver el comentario en field-map.ts sobre por qué el campo se
+    // conserva igual.
+    const binding = bindTaskSchema(tasksSchema(), ids);
+    const mapped = mapTaskPage(taskPage({ id: "task-4", title: "Sin madre" }), binding);
+    expect(mapped.parentPageId).toBeNull();
+  });
 });
 
 describe("clave de orden", () => {

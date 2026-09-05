@@ -7,6 +7,7 @@
  * `--db` es obligatorio y sin default a propósito: la base viva de AgentOS no
  * se toca por accidente. Para el piloto se importa sobre una COPIA.
  */
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { closeDb, openDb, runMigrations } from "@agentos/db";
@@ -81,6 +82,18 @@ if (/[/\\]data[/\\]agentos\.db$/iu.test(resolvedDbPath) && !has("--confirmo-prod
     "Se ha apuntado a la base VIVA de AgentOS. Para la copia de piloto usa otra ruta;\n" +
       "si de verdad es la importación a producción aprobada, para apps/api, haz backup\n" +
       "y vuelve a lanzar con --confirmo-produccion.",
+  );
+  process.exit(2);
+}
+
+// El fichero debe existir YA: `openDb` lo crearía en blanco si no, y una base
+// nueva por un `--db` mal tecleado pasaría desapercibida (salvo en dry-run,
+// que no escribe nada y por tanto puede correr contra una ruta que aún no
+// existe, solo para ver el informe).
+if (!has("--dry-run") && !existsSync(resolvedDbPath)) {
+  console.error(
+    `No existe el fichero de base de datos: ${resolvedDbPath}\n` +
+      "Este comando nunca crea una base nueva por un typo en --db; si es a propósito, créala primero.",
   );
   process.exit(2);
 }

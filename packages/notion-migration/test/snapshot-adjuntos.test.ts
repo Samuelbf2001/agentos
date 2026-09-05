@@ -184,8 +184,11 @@ describe("adjuntos", () => {
     const failed = manifest.attachments.filter((item) => item.status === "failed");
     expect(failed).toHaveLength(2);
     expect(failed[0]?.reason).toBe("http_403");
-    // La URL de origen se conserva como evidencia aunque caduque.
+    // La URL de origen se conserva como evidencia aunque caduque, pero SIN la
+    // query: es una firma temporal de S3, no una credencial para archivar.
     expect(failed[0]?.source_url).toContain("https://s3.example/");
+    expect(failed[0]?.source_url).not.toContain("?");
+    expect(failed[0]?.source_url).not.toContain("firma=");
     // 2 de la página viva (propiedad + bloque) y 1 de la archivada (propiedad).
     expect(result.manifest.sources[0]?.attachments_failed).toBe(3);
   });
