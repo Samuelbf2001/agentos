@@ -28,9 +28,35 @@ export const SYSTEM_TAB_LABELS: Record<SystemTab, string> = {
   ajustes: "Ajustes",
 };
 
+/** Filtros que se pueden fijar desde un enlace a la vista Tareas. */
+export interface TareasFiltrosLink {
+  cliente?: string;
+  proyecto?: string;
+  responsable?: string;
+  estado?: string;
+  etiqueta?: string;
+  vencimiento?: string;
+  agrupar?: string;
+  q?: string;
+}
+
 export const paths = {
   hoy: (projectId?: string | null) => (projectId ? `/hoy?proyecto=${encodeURIComponent(projectId)}` : "/hoy"),
-  misTareas: () => "/mis-tareas",
+  /**
+   * La base transversal de tareas. Los filtros viajan en la query para que un
+   * enlace reproduzca exactamente la vista: el cliente y el proyecto son
+   * atributos, no rutas propias.
+   */
+  tareas: (filtros: TareasFiltrosLink = {}) => {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(filtros)) {
+      if (value) search.set(key, value);
+    }
+    const qs = search.toString();
+    return `/tareas${qs ? `?${qs}` : ""}`;
+  },
+  /** "Mis tareas" dejó de ser una vista: es el filtro por responsable. */
+  misTareas: () => "/tareas?responsable=yo",
   proyectos: () => "/proyectos",
   proyecto: (projectId: string, tab: ProjectTab = "ruta") => `/proyectos/${projectId}/${tab}`,
   nuevoProyecto: (params?: { projectId?: string; phase?: string }) => {
