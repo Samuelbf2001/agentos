@@ -70,9 +70,16 @@ De nueve entradas planas a cuatro, con un segundo nivel dentro del proyecto.
 | Entrada global | Qué contiene |
 |---|---|
 | **Hoy** | Decisiones pendientes, proyectos, pulso |
+| **Tareas** | Todas las tareas de todos los clientes y proyectos, en una sola base: tabla y tablero, agrupables y filtrables por cliente, proyecto, responsable, estado, etiqueta y vencimiento; creación rápida; es el reemplazo de Notion para el trabajo diario |
 | **Proyectos** | Lista y espacio de trabajo de cada proyecto |
-| **Sistema** | Ahora mismo, runs, salud de fuentes, equipo, ajustes |
+| **Sistema** | Ahora mismo, runs, salud de fuentes, equipo, ajustes, y los módulos internos que hoy viven en WhatsAppHub (reuniones, notas de voz, clips, wiki, contactos) a medida que se integren |
 | **Activo Sixteam** | Metodologías, módulos, templates, aprendizajes |
+
+Aclaración de Ernesto (2026-09-05): en el tenant de agencia, la puerta de entrada al trabajo diario es
+**Hoy** más **Tareas**, no Proyectos. Nadie de Sixteam debe entrar cliente por cliente para descubrir
+qué hay que hacer. El proyecto sigue siendo el objeto raíz cuando se trabaja dentro de un cliente, y
+desde cualquier tarea se salta a su proyecto para tener contexto. "Mis tareas" pasa a ser un filtro de
+la vista Tareas, no una vista aparte.
 
 Esa cuarta entrada es exactamente lo que el modelo de tenancy llama funciones de agencia: el método,
 que es de Sixteam y no de ningún cliente. Hoy está escondido en una pestaña dentro de otra vista.

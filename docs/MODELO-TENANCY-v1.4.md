@@ -181,6 +181,32 @@ el primer mensaje que habla con un sistema y poder pedir entrevista humana.
 **Soporte al cliente final.** Un número por organización cliente, que WhatsAppHub ya soporta. La regla
 que lo hace seguro: el agente responde, pero no actúa. Toda acción con efecto pasa por aprobación.
 
+## El tenant de agencia es el Notion de Sixteam
+
+Aclaración de Ernesto del 2026-09-05, que cambia cómo se navega el tenant de agencia.
+
+**Las tareas de Sixteam son transversales.** Ernesto no tiene que entrar a cada módulo ni a cada cliente
+para ver el trabajo. En el tenant de agencia existe **una sola vista de tareas** que cruza todos los
+clientes y todos los proyectos, como la base de tareas que hoy tienen en Notion: se filtra y agrupa por
+cliente, proyecto, responsable, estado, etiqueta o vencimiento, pero nunca se navega proyecto por
+proyecto para descubrir qué hay. Las tareas siguen relacionadas con su proyecto y su cliente, y esa
+relación es un atributo por el que se filtra, no una puerta que hay que cruzar.
+
+Esto tiene una consecuencia de diseño: **el proyecto es el objeto raíz cuando se trabaja dentro de un
+cliente, pero no es la puerta de entrada al trabajo diario de Sixteam.** La puerta de entrada de la
+agencia es la vista transversal, y desde una tarea se salta a su proyecto cuando hace falta contexto.
+
+**Los módulos antiguos del 2brain viven aquí.** Lo que hoy hace WhatsAppHub para Sixteam, las
+reuniones procesadas, las notas de voz que se vuelven tareas, los clips para redes, la wiki y los
+expedientes de contactos, pertenece al tenant de agencia y debe convivir con las tareas en la misma
+plataforma. No son funciones de ningún cliente: son el sistema interno de Sixteam. La redirección de
+las trece escrituras que hoy van a Notion es el primer paso de esa convivencia, y está documentada en
+el plan de migración.
+
+**La plataforma para Sixteam es distinta de la que ve el cliente**, aunque sea el mismo software. El
+cliente ve su proyecto y su segundo cerebro. Sixteam ve el conjunto: todas las tareas, todos los
+clientes, sus propios módulos internos, y el método.
+
 ## Qué hay que reescribir del PRD v1.1
 
 La sección de multi-tenant, que hablaba de aislamiento pero no de tipos de tenant ni de agencia. La de
