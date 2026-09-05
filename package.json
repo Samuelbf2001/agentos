@@ -11,9 +11,11 @@
     "notion:snapshot": "pnpm --filter @agentos/notion-migration snapshot",
     "notion:import": "pnpm --filter @agentos/notion-migration import"
   },
+  "dependencies": {
+    "tsx": "^4.20.0"
+  },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

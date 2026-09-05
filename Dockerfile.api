@@ -1,24 +1,111 @@
 # syntax=docker/dockerfile:1
-# Runtime reproducible para la API. La configuración (DB, secretos, conectores)
-# se inyecta exclusivamente en ejecución mediante EasyPanel.
-FROM node:22-bookworm-slim AS base
+# Imagen de producción de apps/api (AgentOS).
+#
+# Decisión de arranque: los paquetes del workspace exportan TypeScript directo
+# (`"exports": "./src/index.ts"`) y ninguno tiene build de TS, así que el runtime
+# es `tsx` sobre las fuentes. Por eso `tsx` vive en las `dependencies` de la raíz
+# (no en devDependencies): sin él la imagen de producción no arranca.
+#
+# Multi-stage: la etapa `deps` resuelve SOLO dependencias de producción (con el
+# toolchain nativo necesario para better-sqlite3) y la etapa final se queda con
+# node_modules ya resueltos + fuentes, sin devDependencies ni compiladores.
+#
+# La configuración (DB, secretos, conectores) se inyecta exclusivamente en
+# ejecución mediante EasyPanel. Ver deploy/README.md.
 
-WORKDIR /app
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG PNPM_VERSION=11.24.0
+
+# --------------------------------------------------------------------------
+# 1) Base con pnpm de la MISMA versión que generó pnpm-lock.yaml (11.x).
+#    Con pnpm 10 el lockfile y los ajustes de pnpm-workspace.yaml
+#    (allowBuilds, minimumReleaseAgeExclude) hacen fallar --frozen-lockfile.
+# --------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS base
+ARG PNPM_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+ENV CI=true
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+WORKDIR /app
 
-COPY . .
-# better-sqlite3 sigue siendo una dependencia cargable mientras el runtime PG
-# termina su portabilidad; se compila dentro de Linux, nunca en la máquina host.
-RUN pnpm install --frozen-lockfile
+# --------------------------------------------------------------------------
+# 2) Dependencias de producción de @agentos/api (+ raíz, que aporta tsx).
+#    Solo se copian los manifiestos para que la capa se cachee mientras el
+#    lockfile no cambie. better-sqlite3 usa su prebuilt de linux-x64 y, si no
+#    existe, cae a node-gyp: por eso aquí (y solo aquí) hay python3/make/g++.
+# --------------------------------------------------------------------------
+FROM base AS deps
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_ENV=production
-ENV AGENTOS_API_PORT=4300
-ENV AGENTOS_API_HOST=0.0.0.0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json apps/api/
+COPY apps/mcp-admin/package.json apps/mcp-admin/
+COPY apps/web/package.json apps/web/
+COPY packages/core/package.json packages/core/
+COPY packages/db/package.json packages/db/
+COPY packages/events/package.json packages/events/
+COPY packages/notion-migration/package.json packages/notion-migration/
+COPY packages/providers/package.json packages/providers/
+COPY packages/runners/package.json packages/runners/
+COPY packages/shared/package.json packages/shared/
+COPY packages/tools/package.json packages/tools/
+
+RUN pnpm install --frozen-lockfile --prod \
+      --filter "agentos" \
+      --filter "@agentos/api..."
+
+# --------------------------------------------------------------------------
+# 3) Runtime mínimo: node slim + fuentes + node_modules de producción.
+#    dumb-init como PID 1 porque el runner claude_code lanza procesos hijos
+#    (sin reaper quedarían zombies y SIGTERM no llegaría al cierre ordenado).
+# --------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS runtime
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates dumb-init tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 agentos \
+ && useradd --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin agentos
+
+ENV NODE_ENV=production \
+    AGENTOS_API_HOST=0.0.0.0 \
+    AGENTOS_API_PORT=4300 \
+    TZ=America/Bogota
+
+WORKDIR /app
+
+# Fuentes TypeScript (no hay artefacto compilado: el runtime es tsx).
+COPY --chown=10001:10001 package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY --chown=10001:10001 apps/api ./apps/api
+COPY --chown=10001:10001 packages ./packages
+# Semillas que packages/db/src/seed-sources.ts lee desde la raíz en cada arranque.
+COPY --chown=10001:10001 agents ./agents
+COPY --chown=10001:10001 methodologies ./methodologies
+COPY --chown=10001:10001 modules ./modules
+# node_modules ya resueltos (incluye el binario nativo de better-sqlite3).
+COPY --from=deps --chown=10001:10001 /app/node_modules ./node_modules
+COPY --from=deps --chown=10001:10001 /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=deps --chown=10001:10001 /app/packages ./packages
+
+# Único punto de estado: DB SQLite, artefactos y workspaces de los runners.
+RUN mkdir -p /app/data && chown -R 10001:10001 /app/data
+VOLUME ["/app/data"]
+
+USER agentos
 EXPOSE 4300
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:4300/api/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.AGENTOS_API_PORT||4300)+'/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["pnpm", "--filter", "@agentos/api", "start"]
+# Trazabilidad del artefacto: al final para no invalidar el caché de las capas.
+ARG GIT_SHA=unknown
+ENV AGENTOS_GIT_SHA=${GIT_SHA}
+LABEL org.opencontainers.image.title="agentos-api" \
+      org.opencontainers.image.description="API de AgentOS Sixteam" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.licenses="UNLICENSED"
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["node", "--import", "tsx", "apps/api/src/index.ts"]
