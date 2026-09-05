@@ -473,7 +473,11 @@ export default function HoyView() {
       </div>
 
       <p className="mt-6 text-small text-muted">
-        ¿Buscabas tu propio trabajo?{" "}
+        ¿Buscabas el trabajo y no la decisión?{" "}
+        <Link to={paths.tareas()} className="press font-semibold text-link hover:underline">
+          Ver todas las tareas
+        </Link>{" "}
+        de todos los clientes, o sólo{" "}
         <Link to={paths.misTareas()} className="press font-semibold text-link hover:underline">
           Ver mis tareas
         </Link>

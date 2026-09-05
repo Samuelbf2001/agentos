@@ -86,6 +86,26 @@ export const project: Project = {
   updatedAt: 1000,
 };
 
+/**
+ * Segundo cliente con su propio proyecto. La base de tareas es transversal por
+ * definición: sin una segunda organización no se puede probar que cruza
+ * clientes y no sólo proyectos del mismo.
+ */
+export const projectB: Project = {
+  id: "proj-2",
+  orgId: "org-2",
+  name: "Beta operación",
+  type: "ops",
+  stage: "OPERAR",
+  gateState: "approved",
+  workspacePath: null,
+  version: 1,
+  createdAt: 1000,
+  updatedAt: 1000,
+};
+
+export const personB: Person = { id: "p-jorge", full_name: "Jorge", role: "Consultor" };
+
 export function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "t1",

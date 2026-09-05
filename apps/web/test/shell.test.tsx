@@ -1,7 +1,8 @@
 /**
- * El shell (PLAN-v1.5 §2). El proyecto es el objeto raíz: cuatro entradas
- * globales, cinco pestañas dentro del proyecto, y ni un emoji de navegación ni
- * la ruta del navegador impresa en pantalla.
+ * El shell (PLAN-v1.5 §2). El proyecto es el objeto raíz cuando se trabaja
+ * dentro de un cliente, pero la puerta del trabajo diario es Hoy más Tareas:
+ * cinco entradas globales, cinco pestañas dentro del proyecto, y ni un emoji de
+ * navegación ni la ruta del navegador impresa en pantalla.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -20,6 +21,7 @@ const routes = [
   { path: /^\/api\/board\/[^/]+$/, body: { project, board_seq: 1, total: 1, columns: { READY: [makeTask()] }, cells: {} } },
   { path: "/api/labels", body: { labels: [] } },
   { path: "/api/tasks", body: { tasks: [] } },
+  { path: "/api/auth/people", body: { people: [person] } },
   { path: "/api/brain/overview", body: { generated_at: null, core: { counts: {}, people: [] }, agents: { items: [], tree: null, health: [] }, sources: [], modules: [] } },
 ];
 
@@ -53,16 +55,25 @@ describe("shell y navegación", () => {
     localStorage.clear();
   });
 
-  it("tiene exactamente cuatro entradas globales, sin emoji ni ruta impresa", async () => {
+  it("tiene exactamente cinco entradas globales, sin emoji ni ruta impresa", async () => {
     const { container } = renderApp("/hoy");
     const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
     const labels = within(nav)
       .getAllByRole("link")
       .map((a) => a.textContent?.trim());
-    expect(labels).toEqual(["Hoy", "Proyectos", "Sistema", "Activo Sixteam"]);
+    expect(labels).toEqual(["Hoy", "Tareas", "Proyectos", "Sistema", "Activo Sixteam"]);
 
     // Los destinos hermanos que se desmontaron ya no son entradas de menú.
-    for (const gone of ["Chat", "Cerebro", "Enjambre", "Esperando por ti", "Admin", "Reuniones"]) {
+    // "Mis tareas" tampoco: ahora es un filtro dentro de Tareas.
+    for (const gone of [
+      "Chat",
+      "Cerebro",
+      "Enjambre",
+      "Esperando por ti",
+      "Admin",
+      "Reuniones",
+      "Mis tareas",
+    ]) {
       expect(within(nav).queryByText(gone)).toBeNull();
     }
     expect(container.textContent).not.toContain("/hoy");

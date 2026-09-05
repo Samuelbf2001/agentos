@@ -10,6 +10,7 @@ import RunsView from "../src/views/RunsView";
 import RunDetailView from "../src/views/RunDetailView";
 import HoyView from "../src/views/HoyView";
 import ProjectsView from "../src/views/ProjectsView";
+import TareasView from "../src/views/TareasView";
 import SystemHealthView from "../src/views/SystemHealthView";
 import SystemTeamView from "../src/views/SystemTeamView";
 import AssetView from "../src/views/AssetView";
@@ -24,7 +25,9 @@ import {
   makeTask,
   mockFetch,
   person,
+  personB,
   project,
+  projectB,
   thread,
 } from "./helpers";
 
@@ -132,7 +135,14 @@ const baseRoutes = [
     },
   },
   { path: "/api/config", body: { config: [] } },
-  { path: "/api/tasks", body: { tasks: [makeTask()] } },
+  { path: "/api/projects", body: { projects: [project, projectB] } },
+  { path: "/api/labels", body: { labels: [] } },
+  {
+    path: "/api/tasks",
+    body: {
+      tasks: [makeTask(), makeTask({ id: "t2", projectId: projectB.id, title: "Cadencia semanal" })],
+    },
+  },
   { path: /^\/api\/tasks\/[^/]+$/, body: { task: makeTask(), events: [], artifacts: [], runs: [] } },
 ];
 
@@ -209,6 +219,15 @@ describe("smoke de vistas", () => {
     expect(await screen.findByText("Autorizar email.send")).toBeTruthy();
     expect(screen.getByText("Informe en revisión")).toBeTruthy();
     expect(screen.getAllByText("Aprobar").length).toBeGreaterThan(0);
+  });
+
+  it("Tareas pinta la base transversal: dos clientes en la misma lista", async () => {
+    useStore.setState({ projects: [project, projectB], people: [person, personB] });
+    ui(<TareasView />, "/tareas");
+    expect(await screen.findByRole("heading", { level: 1, name: "Tareas" })).toBeTruthy();
+    expect(await screen.findByTestId("tarea-fila-t1")).toBeTruthy();
+    expect(screen.getByTestId("tarea-fila-t2")).toBeTruthy();
+    expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
   });
 
   it("ProjectsView lista los proyectos con su posición en el ciclo", async () => {

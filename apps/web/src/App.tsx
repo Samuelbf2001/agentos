@@ -1,8 +1,10 @@
 /**
  * Shell (PLAN-v1.5 §Navegación nueva).
  *
- * El proyecto es el objeto raíz. Cuatro entradas globales —Hoy, Proyectos,
- * Sistema y Activo Sixteam— y un segundo nivel de pestañas dentro del proyecto.
+ * El proyecto es el objeto raíz cuando se trabaja dentro de un cliente, pero la
+ * puerta de entrada del trabajo diario de Sixteam es Hoy más Tareas. Cinco
+ * entradas globales —Hoy, Tareas, Proyectos, Sistema y Activo Sixteam— y un
+ * segundo nivel de pestañas dentro del proyecto.
  * Desaparecen el selector de proyecto del header, los emoji como icono de
  * navegación y la impresión de `location.pathname`.
  *
@@ -11,14 +13,14 @@
  * píxel. `prefers-reduced-transparency` la vuelve sólida y
  * `prefers-reduced-motion` cambia el desplazamiento por un fundido.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { useStore } from "./state/store";
 import { Spinner, Toasts } from "./components/ui";
 import { paths } from "./lib/paths";
 import LoginView from "./views/LoginView";
 import HoyView from "./views/HoyView";
-import MyTasksView from "./views/MyTasksView";
+import TareasView from "./views/TareasView";
 import ProjectsView from "./views/ProjectsView";
 import ProjectLayout from "./views/ProjectLayout";
 import SystemLayout from "./views/SystemLayout";
@@ -39,9 +41,10 @@ const GLOBAL_NAV: NavEntry[] = [
   {
     to: "/hoy",
     label: "Hoy",
-    isActive: (p) => p === "/" || p.startsWith("/hoy") || p.startsWith("/mis-tareas"),
+    isActive: (p) => p === "/" || p.startsWith("/hoy"),
     badge: "decisions",
   },
+  { to: "/tareas", label: "Tareas", isActive: (p) => p.startsWith("/tareas") },
   {
     to: "/proyectos",
     label: "Proyectos",
@@ -90,11 +93,16 @@ function Shell() {
 
   // `/` abre la búsqueda de tareas desde cualquier pantalla, salvo mientras se
   // escribe en un campo.
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
   const onKeyDown = useCallback((event: KeyboardEvent) => {
     if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     const tag = target?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+    // En Tareas la búsqueda ya está integrada en la vista: abrir el overlay
+    // encima sería una segunda caja para lo mismo.
+    if (pathnameRef.current.startsWith("/tareas")) return;
     event.preventDefault();
     setSearchOpen(true);
   }, []);
@@ -205,7 +213,8 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Navigate to="/hoy" replace />} />
           <Route path="/hoy" element={<HoyView />} />
-          <Route path="/mis-tareas" element={<MyTasksView />} />
+          <Route path="/tareas" element={<TareasView />} />
+          <Route path="/mis-tareas" element={<Navigate to={paths.misTareas()} replace />} />
           <Route path="/proyectos" element={<ProjectsView />} />
           <Route path="/proyectos/:projectId" element={<ProjectLayout />} />
           <Route path="/proyectos/:projectId/:tab" element={<ProjectLayout />} />
@@ -217,7 +226,7 @@ function Shell() {
 
           {/* Rutas anteriores: se conservan como redirección, no como destino. */}
           <Route path="/waiting" element={<Navigate to="/hoy" replace />} />
-          <Route path="/my-tasks" element={<Navigate to="/mis-tareas" replace />} />
+          <Route path="/my-tasks" element={<Navigate to={paths.misTareas()} replace />} />
           <Route path="/brain" element={<Navigate to={paths.sistema("salud")} replace />} />
           <Route path="/swarm" element={<Navigate to={paths.sistema("ahora")} replace />} />
           <Route path="/admin" element={<Navigate to={paths.sistema("ajustes")} replace />} />
