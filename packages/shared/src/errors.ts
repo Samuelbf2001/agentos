@@ -33,6 +33,11 @@ export const ErrorCodes = {
   MODULE_NOT_ACTIVE: "module_not_active",
   /** Módulos de fase (§13.4): BACKLOG→READY con depends_on sin cerrar (solo humano fuerza). */
   DEPENDENCY_NOT_SATISFIED: "dependency_not_satisfied",
+  // Capa de datos (SQLite): errores de PROGRAMACIÓN, no de dominio (→ 500).
+  /** `withTransaction` invocado con otra transacción abierta por otro dueño. */
+  TRANSACTION_NESTING_ERROR: "transaction_nesting_error",
+  /** El cuerpo de una transacción SQLite cedió al bucle de eventos (guarda dev/test). */
+  TRANSACTION_YIELDED: "transaction_yielded_error",
   // Proveedores / runtime
   PROVIDER_ERROR: "provider_error",
   PROVIDER_NOT_CONFIGURED: "provider_not_configured",

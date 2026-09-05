@@ -279,13 +279,31 @@ cualquier throw revierte todo (NM-1):
 | Postgres | `db.transaction(async tx => …)` de drizzle. Revierte también en asíncrono, que es estrictamente mejor de lo que daba better-sqlite3. Las escrituras anidadas usan SAVEPOINT. |
 | SQLite | `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` a mano sobre la conexión: `db.$client.transaction(cb)` solo admite callbacks **síncronos** y aquí el callback es asíncrono. |
 
-Por qué abrir la transacción a mano es seguro en SQLite: en ese camino todas las
-funciones de la fachada devuelven **promesas ya resueltas**, así que el cuerpo se
-agota entero en un solo drenaje de la cola de microtareas. Los temporizadores
-(despachador, reaper) y la E/S son macrotareas y no pueden colarse entre dos
-`await` del bloque, de modo que ninguna escritura ajena cae dentro de nuestra
-transacción. La condición es no esperar nada realmente asíncrono (red, disco)
-dentro del callback — el motor de launch no lo hace.
+**Garantía real en SQLite** (una sola conexión, sin savepoints), en tres piezas:
+
+1. **Cola de transacciones por conexión.** Todas las `withTransaction` de SQLite
+   se serializan: la siguiente no hace `BEGIN` hasta que la anterior hizo COMMIT
+   o ROLLBACK. Sin la cola, `Promise.all([withTransaction(A→throw),
+   withTransaction(B→ok)])` fusionaba B dentro de A — B devolvía éxito y el
+   ROLLBACK de A borraba sus filas **en silencio**.
+2. **Token de dueño.** La transacción en curso se marca en un
+   `AsyncLocalStorage`. Anidar solo se reutiliza desde la MISMA cadena de
+   llamadas; si al empezar hay una transacción abierta por otro camino se lanza
+   `transaction_nesting_error` en vez de fusionar dos unidades de trabajo.
+3. **Guarda de dev/test** (`NODE_ENV=test|development`, forzable con
+   `AGENTOS_TX_GUARD=on|off`). Un centinela `setImmediate` que **no debe llegar a
+   ejecutarse antes del COMMIT**: si se ejecuta, el cuerpo esperó algo realmente
+   asíncrono (red, disco, temporizador) con la transacción abierta y se lanza
+   `transaction_yielded_error`. La cola cubre a las demás transacciones, pero una
+   escritura suelta (fuera de `withTransaction`) sí caería en esa ventana; la
+   guarda convierte ese bug en un fallo ruidoso en CI en vez de dejarlo latente.
+
+En producción la guarda está apagada y manda la condición de siempre: en el
+camino SQLite todas las funciones de la fachada devuelven **promesas ya
+resueltas**, así que el cuerpo se agota entero en un solo drenaje de la cola de
+microtareas y ninguna macrotarea (temporizadores del despachador y el reaper,
+E/S) se cuela entre dos `await` del bloque. La condición sigue siendo no esperar
+nada realmente asíncrono dentro del callback — el motor de launch no lo hace.
 
 El **motor de launch de Módulos de Fase** (`src/modules/launch.ts`) y el **seed**
 están escritos UNA sola vez contra esta fachada: valen para los dos motores, con

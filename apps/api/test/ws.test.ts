@@ -79,6 +79,39 @@ describe("WebSocket multiplexado", () => {
     }
   });
 
+  it("un evento publicado MIENTRAS se lee el hueco se entrega exactamente una vez", async () => {
+    const topic = "thread:ws-hueco";
+    const bus = fx.api.ctx.bus;
+    await publishRaw(bus, topic, { type: "message.inbound", payload: { n: 1 } });
+
+    // Se instrumenta getSince para publicar justo antes y justo después de leer
+    // el hueco: uno cae en el hueco Y en el buffer vivo (no debe duplicarse) y
+    // el otro solo en el buffer vivo (antes se perdía: la suscripción se
+    // registraba DESPUÉS de la lectura).
+    const original = bus.getSince.bind(bus);
+    bus.getSince = async (t: string, since?: number, limit?: number) => {
+      if (t !== topic) return await original(t, since, limit);
+      await publishRaw(bus, topic, { type: "message.inbound", payload: { n: 2 } });
+      const out = await original(t, since, limit);
+      await publishRaw(bus, topic, { type: "message.inbound", payload: { n: 3 } });
+      return out;
+    };
+
+    const socket = await connect(fx.token);
+    const received = collect(socket);
+    try {
+      socket.send(JSON.stringify({ type: "subscribe", topic, since_seq: 0 }));
+      await waitFor(() => received.filter((m) => m.type === "event").length === 3, {
+        label: "los tres eventos",
+      });
+      await new Promise((r) => setTimeout(r, 100)); // margen para un duplicado tardío
+      expect(received.filter((m) => m.type === "event").map((m) => m.seq)).toEqual([1, 2, 3]);
+    } finally {
+      bus.getSince = original;
+      socket.close();
+    }
+  });
+
   it("unsubscribe corta el flujo del topic", async () => {
     const topic = `thread:ws-test`;
     const socket = await connect(fx.token);

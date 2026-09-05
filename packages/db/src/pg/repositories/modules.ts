@@ -24,6 +24,7 @@ import {
   type ProjectType,
   type Stage,
 } from "@agentos/shared";
+import { withTransaction } from "../../facade.js";
 import type { AgentosPgDb } from "../client-pg.js";
 import { moduleLaunches, phaseModules } from "../schema-pg.js";
 import type { ModuleLaunch, NewModuleLaunch, NewPhaseModule, PhaseModule } from "../types-pg.js";
@@ -104,6 +105,19 @@ export interface CreateModuleVersionInput {
  * fail-closed). El blueprint se persiste canonicalizado + hasheado.
  */
 export async function createModuleVersion(
+  db: AgentosPgDb,
+  input: CreateModuleVersionInput,
+): Promise<PhaseModule> {
+  // Una transacción: el "siguiente número de versión" y el chequeo de colisión
+  // no pueden decidirse con una foto vieja mientras otro inserta esa misma
+  // versión (§NM-4). En SQLite es un no-op práctico (una sola conexión).
+  return await withTransaction(db, async (anyTx) => {
+    const tx = anyTx as AgentosPgDb;
+    return await createModuleVersionTx(tx, input);
+  });
+}
+
+async function createModuleVersionTx(
   db: AgentosPgDb,
   input: CreateModuleVersionInput,
 ): Promise<PhaseModule> {
@@ -221,19 +235,25 @@ export async function activateModuleVersion(
     );
   }
 
-  const now = nowMs();
-  const active = await getActiveModule(db, slug);
-  if (active && active.id !== row.id) {
-    await db
+  // Archivar la anterior y activar la nueva van en UNA transacción: si no, hay
+  // una ventana con CERO versiones activas del slug y un `launchModule`
+  // concurrente falla con `module_not_active`.
+  return await withTransaction(db, async (anyTx) => {
+    const tx = anyTx as AgentosPgDb;
+    const now = nowMs();
+    const active = await getActiveModule(tx, slug);
+    if (active && active.id !== row.id) {
+      await tx
+        .update(phaseModules)
+        .set({ status: "archived", updatedAt: now })
+        .where(eq(phaseModules.id, active.id));
+    }
+    await tx
       .update(phaseModules)
-      .set({ status: "archived", updatedAt: now })
-      .where(eq(phaseModules.id, active.id));
-  }
-  await db
-    .update(phaseModules)
-    .set({ status: "active", activatedAt: now, updatedAt: now })
-    .where(eq(phaseModules.id, row.id));
-  return (await getModuleVersion(db, slug, version))!;
+      .set({ status: "active", activatedAt: now, updatedAt: now })
+      .where(eq(phaseModules.id, row.id));
+    return (await getModuleVersion(tx, slug, version))!;
+  });
 }
 
 /**
@@ -382,5 +402,7 @@ export async function listLaunches(
   if (filter.moduleSlug) conds.push(eq(moduleLaunches.moduleSlug, filter.moduleSlug));
   const base = db.select().from(moduleLaunches);
   const q = conds.length > 0 ? base.where(and(...conds)) : base;
-  return await q.orderBy(desc(moduleLaunches.createdAt));
+  // Desempate por id: dos recibos del mismo milisegundo tenían orden arbitrario
+  // (y distinto en cada motor).
+  return await q.orderBy(desc(moduleLaunches.createdAt), desc(moduleLaunches.id));
 }

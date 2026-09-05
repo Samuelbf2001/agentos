@@ -349,5 +349,7 @@ export function listLaunches(
   if (filter.moduleSlug) conds.push(eq(moduleLaunches.moduleSlug, filter.moduleSlug));
   const base = db.select().from(moduleLaunches);
   const q = conds.length > 0 ? base.where(and(...conds)) : base;
-  return q.orderBy(desc(moduleLaunches.createdAt)).all();
+  // Desempate por id: dos recibos del mismo milisegundo tenían orden arbitrario
+  // (y distinto en cada motor).
+  return q.orderBy(desc(moduleLaunches.createdAt), desc(moduleLaunches.id)).all();
 }

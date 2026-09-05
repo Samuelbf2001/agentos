@@ -2,7 +2,8 @@
  * Motor de launch de Módulos de Fase (ARCHITECTURE §13.3) — "el seed
  * generalizado": materializa un blueprint validado en org + proyecto + backlog
  * completo + presupuesto + fuentes + recibo inmutable, en UNA transacción
- * síncrona (better-sqlite3 solo revierte callbacks síncronos).
+ * (`withTransaction` de la fachada: transacción de drizzle en Postgres, y en
+ * SQLite `BEGIN IMMEDIATE` serializado por la cola de transacciones).
  *
  * Contrato:
  * - Pre-vuelo FUERA de la transacción (idempotencia, módulo activo, blueprint,

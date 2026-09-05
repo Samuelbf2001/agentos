@@ -44,6 +44,7 @@ import {
   type Agent,
   type AgentosDb,
   type Approval,
+  type PersistedEvent,
   type ProviderProfile,
   type Run,
   type Task,
@@ -72,6 +73,18 @@ export const QUINN_ACTIVITY_TYPES_KEY = "quinn_review_activity_types";
  * Antes esta lista y la de la política vivían separadas y se desincronizaban.
  */
 export const DEFAULT_QUINN_ACTIVITY_TYPES: string[] = [...QUINN_REVIEWED_ACTIVITY_TYPES];
+
+/**
+ * Log del despachador. Existe para que NINGÚN rechazo quede suelto: un
+ * listener del bus o una promesa flotante que lance mataba el proceso entero
+ * por `unhandledRejection`. Todo lo que aquí se registra es no fatal — el
+ * siguiente tick reintenta.
+ */
+const log = {
+  error(scope: string, err: unknown): void {
+    console.error(`[dispatcher] ${scope}:`, err);
+  },
+};
 
 export interface DispatcherOptions {
   db: AgentosDb;
@@ -392,7 +405,9 @@ export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatc
       const input = bindRunInput(base, agent, ctx);
       const handle = await pool.submit({ runtime: agent.runtime, input, ctx });
       inflight.set(runId, task.id);
-      void handle.done.then((run) => afterTaskRun(run, task.id));
+      void handle.done
+        .then((run) => afterTaskRun(run, task.id))
+        .catch((err: unknown) => log.error(`afterTaskRun(${task.id})`, err));
       return runId;
     } catch (err) {
       // No se pudo lanzar el run (kill switch, presupuesto, runner ausente):
@@ -477,7 +492,9 @@ export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatc
    */
   function attachThreadForwarder(runId: string, thread: Thread, agent: Agent): void {
     const state: StreamState = { text: "", finalized: false };
-    const unsubscribe = bus.subscribe(runTopic(runId), async (persisted) => {
+    // El cuerpo va aparte para que su rechazo quede SIEMPRE capturado: un
+    // listener asíncrono que lanza tumbaba el proceso por `unhandledRejection`.
+    const forward = async (persisted: PersistedEvent): Promise<void> => {
       const payload = (persisted.payload ?? {}) as Record<string, unknown> & { type?: string };
       const type = persisted.type;
       if (type === "TEXT_MESSAGE_START" || type === "TEXT_MESSAGE_CONTENT" || type === "TEXT_MESSAGE_END") {
@@ -525,6 +542,11 @@ export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatc
         await publishRaw(bus, threadTopic(thread.id), outbound, runId);
         await publishRaw(bus, channelTopic(thread.channel), outbound, runId);
       }
+    };
+    const unsubscribe = bus.subscribe(runTopic(runId), (persisted) => {
+      void forward(persisted).catch((err: unknown) =>
+        log.error(`forwarder del thread ${thread.id} (run ${runId})`, err),
+      );
     });
   }
 
@@ -666,7 +688,9 @@ export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatc
       const handle = await pool.submit({ runtime: agent.runtime, input, ctx });
       if (approval.taskId) {
         const taskId = approval.taskId;
-        void handle.done.then((run) => afterTaskRun(run, taskId));
+        void handle.done
+          .then((run) => afterTaskRun(run, taskId))
+          .catch((err: unknown) => log.error(`afterTaskRun(${taskId})`, err));
       }
       return { runId };
     } catch (err) {
@@ -720,22 +744,33 @@ export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatc
 
   // ── (d) auto-crítica de Quinn al entrar a REVIEW ──────────────────────────
 
-  const unsubscribeCritique = bus.subscribeAll(async (persisted) => {
+  const unsubscribeCritique = bus.subscribeAll((persisted) => {
+    void critiqueOnReview(persisted).catch((err: unknown) =>
+      log.error("auto-crítica de Quinn", err),
+    );
+  });
+
+  async function critiqueOnReview(persisted: PersistedEvent): Promise<void> {
     if (disposed) return;
     if (persisted.type !== "task.moved") return;
     const p = domainPayload(persisted);
     if (p.to !== "REVIEW" || typeof p.taskId !== "string") return;
-    const task = await getTask(db, p.taskId);
-    if (!task?.activityType) return;
-    const list = (await getConfig<string[]>(db, QUINN_ACTIVITY_TYPES_KEY)) ?? [];
-    if (!list.includes(task.activityType)) return;
-    const quinn = await getAgentBySlug(db, critiqueAgentSlug);
-    if (!quinn || !(await engine.isAgentAssignable(quinn.id))) return;
-    if (task.assigneeAgentId === quinn.id) return; // Quinn nunca revisa su propio trabajo
-    const key = `${task.id}:${task.version}`;
+    // Dedupe SÍNCRONO, antes de cualquier await: la key sale del propio evento
+    // (una entrada a REVIEW = un evento = una crítica). Antes se construía con
+    // `task.version` leído DESPUÉS de cuatro awaits — o sea la versión ACTUAL,
+    // no la del movimiento: dos entradas a REVIEW podían colapsar en la misma
+    // key (crítica perdida) según cómo se intercalaran las lecturas.
+    const key = `${p.taskId}:${persisted.seq}`;
     if (critiqued.has(key)) return;
     critiqued.add(key);
     try {
+      const task = await getTask(db, p.taskId);
+      if (!task?.activityType) return;
+      const list = (await getConfig<string[]>(db, QUINN_ACTIVITY_TYPES_KEY)) ?? [];
+      if (!list.includes(task.activityType)) return;
+      const quinn = await getAgentBySlug(db, critiqueAgentSlug);
+      if (!quinn || !(await engine.isAgentAssignable(quinn.id))) return;
+      if (task.assigneeAgentId === quinn.id) return; // Quinn nunca revisa su propio trabajo
       const provider = await resolveProvider(quinn);
       const runId = newId();
       const userText =
@@ -764,17 +799,17 @@ export async function createDispatcher(opts: DispatcherOptions): Promise<Dispatc
     } catch {
       critiqued.delete(key); // kill switch/presupuesto: reintentable
     }
-  });
+  }
 
   // ── Ciclo de vida ─────────────────────────────────────────────────────────
 
   function start(): void {
     if (tickTimer || disposed) return;
     tickTimer = setInterval(() => {
-      void tick();
+      void tick().catch((err: unknown) => log.error("tick", err));
     }, dispatchIntervalMs);
     reaperTimer = setInterval(() => {
-      void engine.reap();
+      void engine.reap().catch((err: unknown) => log.error("reap", err));
     }, reaperIntervalMs);
   }
 

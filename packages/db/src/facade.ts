@@ -17,6 +17,8 @@
  * se registra a sí mismo cuando alguien importa `@agentos/db/pg`, y la fachada
  * solo lo importa dinámicamente si le llega un handle de Postgres.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
+import { AgentosError, ErrorCodes } from "@agentos/shared";
 import type { AgentosSqliteDb } from "./client.js";
 import type { AgentosPgDb } from "./pg/client-pg.js";
 
@@ -116,6 +118,44 @@ export function dual<S extends (db: never, ...args: never[]) => unknown>(
 // ── Transacciones ───────────────────────────────────────────────────────────
 
 /**
+ * Ámbito de la transacción SQLite en curso. Es el **token de dueño**: se
+ * propaga por la cadena de llamadas con `AsyncLocalStorage`, así que solo el
+ * código que corre DENTRO del cuerpo lo ve. Cualquier otro llamante (otra
+ * petición, otro tick del despachador) no lo ve y pasa por la cola.
+ */
+interface SqliteTxScope {
+  /** Conexión better-sqlite3 sobre la que está abierta la transacción. */
+  client: object;
+  /** true en cuanto el cuerpo cedió al bucle de eventos con la transacción abierta. */
+  yielded: boolean;
+}
+const sqliteTxScope = new AsyncLocalStorage<SqliteTxScope>();
+
+/**
+ * Cola de transacciones POR CONEXIÓN: la siguiente no hace `BEGIN` hasta que la
+ * anterior hizo COMMIT o ROLLBACK. Es lo que impide que dos `withTransaction`
+ * concurrentes se fusionen en una sola unidad de trabajo.
+ */
+const sqliteTxQueue = new WeakMap<object, Promise<unknown>>();
+
+function noop(): void {
+  /* la cola solo encadena, nunca propaga el error de la transacción anterior */
+}
+
+/**
+ * ¿Guarda de desarrollo activa? Detecta cuerpos de transacción que ceden al
+ * bucle de eventos (temporizador, red, disco). `AGENTOS_TX_GUARD=on|off` manda
+ * sobre `NODE_ENV`.
+ */
+function txGuardEnabled(): boolean {
+  const flag = process.env.AGENTOS_TX_GUARD;
+  if (flag === "off") return false;
+  if (flag === "on") return true;
+  const env = process.env.NODE_ENV;
+  return env === "test" || env === "development";
+}
+
+/**
  * Ejecuta `fn` dentro de UNA transacción, en el motor que sea. Cualquier throw
  * revierte todo (NM-1).
  *
@@ -125,17 +165,26 @@ export function dual<S extends (db: never, ...args: never[]) => unknown>(
  *   conexión. `db.$client.transaction(cb)` de better-sqlite3 solo admite
  *   callbacks SÍNCRONOS y aquí el callback es asíncrono, así que no sirve.
  *
- *   Por qué abrir la transacción a mano es seguro en SQLite: en el camino
- *   SQLite todas las funciones de la fachada devuelven promesas YA RESUELTAS,
- *   así que el cuerpo de `fn` se agota entero en un solo drenaje de la cola de
- *   microtareas. Los temporizadores (despachador, reaper) y la E/S son
- *   macrotareas: no pueden colarse entre dos `await` de este bloque, y por
- *   tanto no hay forma de que otra escritura caiga dentro de nuestra
- *   transacción. La condición es no esperar nada realmente asíncrono (red,
- *   disco) dentro de `fn` — el motor de launch no lo hace.
+ * Garantía real en SQLite (una sola conexión, sin transacciones anidadas de
+ * verdad — better-sqlite3 no tiene savepoints aquí), en tres piezas:
  *
- * Anidar es no-op deliberado: si ya hay transacción abierta se reutiliza (mismo
- * criterio que los repositorios SQLite con `inTransaction`).
+ * 1. **Cola por conexión**: todas las transacciones se serializan. Antes,
+ *    `Promise.all([withTransaction(A→throw), withTransaction(B→ok)])` fusionaba
+ *    B dentro de A: B devolvía éxito y el ROLLBACK de A borraba sus filas en
+ *    silencio. Ahora B espera a que A cierre y commitea lo suyo.
+ * 2. **Token de dueño**: anidar solo se permite desde la MISMA cadena de
+ *    llamadas (el `AsyncLocalStorage` del cuerpo). Si al empezar hay una
+ *    transacción abierta por otro camino, se lanza `transaction_nesting_error`
+ *    en vez de fusionar dos unidades de trabajo en silencio.
+ * 3. **Guarda de dev/test**: un centinela `setImmediate` que NO debe llegar a
+ *    ejecutarse antes del COMMIT. Si se ejecuta, el cuerpo esperó algo
+ *    realmente asíncrono (red, disco, temporizador) con la transacción abierta
+ *    y se lanza `transaction_yielded_error`. La cola cubre a las demás
+ *    transacciones, pero una escritura suelta (fuera de `withTransaction`) sí
+ *    caería dentro de esa ventana; la guarda hace ruidoso ese bug en vez de
+ *    dejarlo latente. En producción está apagada (`NODE_ENV`), donde manda la
+ *    condición de siempre: en el camino SQLite la fachada devuelve promesas ya
+ *    resueltas y el cuerpo se agota en un solo drenaje de microtareas.
  */
 export async function withTransaction<T>(db: AnyDb, fn: (tx: AnyDb) => Promise<T>): Promise<T> {
   if (isPgDb(db)) {
@@ -144,19 +193,64 @@ export async function withTransaction<T>(db: AnyDb, fn: (tx: AnyDb) => Promise<T
     );
   }
   const lite = db as AgentosSqliteDb;
-  const client = lite.$client;
-  if (client.inTransaction) return await fn(lite);
-  client.exec("BEGIN IMMEDIATE");
+  const client = lite.$client as unknown as object;
+
+  // Anidamiento del MISMO dueño: se reutiliza la transacción abierta (y NO se
+  // encola, o el cuerpo se esperaría a sí mismo).
+  const scope = sqliteTxScope.getStore();
+  if (scope?.client === client) return await fn(lite);
+
+  const previous = sqliteTxQueue.get(client) ?? Promise.resolve();
+  const started = previous.then(
+    () => runSqliteTransaction(lite, client, fn),
+    () => runSqliteTransaction(lite, client, fn),
+  );
+  sqliteTxQueue.set(client, started.then(noop, noop));
+  return await started;
+}
+
+async function runSqliteTransaction<T>(
+  lite: AgentosSqliteDb,
+  client: object,
+  fn: (tx: AnyDb) => Promise<T>,
+): Promise<T> {
+  const conn = lite.$client;
+  if (conn.inTransaction) {
+    // Con la cola esto ya no puede ser otra `withTransaction` en paralelo: es
+    // una transacción abierta por otro camino. Fusionar sería pérdida silenciosa.
+    throw new AgentosError(
+      ErrorCodes.TRANSACTION_NESTING_ERROR,
+      "Ya hay una transacción SQLite abierta por otro dueño: anidar aquí uniría dos " +
+        "unidades de trabajo y un ROLLBACK borraría también las escrituras ajenas.",
+    );
+  }
+  const scope: SqliteTxScope = { client, yielded: false };
+  const sentinel = txGuardEnabled()
+    ? setImmediate(() => {
+        scope.yielded = true;
+      })
+    : undefined;
+  conn.exec("BEGIN IMMEDIATE");
   try {
-    const out = await fn(lite);
-    client.exec("COMMIT");
+    const out = await sqliteTxScope.run(scope, () => fn(lite));
+    if (scope.yielded) {
+      throw new AgentosError(
+        ErrorCodes.TRANSACTION_YIELDED,
+        "El cuerpo de una transacción SQLite cedió al bucle de eventos (esperó algo " +
+          "realmente asíncrono). Con la transacción abierta, cualquier escritura suelta " +
+          "de otra petición caería dentro y el ROLLBACK la borraría.",
+      );
+    }
+    conn.exec("COMMIT");
     return out;
   } catch (err) {
     try {
-      if (client.inTransaction) client.exec("ROLLBACK");
+      if (conn.inTransaction) conn.exec("ROLLBACK");
     } catch {
       /* la transacción ya se cerró sola: el error original manda */
     }
     throw err;
+  } finally {
+    if (sentinel) clearImmediate(sentinel);
   }
 }

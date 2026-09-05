@@ -45,8 +45,12 @@ describe("EventBus", () => {
     const seen: number[] = [];
     const seenAll: string[] = [];
 
-    const off = bus.subscribe(topic, (e: PersistedEvent) => seen.push(e.seq));
-    bus.subscribeAll((e) => seenAll.push(e.topic));
+    const off = bus.subscribe(topic, (e: PersistedEvent) => {
+      seen.push(e.seq);
+    });
+    bus.subscribeAll((e) => {
+      seenAll.push(e.topic);
+    });
 
     await bus.publish(topic, textEvent("r2", "a"));
     await bus.publish(SWARM_TOPIC, textEvent("r2", "b"));

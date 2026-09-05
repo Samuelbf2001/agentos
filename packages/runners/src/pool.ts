@@ -12,6 +12,16 @@ import {
 import { EventBus, SWARM_TOPIC, runTopic } from "@agentos/events";
 import type { AgentRunner, RunInput, RunTraceContext } from "./types.js";
 
+/**
+ * Log del pool. Ninguna promesa flotante puede quedar sin `catch`: un rechazo
+ * suelto aquí mataba el proceso de la API por `unhandledRejection`.
+ */
+const log = {
+  error(scope: string, err: unknown): void {
+    console.error(`[runner-pool] ${scope}:`, err);
+  },
+};
+
 /** Semáforos por runtime (ARCHITECTURE §3), configurables por app_config. */
 export const DEFAULT_RUNNER_LIMITS: Record<AgentRuntime, number> = {
   claude_code: 3,
@@ -90,6 +100,13 @@ export class RunnerPool {
 
   private readonly running = new Map<string, ActiveJob>();
   private readonly queues = new Map<AgentRuntime, QueuedJob[]>();
+  /**
+   * Huecos RESERVADOS: jobs sacados de la cola que todavía no llegaron a
+   * `start()` porque hay `await` en medio (los publish de RUN_DEQUEUED). Sin
+   * esto, dos `pump()` concurrentes veían el mismo hueco libre y arrancaban dos
+   * runs con el semáforo en 1.
+   */
+  private readonly starting = new Map<AgentRuntime, number>();
 
   constructor(options: RunnerPoolOptions) {
     this.db = options.db;
@@ -283,7 +300,7 @@ export class RunnerPool {
   // ── Interno ───────────────────────────────────────────────────────────────
 
   private runningCount(runtime: AgentRuntime): number {
-    let count = 0;
+    let count = this.starting.get(runtime) ?? 0;
     for (const job of this.running.values()) {
       if (job.runtime === runtime) count += 1;
     }
@@ -302,11 +319,13 @@ export class RunnerPool {
     const timeoutMs = job.timeoutMs ?? this.defaultTimeoutMs;
     if (timeoutMs !== undefined && timeoutMs > 0) {
       active.timer = setTimeout(() => {
-        void runner.cancel(job.runId);
+        void runner
+          .cancel(job.runId)
+          .catch((err: unknown) => log.error(`timeout cancel(${job.runId})`, err));
       }, timeoutMs);
     }
 
-    void this.drive(active, job);
+    void this.drive(active, job).catch((err: unknown) => log.error(`drive(${job.runId})`, err));
   }
 
   private async drive(active: ActiveJob, job: QueuedJob): Promise<void> {
@@ -316,17 +335,28 @@ export class RunnerPool {
       }
     } catch (error) {
       // Un runner que LANZA (en vez de emitir RUN_ERROR) no debe dejar la fila colgada.
-      const current = await getRun(this.db, job.runId);
-      if (current && (current.status === "running" || current.status === "queued")) {
-        const message = error instanceof Error ? error.message : String(error);
-        await updateRun(this.db, job.runId, { status: "failed", error: message, finishedAt: this.now() });
+      try {
+        const current = await getRun(this.db, job.runId);
+        if (current && (current.status === "running" || current.status === "queued")) {
+          const message = error instanceof Error ? error.message : String(error);
+          await updateRun(this.db, job.runId, { status: "failed", error: message, finishedAt: this.now() });
+        }
+      } catch (err) {
+        log.error(`marcando fallido el run ${job.runId}`, err);
       }
     } finally {
       if (active.timer) clearTimeout(active.timer);
       this.running.delete(job.runId);
+    }
+    // El cierre (resolver el handle + seguir vaciando la cola) NO puede vivir en
+    // el `finally`: un fallo de la DB ahí enmascaraba el error del run y dejaba
+    // `handle.done` colgado para siempre.
+    try {
       const finalRun = await getRun(this.db, job.runId);
       if (finalRun) job.resolve(finalRun);
       await this.pump(job.runtime);
+    } catch (err) {
+      log.error(`cierre del run ${job.runId}`, err);
     }
   }
 
@@ -343,15 +373,24 @@ export class RunnerPool {
     while (this.runningCount(runtime) < limit) {
       const job = queue.shift();
       if (!job) break;
-      const event = {
-        type: "RUN_DEQUEUED" as const,
-        timestamp: this.now(),
-        runId: job.runId,
-        runtime,
-      };
-      await this.bus.publish(runTopic(job.runId), event);
-      await this.bus.publish(SWARM_TOPIC, event);
-      this.start(job, runner);
+      // Reserva del hueco SÍNCRONA, antes del primer `await`: entre los publish
+      // de abajo y `start()` otro `pump()` concurrente lo vería libre.
+      this.starting.set(runtime, (this.starting.get(runtime) ?? 0) + 1);
+      try {
+        const event = {
+          type: "RUN_DEQUEUED" as const,
+          timestamp: this.now(),
+          runId: job.runId,
+          runtime,
+        };
+        await this.bus.publish(runTopic(job.runId), event);
+        await this.bus.publish(SWARM_TOPIC, event);
+        this.start(job, runner);
+      } finally {
+        // `start()` ya metió el job en `running`: la reserva se libera sin
+        // ceder el hilo, así que el hueco nunca queda contado dos veces ni cero.
+        this.starting.set(runtime, (this.starting.get(runtime) ?? 1) - 1);
+      }
     }
   }
 }

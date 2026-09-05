@@ -154,6 +154,27 @@ describe("RunnerPool", () => {
     expect(pool.snapshot().queued.ai_sdk ?? []).toEqual([]);
   });
 
+  it("dos pump() concurrentes con limit=1 arrancan UN solo run (I2)", async () => {
+    // limit=0 → los dos submits van a la cola sin arrancar nada.
+    const { db, fake, pool, submission } = await setup({ limits: { ai_sdk: 0 } });
+    const s1 = submission();
+    const s2 = submission();
+    await pool.submit(s1);
+    await pool.submit(s2);
+    await tick();
+    expect(fake.started).toEqual([]);
+
+    // Se abre un hueco (limit=1) y se pumpea dos veces EN PARALELO: entre el
+    // chequeo del semáforo y `start()` hay dos `await publish` en medio.
+    await setConfig(db, "runner_limit_ai_sdk", 1);
+    const drenar = pool as unknown as { pump(runtime: AgentRuntime): Promise<void> };
+    await Promise.all([drenar.pump("ai_sdk"), drenar.pump("ai_sdk")]);
+    await tick();
+
+    expect(fake.started).toEqual([s1.ctx.runId]);
+    expect(pool.snapshot().queued.ai_sdk).toEqual([s2.ctx.runId]);
+  });
+
   it("timeout duro mata el run (cancelación vía runner)", async () => {
     const { pool, submission } = await setup({ defaultTimeoutMs: 30 });
     const handle = await pool.submit(submission());
