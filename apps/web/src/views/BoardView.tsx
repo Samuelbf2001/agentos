@@ -15,9 +15,12 @@ import {
 } from "@dnd-kit/core";
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../state/store";
+import CreateTaskDialog from "./CreateTaskDialog";
+import TaskSearchBox from "./TaskSearchBox";
 import type { BoardFilter, Person, Stage, Task, TaskAssigneePerson, TaskStatus } from "../lib/types";
 import {
   getTaskAssignees,
+  getTaskLabels,
   STAGES,
   TASK_STATUSES,
   taskAssigneeIsPrimary,
@@ -92,8 +95,13 @@ export function filterBoardTasks(
   filter: BoardFilter,
   personId: string | null,
   now = Date.now(),
+  label: string | null = null,
 ): Task[] {
-  return tasks.filter((task) => taskMatchesBoardFilter(task, filter, personId, now));
+  return tasks.filter(
+    (task) =>
+      taskMatchesBoardFilter(task, filter, personId, now) &&
+      (!label || getTaskLabels(task).includes(label)),
+  );
 }
 
 function personLabel(person: (Person | TaskAssigneePerson) | null | undefined, fallbackId: string | null): string {
@@ -117,7 +125,9 @@ function TaskCard({ task, people, agents }: { task: Task; people: Person[]; agen
     task.title,
     STATUS_LABELS[task.status],
     dueState === "overdue" ? "vencida" : dueState === "upcoming" || dueState === "today" ? "próxima" : "",
-    primaryPerson ? `responsable ${primaryPerson.full_name}` : "sin responsable",
+    // El snapshot del tablero no pasa por normalizeTask, así que la persona
+    // embebida puede venir en camelCase: personLabel cubre ambas formas.
+    primary ? `responsable ${personLabel(primaryPerson, primaryId)}` : "sin responsable",
     agent ? `agente ${agent.name}` : "",
   ]
     .filter(Boolean)
@@ -187,6 +197,15 @@ function TaskCard({ task, people, agents }: { task: Task; people: Person[]; agen
           </span>
         ) : null}
       </div>
+      {getTaskLabels(task).length > 0 ? (
+        <div className="mt-1.5 flex flex-wrap gap-1" data-testid={`card-labels-${task.id}`}>
+          {getTaskLabels(task).map((label) => (
+            <span key={label} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-800">
+              {label}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="mt-1 flex items-center gap-1 text-[9px] text-slate-400">
         {task.requiresApproval ? <span className="rounded bg-violet-50 px-1 py-0.5 text-violet-700">gate</span> : null}
         {task.externalEffect ? <span className="rounded bg-orange-50 px-1 py-0.5 text-orange-700">efecto externo</span> : null}
@@ -322,6 +341,10 @@ export default function BoardView() {
   const agents = useStore((state) => state.agents);
   const boardFilter = useStore((state) => state.boardFilter);
   const setBoardFilter = useStore((state) => state.setBoardFilter);
+  const boardLabelFilter = useStore((state) => state.boardLabelFilter);
+  const setBoardLabelFilter = useStore((state) => state.setBoardLabelFilter);
+  const labelCatalog = useStore((state) => state.labelCatalog);
+  const [creating, setCreating] = useState(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor),
@@ -330,8 +353,8 @@ export default function BoardView() {
   const project = projects.find((candidate) => candidate.id === board.projectId);
   const allTasks = useMemo(() => Object.values(board.tasks), [board.tasks]);
   const visibleTasks = useMemo(
-    () => filterBoardTasks(allTasks, boardFilter, currentPerson?.id ?? null),
-    [allTasks, boardFilter, currentPerson?.id],
+    () => filterBoardTasks(allTasks, boardFilter, currentPerson?.id ?? null, Date.now(), boardLabelFilter),
+    [allTasks, boardFilter, currentPerson?.id, boardLabelFilter],
   );
   const byCell = useMemo(() => {
     const cells = new Map<string, Task[]>();
@@ -400,6 +423,19 @@ export default function BoardView() {
                   {project ? `${STAGE_LABEL[project.stage]} · Gate 1 ${project.gateState === "approved" ? "aprobado" : project.gateState === "rejected" ? "rechazado" : "pendiente"}` : "Estado del proyecto no disponible"}
                 </p>
               </div>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                <div className="w-full sm:w-72">
+                  <TaskSearchBox projectId={board.projectId ?? undefined} />
+                </div>
+                <button
+                  type="button"
+                  data-testid="board-new-task"
+                  onClick={() => setCreating(true)}
+                  className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-1"
+                >
+                  ＋ Nueva tarea
+                </button>
+              </div>
               <div className="grid grid-cols-3 gap-1.5 text-right sm:gap-3">
                 <div className="rounded-lg bg-slate-50 px-2 py-1.5 sm:px-3">
                   <p className="text-[9px] uppercase tracking-wide text-slate-400">Visibles</p>
@@ -443,18 +479,61 @@ export default function BoardView() {
                 })}
               </div>
             </fieldset>
+            {labelCatalog.length > 0 ? (
+              <fieldset className="mt-2">
+                <legend className="sr-only">Filtro por etiqueta</legend>
+                <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Filtro por etiqueta">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Etiquetas</span>
+                  <button
+                    type="button"
+                    aria-pressed={boardLabelFilter === null}
+                    data-testid="board-label-all"
+                    onClick={() => setBoardLabelFilter(null)}
+                    className={`inline-flex min-h-8 items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                      boardLabelFilter === null
+                        ? "border-sky-700 bg-sky-700 text-white"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                    }`}
+                  >
+                    Todas
+                  </button>
+                  {labelCatalog.map((usage) => {
+                    const active = boardLabelFilter === usage.label;
+                    return (
+                      <button
+                        key={usage.label}
+                        type="button"
+                        aria-pressed={active}
+                        data-testid={`board-label-${usage.label}`}
+                        onClick={() => setBoardLabelFilter(active ? null : usage.label)}
+                        className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                          active
+                            ? "border-sky-700 bg-sky-700 text-white"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                        }`}
+                      >
+                        {usage.label}
+                        <span className={`tabular-nums ${active ? "text-white/70" : "text-slate-400"}`}>
+                          {usage.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            ) : null}
           </div>
           <ProjectPhaseHeader projectId={activeProjectId} />
           <div className="p-2 sm:p-3">
             {allTasks.length === 0 ? (
               <EmptyState
                 title="Tablero vacío"
-                hint="Pide a Alex un assessment por el chat y verás el backlog poblarse solo."
+                hint="Crea la primera tarea con «＋ Nueva tarea», o pide a Alex un assessment por el chat."
               />
             ) : visibleTasks.length === 0 ? (
               <EmptyState
-                title={`Sin tareas en «${BOARD_FILTER_LABELS[boardFilter]}»`}
-                hint="Cambia el filtro para volver a ver las tareas del proyecto."
+                title={`Sin tareas en «${BOARD_FILTER_LABELS[boardFilter]}»${boardLabelFilter ? ` · ${boardLabelFilter}` : ""}`}
+                hint="Cambia el filtro o la etiqueta para volver a ver las tareas del proyecto."
               />
             ) : (
               <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -470,6 +549,14 @@ export default function BoardView() {
           </div>
         </div>
       </div>
+      {activeProjectId ? (
+        <CreateTaskDialog
+          open={creating}
+          onOpenChange={setCreating}
+          projectId={activeProjectId}
+          defaultStage={project?.stage ?? "ENTENDER"}
+        />
+      ) : null}
     </div>
   );
 }

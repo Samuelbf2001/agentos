@@ -247,6 +247,29 @@ export const taskAssignees = sqliteTable(
 );
 
 /**
+ * Etiquetas de una tarea. Tabla de unión (no un JSON en `tasks`) porque el
+ * tablero filtra por etiqueta y ambos motores necesitan poder indexar esa
+ * consulta; `label` se guarda ya normalizada (minúsculas, sin espacios extra).
+ */
+export const taskLabels = sqliteTable(
+  "task_labels",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    label: text("label").notNull(),
+    /** ActorRef que la puso; auditable igual que el resto de mutaciones. */
+    createdBy: text("created_by"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.label], name: "pk_task_labels" }),
+    index("idx_task_labels_label").on(t.label),
+    index("idx_task_labels_task").on(t.taskId),
+  ],
+);
+
+/**
  * Registro durable de avisos de responsables. `dedupe_key` es la identidad
  * idempotente que sobrevive a reintentos y reinicios del worker.
  */

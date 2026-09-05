@@ -24,6 +24,7 @@ import type {
   ProjectSource,
   ProjectSourceExternalRef,
   ProjectSourceKind,
+  LabelUsage,
   SourceBrowseItem,
   MeetingProcessingFilter,
   MeetingProcessingOverview,
@@ -35,6 +36,8 @@ import type {
   TaskDetailResponse,
   Task,
   TaskEvent,
+  TaskPriority,
+  TaskSearchHit,
   TaskStatus,
   Thread,
 } from "./types";
@@ -233,6 +236,9 @@ export const api = {
 
   // ── Projects / board ──────────────────────────────────────────────────────
   projects: () => request<{ projects: Project[] }>("/api/projects"),
+  /** Personas asignables a un proyecto (las de su organización). */
+  projectPeople: (projectId: string) =>
+    request<{ org_id: string; people: Person[] }>(`/api/projects/${projectId}/people`),
   board: (projectId: string) =>
     request<{
       project: Project;
@@ -253,6 +259,9 @@ export const api = {
     status?: TaskStatus;
     assignee_person_id?: string;
     assignee_agent_id?: string;
+    label?: string;
+    /** "1" pide las tareas de la persona de la sesión sin conocer su id. */
+    mine?: "1";
   } = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(q)) {
@@ -360,17 +369,90 @@ export const api = {
         ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
       }),
     })),
-  createTask: (body: {
+  createTask: async (body: {
     project_id: string;
     title: string;
     stage: Stage;
     description?: string;
     definition_of_done?: string;
+    priority?: TaskPriority;
     assignee_agent_slug?: string;
     assignee_person_ids?: string[];
     primary_assignee_person_id?: string | null;
     due_at?: number | null;
-  }) => request<{ task: Task }>("/api/tasks", { method: "POST", body }),
+    labels?: string[];
+  }) => {
+    const result = await request<{ task: Task }>("/api/tasks", { method: "POST", body });
+    return { ...result, task: normalizeTask(result.task as WireTask) };
+  },
+
+  // ── Etiquetas ─────────────────────────────────────────────────────────────
+  /** Reemplazo completo; no consume expected_version (clasificar no es transición). */
+  setTaskLabels: async (id: string, labels: string[]) => {
+    const result = await request<{ task: Task; labels: string[] }>(`/api/tasks/${id}/labels`, {
+      method: "PUT",
+      body: { labels },
+    });
+    return { ...result, task: normalizeTask(result.task as WireTask) };
+  },
+  labels: (projectId?: string) =>
+    request<{ labels: LabelUsage[] }>(
+      `/api/labels${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
+
+  // ── Búsqueda de tareas ────────────────────────────────────────────────────
+  searchTasks: (q: string, opts: { projectId?: string; mine?: boolean; limit?: number } = {}) => {
+    const params = new URLSearchParams({ q });
+    if (opts.projectId) params.set("project_id", opts.projectId);
+    if (opts.mine) params.set("mine", "1");
+    if (opts.limit) params.set("limit", String(opts.limit));
+    return request<{ query: string; hits: TaskSearchHit[] }>(`/api/tasks/search?${params.toString()}`);
+  },
+
+  // ── Artefactos ────────────────────────────────────────────────────────────
+  /** Artefacto por enlace o texto: no sube binario, sólo referencia. */
+  attachArtifact: (
+    id: string,
+    body: { kind: string; title: string; content?: string; path?: string },
+  ) => request<{ artifact: Artifact }>(`/api/tasks/${id}/artifacts`, { method: "POST", body }),
+  /**
+   * Subida real de archivo. Va por fetch directo y no por `request`: el cuerpo
+   * es FormData y el navegador debe poner él mismo el boundary del multipart.
+   */
+  uploadArtifact: async (id: string, file: File, title?: string) => {
+    const form = new FormData();
+    if (title && title.trim()) form.append("title", title.trim());
+    form.append("file", file, file.name);
+    const headers: Record<string, string> = {};
+    if (currentToken) headers["authorization"] = `Bearer ${currentToken}`;
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/tasks/${id}/artifacts/upload`, {
+        method: "POST",
+        headers,
+        body: form,
+      });
+    } catch {
+      throw new ApiError("network_error", "No se pudo subir el archivo (¿la API está viva?)", 0);
+    }
+    let json: unknown = null;
+    try {
+      json = await res.json();
+    } catch {
+      /* respuesta sin cuerpo */
+    }
+    if (!res.ok) {
+      const err = (json as { error?: { code?: string; message?: string } })?.error;
+      if (res.status === 401 && onUnauthorized) onUnauthorized();
+      throw new ApiError(
+        err?.code ?? "http_error",
+        err?.message ?? `Error HTTP ${res.status}`,
+        res.status,
+      );
+    }
+    return json as { artifact: Artifact };
+  },
+  artifactDownloadUrl: (artifactId: string) => `${API_BASE}/api/artifacts/${artifactId}/download`,
 
   // ── Runs ──────────────────────────────────────────────────────────────────
   runs: (q: { status?: string; agent_id?: string; task_id?: string; project_id?: string; limit?: number } = {}) => {

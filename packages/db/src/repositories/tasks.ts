@@ -312,6 +312,10 @@ export function attachArtifact(
   return db.select().from(artifacts).where(eq(artifacts.id, row.id!)).get()!;
 }
 
+export function getArtifact(db: AgentosDb, id: string): Artifact | undefined {
+  return db.select().from(artifacts).where(eq(artifacts.id, id)).get();
+}
+
 export function listArtifacts(db: AgentosDb, taskId: string): Artifact[] {
   return db
     .select()

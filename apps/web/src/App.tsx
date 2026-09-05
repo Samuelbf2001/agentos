@@ -10,6 +10,7 @@ import { Spinner, Toasts } from "./components/ui";
 import LoginView from "./views/LoginView";
 import ChatView from "./views/ChatView";
 import BoardView from "./views/BoardView";
+import MyTasksView from "./views/MyTasksView";
 import BrainView from "./views/BrainView";
 import MeetingProcessingView from "./views/MeetingProcessingView";
 import SwarmView from "./views/SwarmView";
@@ -24,6 +25,7 @@ import { TaskDrawer } from "./views/TaskDrawer";
 const NAV = [
   { to: "/chat", label: "Chat", icon: "💬" },
   { to: "/board", label: "Tablero", icon: "🗂️" },
+  { to: "/my-tasks", label: "Mis tareas", icon: "✅" },
   { to: "/brain", label: "Cerebro", icon: "◈" },
   { to: "/meetings", label: "Reuniones", icon: "🎙️" },
   { to: "/swarm", label: "Enjambre", icon: "🕸️" },
@@ -184,6 +186,7 @@ function Shell() {
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/chat" element={<ChatView />} />
               <Route path="/board" element={<BoardView />} />
+              <Route path="/my-tasks" element={<MyTasksView />} />
               <Route path="/brain" element={<BrainView />} />
               <Route path="/meetings" element={<MeetingProcessingView />} />
               <Route path="/new-project" element={<NewProjectWizard />} />

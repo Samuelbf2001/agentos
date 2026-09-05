@@ -97,7 +97,7 @@ describePg("backend Postgres + pgvector", () => {
       `);
       const names = rows.map((r) => r.table_name);
       for (const t of PG_TABLE_ORDER) expect(names).toContain(t);
-      expect(PG_TABLE_ORDER).toHaveLength(25);
+      expect(PG_TABLE_ORDER).toHaveLength(26);
     });
 
     it("respeta las convenciones de portabilidad: id TEXT, *_at bigint, JSON→jsonb, boolean nativo", async () => {

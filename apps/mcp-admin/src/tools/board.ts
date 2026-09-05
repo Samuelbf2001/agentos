@@ -11,8 +11,13 @@ import {
   boardTasks,
   getTask,
   listArtifacts,
+  listLabelsForTasks,
   listTaskEvents,
+  listTaskLabels,
   listTasks,
+  normalizeLabel,
+  replaceTaskAssignees,
+  replaceTaskLabels,
   updateTask,
   type AgentosDb,
   type Task,
@@ -23,6 +28,27 @@ import { resolveAgentRef } from "../resolve.js";
 
 const Reason = z.string().max(2000).optional();
 const IdempotencyKey = z.string().min(1).max(200).optional();
+
+/**
+ * Epoch ms es lo canónico en SQLite/PG; se acepta ISO para que quien llame por
+ * MCP no tenga que hacer la conversión. Copiado deliberadamente de
+ * apps/api/src/routes/board.ts (mismo comportamiento, sin importar entre apps).
+ */
+const DueAt = z.preprocess(
+  (value) => {
+    if (value === null || value === undefined || typeof value === "number") return value;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return value;
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) return numeric;
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return value;
+  },
+  z.number().int().nonnegative().nullable().optional(),
+);
 
 function mustGetTask(db: AgentosDb, taskId: string): Task {
   const task = getTask(db, taskId);
@@ -41,6 +67,7 @@ function taskAuditFields(task: Task): Record<string, unknown> {
     priority: task.priority,
     assigneeAgentId: task.assigneeAgentId,
     assigneePersonId: task.assigneePersonId,
+    dueAt: task.dueAt,
     orderKey: task.orderKey,
     version: task.version,
   };
@@ -49,22 +76,33 @@ function taskAuditFields(task: Task): Record<string, unknown> {
 export const boardTools: AdminToolDefinition[] = [
   def({
     name: "agentos.tasks.list",
-    description: "Lista tareas con filtros por proyecto, estado o agente asignado (id o slug).",
+    description:
+      "Lista tareas con filtros por proyecto, estado, agente asignado (id o slug), persona responsable o etiqueta.",
     schema: z.object({
       project_id: z.string().optional(),
       status: TaskStatus.optional(),
       assignee_agent: z.string().optional(),
+      assignee_person_id: z.string().optional(),
+      label: z.string().optional(),
     }),
     readOnly: true,
     handler(ctx, args) {
       const assigneeAgentId = args.assignee_agent
         ? resolveAgentRef(ctx.db, args.assignee_agent).id
         : undefined;
-      return listTasks(ctx.db, {
+      const rows = listTasks(ctx.db, {
         projectId: args.project_id,
         status: args.status,
         assigneeAgentId,
+        // `personId` es el filtro canónico del repo: incluye responsables no primarios.
+        personId: args.assignee_person_id,
       });
+      // Una sola consulta de etiquetas para todas las filas evita N+1 al pintar el tablero.
+      const labels = listLabelsForTasks(ctx.db, rows.map((t) => t.id));
+      const withLabels = rows.map((t) => ({ ...t, labels: labels.get(t.id) ?? [] }));
+      if (!args.label) return withLabels;
+      const wanted = normalizeLabel(args.label);
+      return withLabels.filter((t) => t.labels.includes(wanted));
     },
   }),
 
@@ -86,7 +124,8 @@ export const boardTools: AdminToolDefinition[] = [
   def({
     name: "agentos.tasks.create",
     description:
-      "Crea una tarea en BACKLOG. requires_approval lo calcula la política de core (solo puede subirse).",
+      "Crea una tarea en BACKLOG. requires_approval lo calcula la política de core (solo puede subirse). " +
+      "Acepta due_at, una lista de responsables (assignee_person_ids) y labels iniciales.",
     schema: z.object({
       project_id: z.string().min(1),
       title: z.string().min(1),
@@ -96,7 +135,12 @@ export const boardTools: AdminToolDefinition[] = [
       activity_type: z.string().optional(),
       priority: TaskPriority.optional(),
       assignee_agent: z.string().optional(),
+      /** Entrada singular histórica; si llega `assignee_person_ids`, ésta manda. */
       assignee_person_id: z.string().optional(),
+      assignee_person_ids: z.array(z.string().min(1)).max(100).optional(),
+      primary_assignee_person_id: z.string().min(1).nullable().optional(),
+      due_at: DueAt,
+      labels: z.array(z.string()).max(20).optional(),
       parent_task_id: z.string().optional(),
       external_effect: z.boolean().optional(),
       requires_approval: z.boolean().optional(),
@@ -104,15 +148,29 @@ export const boardTools: AdminToolDefinition[] = [
       idempotency_key: IdempotencyKey,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const previous = findIdempotentMutation(ctx, "tasks.create", args.idempotency_key);
       if (previous?.entityId) {
         const existing = getTask(ctx.db, previous.entityId);
-        if (existing) return { task: existing, idempotent: true };
+        if (existing) return { task: existing, labels: listTaskLabels(ctx.db, existing.id), idempotent: true };
       }
       const assigneeAgentId = args.assignee_agent
         ? resolveAgentRef(ctx.db, args.assignee_agent).id
         : null;
+      // Misma regla que POST /api/tasks: la lista manda si llega; si no, la
+      // entrada singular se traduce a una lista de una sola persona primaria.
+      const personIds =
+        args.assignee_person_ids !== undefined
+          ? args.assignee_person_ids
+          : args.assignee_person_id
+            ? [args.assignee_person_id]
+            : [];
+      const primaryPersonId =
+        args.primary_assignee_person_id !== undefined
+          ? args.primary_assignee_person_id
+          : args.assignee_person_ids !== undefined
+            ? null
+            : (args.assignee_person_id ?? null);
       const task = ctx.engine.createTask(
         {
           projectId: args.project_id,
@@ -123,30 +181,48 @@ export const boardTools: AdminToolDefinition[] = [
           activityType: args.activity_type,
           priority: args.priority,
           assigneeAgentId,
-          assigneePersonId: args.assignee_person_id ?? null,
+          assigneePersonId: primaryPersonId,
           parentTaskId: args.parent_task_id ?? null,
           externalEffect: args.external_effect,
           requiresApproval: args.requires_approval,
         },
         { actor: ctx.actor },
       );
+      let savedTask: Task = task;
+      if (args.due_at !== undefined) {
+        savedTask = await updateTask(ctx.db, task.id, { dueAt: args.due_at }, savedTask.version);
+      }
+      if (personIds.length > 0) {
+        // mcp-admin no tiene NotificationProcessor: se registra la asignación
+        // vía la tabla puente, sin los avisos que sí dispara apps/api.
+        const assigned = await replaceTaskAssignees(
+          ctx.db,
+          savedTask.id,
+          { personIds, primaryPersonId },
+          savedTask.version,
+        );
+        savedTask = assigned;
+      }
+      const labels =
+        args.labels !== undefined ? await replaceTaskLabels(ctx.db, savedTask.id, args.labels, ctx.actor) : [];
       auditMutation(ctx, {
         action: "tasks.create",
         entityType: "task",
-        entityId: task.id,
+        entityId: savedTask.id,
         before: null,
-        after: taskAuditFields(task),
+        after: taskAuditFields(savedTask),
         reason: args.reason,
         idempotencyKey: args.idempotency_key,
       });
-      return { task };
+      return { task: savedTask, labels };
     },
   }),
 
   def({
     name: "agentos.tasks.update",
     description:
-      "Actualiza campos editables de una tarea (título, descripción, DoD, prioridad, activity_type) con expected_version.",
+      "Actualiza campos editables de una tarea (título, descripción, DoD, prioridad, activity_type, " +
+      "due_at) con expected_version; labels reemplaza el conjunto completo sin consumir la versión.",
     schema: z.object({
       task_id: z.string().min(1),
       expected_version: z.number().int().positive(),
@@ -156,11 +232,14 @@ export const boardTools: AdminToolDefinition[] = [
         definition_of_done: z.string().nullable().optional(),
         activity_type: z.string().nullable().optional(),
         priority: TaskPriority.optional(),
+        due_at: DueAt,
+        /** Reemplazo completo del conjunto de etiquetas (no un merge). */
+        labels: z.array(z.string()).max(20).optional(),
       }),
       reason: Reason,
     }),
     readOnly: false,
-    handler(ctx, args) {
+    async handler(ctx, args) {
       const task = mustGetTask(ctx.db, args.task_id);
       if (Object.keys(args.patch).length === 0) {
         throw errors.validation("tasks.update con patch vacío: nada que hacer");
@@ -172,7 +251,17 @@ export const boardTools: AdminToolDefinition[] = [
       if (args.patch.definition_of_done !== undefined) patch.definitionOfDone = args.patch.definition_of_done;
       if (args.patch.activity_type !== undefined) patch.activityType = args.patch.activity_type;
       if (args.patch.priority !== undefined) patch.priority = args.patch.priority;
-      const updated = updateTask(ctx.db, task.id, patch, args.expected_version);
+      if (args.patch.due_at !== undefined) patch.dueAt = args.patch.due_at;
+      // Las etiquetas son metadato de clasificación, no una transición de la
+      // máquina de estados: no consumen expected_version, igual que en REST.
+      let updated: Task = task;
+      if (Object.keys(patch).length > 0) {
+        updated = await updateTask(ctx.db, task.id, patch, args.expected_version);
+      }
+      const labels =
+        args.patch.labels !== undefined
+          ? await replaceTaskLabels(ctx.db, task.id, args.patch.labels, ctx.actor)
+          : listTaskLabels(ctx.db, task.id);
       auditMutation(ctx, {
         action: "tasks.update",
         entityType: "task",
@@ -181,7 +270,7 @@ export const boardTools: AdminToolDefinition[] = [
         after: taskAuditFields(updated),
         reason: args.reason,
       });
-      return updated;
+      return { ...updated, labels };
     },
   }),
 

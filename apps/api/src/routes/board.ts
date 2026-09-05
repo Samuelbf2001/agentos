@@ -17,20 +17,37 @@ import {
   boardTasks,
   createProject,
   getAgentBySlug,
+  getArtifact,
   getProject,
   getTask,
   listDocs,
   listArtifacts,
+  listLabelCatalog,
+  listPeople,
   listProjects,
   listProjectSources,
   listRunsForTask,
   listTaskEvents,
+  listTaskLabels,
   listTasks,
+  normalizeLabel,
+  replaceTaskLabels,
+  searchTasks,
   setGateState,
   updateProject,
   updateTask,
   type Task,
 } from "@agentos/db";
+import fs from "node:fs";
+import { newId } from "@agentos/shared";
+import {
+  artifactsRoot,
+  guessContentType,
+  maxArtifactBytes,
+  resolveArtifactPath,
+  safeFileName,
+  storeArtifactFile,
+} from "../artifact-files.js";
 import { GATE_G1_PLAN } from "@agentos/core";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
@@ -97,6 +114,12 @@ const CreateTaskBody = z.object({
   parent_task_id: z.string().optional(),
   external_effect: z.boolean().optional(),
   requires_approval: z.boolean().optional(),
+  /** Etiquetas iniciales; se normalizan (minúsculas, sin duplicados). */
+  labels: z.array(z.string()).max(20).optional(),
+});
+
+const LabelsBody = z.object({
+  labels: z.array(z.string()).max(20),
 });
 
 const UpdateTaskBody = z.object({
@@ -211,6 +234,30 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     return { project };
   });
 
+  /**
+   * Personas asignables a un proyecto. La regla de aislamiento humano (PRD
+   * §"No puede asignarse una persona de otra organización") se valida en el
+   * repositorio; esta ruta existe para que el selector de la interfaz ofrezca
+   * SÓLO opciones válidas en vez de dejar que el humano elija una que la API
+   * va a rechazar.
+   */
+  app.get("/api/projects/:id/people", async (req) => {
+    const { id } = req.params as { id: string };
+    const project = getProject(db, id);
+    if (!project) throw errors.notFound("project", id);
+    const rows = await listPeople(db, project.orgId);
+    return {
+      org_id: project.orgId,
+      people: rows.map((person) => ({
+        id: person.id,
+        full_name: person.fullName,
+        role: person.role,
+        email: person.email,
+        is_internal: person.isInternal,
+      })),
+    };
+  });
+
   /** Gate 1 (set_gate): aprobar habilita CONSTRUIR; rechazar lo deja cerrado. */
   app.post("/api/projects/:id/gate", async (req) => {
     const { id } = req.params as { id: string };
@@ -268,17 +315,64 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         status: z.string().optional(),
         assignee_agent_id: z.string().min(1).optional(),
         assignee_person_id: z.string().min(1).optional(),
+        label: z.string().min(1).optional(),
+        /** "1"/"true": tareas de la persona de la sesión, sin repetir su id. */
+        mine: z.string().optional(),
       }),
       req.query,
     );
     const status = q.status ? parse(TaskStatus, q.status) : undefined;
+    const mine = q.mine === "1" || q.mine === "true";
+    const personId = mine ? req.session!.personId : q.assignee_person_id;
     return {
-      tasks: listTasksWithAssignees(db, {
+      tasks: await listTasksWithAssignees(db, {
         ...(q.project_id ? { projectId: q.project_id } : {}),
         ...(status ? { status } : {}),
         ...(q.assignee_agent_id ? { assigneeAgentId: q.assignee_agent_id } : {}),
-        ...(q.assignee_person_id ? { assigneePersonId: q.assignee_person_id } : {}),
+        ...(personId ? { assigneePersonId: personId } : {}),
+        ...(q.label ? { label: normalizeLabel(q.label) } : {}),
       }),
+    };
+  });
+
+  /**
+   * Búsqueda de tareas (título, descripción, DoD y comentarios). El motor vive
+   * en `@agentos/db`: FTS5 en SQLite, tsvector en Postgres, misma forma.
+   */
+  app.get("/api/tasks/search", async (req) => {
+    const q = parse(
+      z.object({
+        q: z.string().min(1),
+        project_id: z.string().min(1).optional(),
+        mine: z.string().optional(),
+        limit: z.coerce.number().int().positive().max(50).optional(),
+      }),
+      req.query,
+    );
+    const mine = q.mine === "1" || q.mine === "true";
+    const hits = await searchTasks(db, q.q, {
+      limit: q.limit ?? 20,
+      ...(q.project_id ? { projectId: q.project_id } : {}),
+      ...(mine ? { personId: req.session!.personId } : {}),
+    });
+    // El nombre del proyecto se resuelve aquí: la caja de búsqueda es global y
+    // el resultado tiene que decir a qué proyecto pertenece cada tarjeta.
+    const projectNames = new Map(listProjects(db).map((p) => [p.id, p.name]));
+    return {
+      query: q.q,
+      hits: hits.map((hit) => ({
+        ...hit,
+        project_name: projectNames.get(hit.projectId) ?? null,
+        labels: listTaskLabels(db, hit.id),
+      })),
+    };
+  });
+
+  /** Catálogo de etiquetas en uso (para el filtro del tablero y el autocompletar). */
+  app.get("/api/labels", async (req) => {
+    const q = parse(z.object({ project_id: z.string().min(1).optional() }), req.query);
+    return {
+      labels: await listLabelCatalog(db, { ...(q.project_id ? { projectId: q.project_id } : {}) }),
     };
   });
 
@@ -393,8 +487,40 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         });
       }
     }
+    if (body.labels && body.labels.length > 0) {
+      await replaceTaskLabels(db, savedTask.id, body.labels, personActor(req));
+    }
+    // `task.created` ya lo publica BoardEngine.createTask: no se duplica aquí.
     reply.status(201);
-    return { task: taskWithAssignees(db, savedTask) };
+    return { task: await taskWithAssignees(db, savedTask) };
+  });
+
+  /**
+   * Etiquetas de una tarjeta: reemplazo completo del conjunto. NO consume
+   * `expected_version` a propósito — clasificar no es una transición de la
+   * máquina de estados y no debe invalidar la ficha que el humano tiene abierta.
+   */
+  app.put("/api/tasks/:id/labels", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(LabelsBody, req.body);
+    const task = getTask(db, id);
+    if (!task) throw errors.notFound("task", id);
+    const before = await listTaskLabels(db, id);
+    const labels = await replaceTaskLabels(db, id, body.labels, personActor(req));
+    appendAudit(db, {
+      actor: personActor(req),
+      source: "ui",
+      action: "task.labels",
+      entityType: "task",
+      entityId: id,
+      before: { labels: before },
+      after: { labels },
+    });
+    sink.publish(`board:${task.projectId}`, {
+      type: "task.labels_changed",
+      payload: { taskId: id, labels, actor: personActor(req) },
+    });
+    return { task: await taskWithAssignees(db, getTask(db, id)!), labels };
   });
 
   app.patch("/api/tasks/:id", async (req) => {
@@ -604,6 +730,99 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     });
     reply.status(201);
     return { artifact };
+  });
+
+  /**
+   * Subida real de un archivo como artefacto (multipart/form-data, campo
+   * `file`; `title` opcional). El binario NUNCA entra en la base ni en el
+   * repositorio: se escribe bajo la raíz de artefactos y la fila guarda la
+   * ruta relativa. Es lo que permite cerrar una tarea desde la interfaz sin
+   * relajar la regla anti-teatro del motor.
+   */
+  app.post("/api/tasks/:id/artifacts/upload", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = getTask(db, id);
+    if (!task) throw errors.notFound("task", id);
+    const project = getProject(db, task.projectId);
+    if (!project) throw errors.notFound("project", task.projectId);
+
+    const upload = await req.file();
+    if (!upload) throw errors.validation("Falta el archivo (campo multipart `file`)");
+    let data: Buffer;
+    try {
+      data = await upload.toBuffer();
+    } catch {
+      throw errors.validation(
+        `El archivo supera el límite de ${Math.round(maxArtifactBytes() / (1024 * 1024))} MB`,
+        { maxBytes: maxArtifactBytes() },
+      );
+    }
+    if (data.byteLength === 0) throw errors.validation("El archivo está vacío");
+
+    const declaredTitle = (upload.fields?.title as { value?: unknown } | undefined)?.value;
+    const title =
+      typeof declaredTitle === "string" && declaredTitle.trim()
+        ? declaredTitle.trim()
+        : safeFileName(upload.filename ?? "archivo");
+    const artifactId = newId();
+    const root = artifactsRoot(project);
+    const stored = storeArtifactFile({
+      root,
+      projectId: project.id,
+      taskId: id,
+      artifactId,
+      fileName: upload.filename ?? "archivo",
+      data,
+    });
+    const artifact = attachArtifact(db, {
+      id: artifactId,
+      taskId: id,
+      kind: "file",
+      title,
+      content: null,
+      path: stored.relativePath,
+      meta: {
+        originalName: upload.filename ?? null,
+        mimeType: upload.mimetype ?? null,
+        bytes: stored.bytes,
+        storage: "artifacts_root",
+      },
+      createdBy: personActor(req),
+    });
+    appendAudit(db, {
+      actor: personActor(req),
+      source: "ui",
+      action: "task.artifact_upload",
+      entityType: "task",
+      entityId: id,
+      after: { artifactId: artifact.id, title, bytes: stored.bytes },
+    });
+    sink.publish(`board:${task.projectId}`, {
+      type: "task.artifact_attached",
+      payload: { taskId: id, artifactId: artifact.id },
+    });
+    reply.status(201);
+    return { artifact };
+  });
+
+  /** Descarga del binario de un artefacto subido (o escrito por un runner). */
+  app.get("/api/artifacts/:id/download", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const artifact = await getArtifact(db, id);
+    if (!artifact) throw errors.notFound("artifact", id);
+    if (!artifact.path) {
+      throw errors.validation("Este artefacto no tiene archivo: su contenido es texto", { artifactId: id });
+    }
+    const task = getTask(db, artifact.taskId);
+    const project = (task ? getProject(db, task.projectId) : null) ?? null;
+    const absolute = resolveArtifactPath(artifactsRoot(project), artifact.path);
+    if (!fs.existsSync(absolute)) throw errors.notFound("artifact_file", artifact.path);
+    const meta = (artifact.meta ?? {}) as { originalName?: string | null; mimeType?: string | null };
+    const fileName = safeFileName(meta.originalName || artifact.title);
+    reply
+      .header("content-type", guessContentType(fileName, meta.mimeType ?? null))
+      .header("content-disposition", `attachment; filename="${fileName}"`);
+    return reply.send(fs.createReadStream(absolute));
   });
 
   /** Aprobación de REVIEW (US-4): REVIEW→DONE solo humano; decisión auditada. */

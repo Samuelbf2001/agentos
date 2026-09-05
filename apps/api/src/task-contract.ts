@@ -13,6 +13,8 @@ import {
   getTaskWithAssignees as dbGetTaskWithAssignees,
   listTaskAssignees as dbListTaskAssignees,
   listTasksWithAssignees as dbListTasksWithAssignees,
+  listLabelsForTasks,
+  listTaskLabels,
   replaceTaskAssignees as dbReplaceTaskAssignees,
   type AgentosDb,
   type Person,
@@ -28,6 +30,8 @@ export interface TaskAssigneeView extends TaskAssignee {
 
 export interface TaskWithAssignees extends Task {
   assignees: TaskAssigneeView[];
+  /** Etiquetas normalizadas de la tarjeta (tabla puente `task_labels`). */
+  labels: string[];
 }
 
 export interface ReplaceTaskAssigneesInput {
@@ -156,7 +160,7 @@ export function taskWithAssignees(db: AgentosDb, task: Task): TaskWithAssignees 
     ? source.assignees
     : dbListTaskAssignees(db, task.id)
   ).map((row) => withPerson(db, row));
-  return { ...source, assignees } as TaskWithAssignees;
+  return { ...source, assignees, labels: listTaskLabels(db, task.id) } as TaskWithAssignees;
 }
 
 export function listTasksWithAssignees(
@@ -166,6 +170,8 @@ export function listTasksWithAssignees(
     status?: Task["status"];
     assigneeAgentId?: string;
     assigneePersonId?: string;
+    /** Etiqueta exacta (ya normalizada) por la que filtrar el listado. */
+    label?: string;
   } = {},
 ): TaskWithAssignees[] {
   const rows = dbListTasksWithAssignees(db, {
@@ -174,8 +180,15 @@ export function listTasksWithAssignees(
     ...(filter.assigneeAgentId ? { assigneeAgentId: filter.assigneeAgentId } : {}),
     ...(filter.assigneePersonId ? { personId: filter.assigneePersonId } : {}),
   });
-  return rows.map((row) => ({
+  const labels = listLabelsForTasks(
+    db,
+    rows.map((row) => row.id),
+  );
+  const withLabels = rows.map((row) => ({
     ...row,
     assignees: row.assignees.map((assignee) => withPerson(db, assignee)),
+    labels: labels.get(row.id) ?? [],
   }));
+  // Una sola consulta de etiquetas sirve para pintar la tarjeta y para filtrar.
+  return filter.label ? withLabels.filter((row) => row.labels.includes(filter.label!)) : withLabels;
 }
