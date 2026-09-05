@@ -220,7 +220,8 @@ function ui() {
     <MemoryRouter initialEntries={["/new-project"]}>
       <Routes>
         <Route path="/new-project" element={<NewProjectWizard />} />
-        <Route path="/board" element={<div>BOARD_MARKER</div>} />
+        {/* Tras disparar, el wizard entra al tablero DEL proyecto creado. */}
+        <Route path="/proyectos/:projectId/tablero" element={<div>BOARD_MARKER</div>} />
       </Routes>
     </MemoryRouter>,
   );
