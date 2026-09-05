@@ -37,6 +37,7 @@ export * from "./repositories/providers.js";
 export * from "./repositories/agents.js";
 export * from "./repositories/tasks.js";
 export * from "./repositories/task-assignees.js";
+export * from "./repositories/task-labels.js";
 export * from "./repositories/task-notifications.js";
 export * from "./repositories/runs.js";
 export * from "./repositories/events.js";

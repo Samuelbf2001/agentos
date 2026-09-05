@@ -17,6 +17,13 @@
       "breakpoints": true
     },
     {
+      "idx": 2,
+      "version": "7",
+      "when": 1788000000000,
+      "tag": "0002_etiquetas_tareas",
+      "breakpoints": true
+    },
+    {
       "idx": 3,
       "version": "7",
       "when": 1788060000000,

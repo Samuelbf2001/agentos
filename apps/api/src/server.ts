@@ -6,10 +6,12 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
+import multipart from "@fastify/multipart";
 import { getPerson } from "@agentos/db";
 import { createApiContext, type ApiContext, type ApiOptions } from "./context.js";
 import { extractToken, type Session } from "./auth.js";
 import { handleApiError } from "./http-errors.js";
+import { maxArtifactBytes } from "./artifact-files.js";
 import { registerAuthAndHealth } from "./routes/auth-health.js";
 import { registerBoardRoutes } from "./routes/board.js";
 import { registerModuleRoutes } from "./routes/modules.js";
@@ -44,6 +46,11 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
     credentials: true,
   });
   await app.register(websocket);
+  // Subida de artefactos (US: cerrar una tarea desde la interfaz). El limite
+  // vive en artifact-files.ts para que ruta y parser no puedan divergir.
+  await app.register(multipart, {
+    limits: { fileSize: maxArtifactBytes(), files: 1, fields: 8 },
+  });
 
   app.setErrorHandler(handleApiError);
 

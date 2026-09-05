@@ -107,6 +107,8 @@ export interface Task {
   dueAt?: number | null;
   /** Alias de entrada/compatibilidad para respuestas snake_case. */
   due_at?: number | null;
+  /** Etiquetas normalizadas de la tarjeta (tabla puente `task_labels`). */
+  labels?: string[];
   requiresApproval: boolean;
   externalEffect: boolean;
   leaseUntil: number | null;
@@ -119,6 +121,45 @@ export interface Task {
 }
 
 export type BoardFilter = "all" | "mine" | "unassigned" | "due";
+
+/** Etiquetas de una tarjeta, tolerando que aún no se hayan cargado. */
+export function getTaskLabels(task: Pick<Task, "labels">): string[] {
+  return task.labels ?? [];
+}
+
+export interface LabelUsage {
+  label: string;
+  count: number;
+}
+
+/** Resultado de `GET /api/tasks/search`: lo mínimo para abrir la ficha. */
+export interface TaskSearchHit {
+  id: string;
+  projectId: string;
+  title: string;
+  status: TaskStatus;
+  stage: Stage;
+  dueAt: number | null;
+  snippet: string;
+  /** `comment` = el match está en un comentario, no en la ficha. */
+  source: "task" | "comment";
+  rank: number;
+  project_name?: string | null;
+  labels?: string[];
+}
+
+/** Agrupación de "Mis tareas" por urgencia; el orden es el de esta lista. */
+export type DueBucket = "overdue" | "today" | "week" | "later" | "none";
+
+export const DUE_BUCKETS: DueBucket[] = ["overdue", "today", "week", "later", "none"];
+
+export const DUE_BUCKET_LABELS: Record<DueBucket, string> = {
+  overdue: "Vencidas",
+  today: "Hoy",
+  week: "Esta semana",
+  later: "Después",
+  none: "Sin fecha",
+};
 
 export type TaskDueState = "none" | "overdue" | "today" | "upcoming" | "later" | "complete";
 
@@ -156,6 +197,23 @@ export function taskDueState(
   const sevenDays = now + 7 * 86_400_000;
   if (dueAt < startOfToday.getTime() + 86_400_000) return "today";
   if (dueAt <= sevenDays) return "upcoming";
+  return "later";
+}
+
+/**
+ * Agrupa por vencimiento con EXACTAMENTE los mismos cortes que
+ * `taskDueState` (vencida < ahora; hoy = resto del día natural; esta semana =
+ * 7 días). Duplicar los cortes haría que la píldora de la tarjeta y el grupo
+ * de "Mis tareas" se contradijeran.
+ */
+export function dueBucket(task: Pick<Task, "dueAt" | "due_at">, now = Date.now()): DueBucket {
+  const dueAt = taskDueTimestamp(task);
+  if (dueAt === null) return "none";
+  if (dueAt < now) return "overdue";
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  if (dueAt < startOfToday.getTime() + 86_400_000) return "today";
+  if (dueAt <= now + 7 * 86_400_000) return "week";
   return "later";
 }
 

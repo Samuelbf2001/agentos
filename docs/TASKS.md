@@ -55,6 +55,33 @@ No verificado por esta sesión; se documenta como trabajo en progreso, no como h
 - **Plan de despliegue a EasyPanel**: `Dockerfile.api` + `docs/PLAN-DESPLIEGUE-EASYPANEL.md` (plan, no ejecutado).
 - **Plan de migración desde Notion**: `docs/PLAN-MIGRACION-NOTION-EASYPANEL.md` y `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (Fase 1 preparada, solo lectura, nada escrito).
 
+## Oleada "Tareas usables" — rama `feat/tareas-ui` (2026-09-05)
+
+El módulo de Proyectos/Tareas tenía la lógica construida pero la interfaz no permitía el uso diario:
+`api.createTask` existía sin ningún botón que lo llamara, la ficha no dejaba adjuntar evidencia (así que
+arrastrar a DONE devolvía `missing_artifact` y se revertía), no había campo para la definición de terminado,
+ni etiquetas, ni búsqueda, ni vista transversal por persona, y `processDue` no lo programaba nadie.
+
+| # | Entrega | Piezas clave |
+|---|---------|--------------|
+| 1 | Crear tarea desde la interfaz | `apps/web/src/views/CreateTaskDialog.tsx` (validación en línea), botón `＋ Nueva tarea` en `BoardView` |
+| 2 | Cerrar tarea desde la interfaz | `POST /api/tasks/:id/artifacts/upload` (multipart, `apps/api/src/artifact-files.ts`), `GET /api/artifacts/:id/download`; `ArtifactAttacher`, `TaskFieldsEditor` y `DefinitionOfDoneEditor` en `TaskDrawer`; `blockedMove` en el store explica el rechazo del motor y ofrece reintentar en vez de revertir en silencio |
+| 3 | Etiquetas | Migración **SQLite 0006 / Postgres 0002** (`task_labels`, tabla de unión para poder filtrar en ambos motores); repos duales `repositories/task-labels.ts` + `pg/repositories/task-labels.ts`; `PUT /api/tasks/:id/labels`, `GET /api/labels`; chips en la tarjeta y filtro en el tablero |
+| 4 | Búsqueda de tareas | `GET /api/tasks/search`; FTS5 (`tasks_fts` + `task_comments_fts` en `search.ts`) y tsvector con plan B ILIKE (`searchTasksPg`); `TaskSearchBox` en tablero y en Mis tareas |
+| 5 | Vista "Mis tareas" | `apps/web/src/views/MyTasksView.tsx`, ruta `/my-tasks`, agrupación por vencimiento con los mismos cortes que la píldora de la tarjeta |
+| 6 | Reloj de recordatorios | `createNotificationScheduler` en `notifications.ts`, arrancado por `createApiContext`; `AGENTOS_NOTIFICATIONS_INTERVAL_MS` (0/`off` lo apaga) |
+| 7 | MCP admin alineado | `agentos.tasks.create` acepta `due_at`, `assignee_person_ids` y `labels`; `tasks.list` filtra por persona y etiqueta; `tasks.update` acepta `due_at` y `labels` |
+
+Extras necesarios para que lo anterior funcione de verdad: `GET /api/projects/:id/people` (el selector de
+responsables sólo ofrece personas de la organización del proyecto, que es lo único que la regla de
+aislamiento humano acepta) y `AGENTOS_WEB_ORIGIN` para CORS con la web en otro puerto.
+
+**Hallazgo abierto:** en la DB seedeada, todas las personas pertenecen a la organización *Sixteam* y el
+proyecto demo a *ACME S.A.*; como el PRD exige que un responsable pertenezca a la organización del
+proyecto, en el demo **no se puede asignar a nadie del equipo interno**. El código respeta el PRD; lo que
+está desalineado es el seed. Decidir: o el seed crea personas de la organización cliente, o la regla admite
+al equipo interno. No se tocó la regla sin visto bueno.
+
 ## Migración desde Notion (rama `feat/notion-import`, 2026-09-05)
 
 | # | Bloque | Contenido | Estado |

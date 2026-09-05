@@ -20,13 +20,17 @@ import type {
   Agent,
   Approval,
   Artifact,
+  LabelUsage,
   Message,
   Person,
   Project,
   Run,
+  Stage,
   Task,
   TaskDetailResponse,
+  TaskPriority,
   TaskProjectContext,
+  TaskSearchHit,
   BoardFilter,
   TaskEvent,
   TaskStatus,
@@ -56,6 +60,30 @@ export interface TaskDetail {
   project?: Project | null;
 }
 
+/**
+ * Movimiento rechazado por el motor por falta de evidencia. Se guarda para que
+ * la ficha diga QUÉ falta y ofrezca adjuntarlo, en vez de revertir en silencio.
+ */
+export interface BlockedMove {
+  taskId: string;
+  to: TaskStatus;
+  code: string;
+  message: string;
+}
+
+export interface CreateTaskInput {
+  project_id: string;
+  title: string;
+  stage: Stage;
+  description?: string;
+  definition_of_done?: string;
+  priority?: TaskPriority;
+  assignee_person_ids?: string[];
+  primary_assignee_person_id?: string | null;
+  due_at?: number | null;
+  labels?: string[];
+}
+
 /** Entregable en REVIEW esperando decisión humana (bandeja, CA-4.2 / fix H10). */
 export interface ReviewEntry {
   task: Task;
@@ -75,6 +103,12 @@ export interface AppStore extends EventState {
   people: Person[];
   peopleLoading: boolean;
   peopleError: string | null;
+  /**
+   * Roster acotado al proyecto activo. `null` = la API no lo pudo dar (servidor
+   * anterior o error): en ese caso la interfaz vuelve al roster global.
+   */
+  projectPeople: Person[] | null;
+  projectPeopleId: string | null;
   threads: Thread[];
   approvals: Approval[];
   reviewTasks: ReviewEntry[];
@@ -89,6 +123,18 @@ export interface AppStore extends EventState {
   taskMutationError: string | null;
   taskSaving: boolean;
   boardFilter: BoardFilter;
+  /** Etiqueta activa del tablero; null = sin filtrar por etiqueta. */
+  boardLabelFilter: string | null;
+  labelCatalog: LabelUsage[];
+  taskCreating: boolean;
+  blockedMove: BlockedMove | null;
+  taskSearchQuery: string;
+  taskSearchResults: TaskSearchHit[];
+  taskSearchLoading: boolean;
+  taskSearchError: string | null;
+  myTasks: Task[];
+  myTasksLoading: boolean;
+  myTasksError: string | null;
   chatSending: boolean;
 
   toasts: Toast[];
@@ -102,10 +148,23 @@ export interface AppStore extends EventState {
 
   loadProjects(): Promise<void>;
   loadPeople(): Promise<void>;
+  loadProjectPeople(projectId: string): Promise<void>;
   setActiveProject(projectId: string | null): Promise<void>;
   setBoardFilter(filter: BoardFilter): void;
+  setBoardLabelFilter(label: string | null): void;
+  loadLabels(projectId?: string): Promise<void>;
   refetchBoard(): Promise<void>;
   moveTaskOptimistic(taskId: string, to: TaskStatus): Promise<boolean>;
+  clearBlockedMove(): void;
+  /** Reintenta el movimiento que el motor rechazó por falta de artefacto. */
+  retryBlockedMove(): Promise<boolean>;
+  createTask(input: CreateTaskInput): Promise<Task | null>;
+  setTaskLabels(taskId: string, labels: string[]): Promise<boolean>;
+  attachArtifactLink(taskId: string, input: { title: string; url: string }): Promise<boolean>;
+  uploadTaskArtifact(taskId: string, file: File, title?: string): Promise<boolean>;
+  searchTasks(query: string, opts?: { projectId?: string; mine?: boolean }): Promise<void>;
+  clearTaskSearch(): void;
+  loadMyTasks(opts?: { label?: string; status?: TaskStatus }): Promise<void>;
 
   openTask(taskId: string): Promise<void>;
   retryTaskDetail(): Promise<void>;
@@ -296,6 +355,8 @@ export const useStore = create<AppStore>()((set, get) => {
     people: [],
     peopleLoading: false,
     peopleError: null,
+    projectPeople: null,
+    projectPeopleId: null,
     threads: [],
     approvals: [],
     reviewTasks: [],
@@ -310,6 +371,17 @@ export const useStore = create<AppStore>()((set, get) => {
     taskMutationError: null,
     taskSaving: false,
     boardFilter: "all",
+    boardLabelFilter: null,
+    labelCatalog: [],
+    taskCreating: false,
+    blockedMove: null,
+    taskSearchQuery: "",
+    taskSearchResults: [],
+    taskSearchLoading: false,
+    taskSearchError: null,
+    myTasks: [],
+    myTasksLoading: false,
+    myTasksError: null,
     chatSending: false,
     toasts: [],
 
@@ -373,6 +445,8 @@ export const useStore = create<AppStore>()((set, get) => {
         people: [],
         peopleLoading: false,
         peopleError: null,
+        projectPeople: null,
+        projectPeopleId: null,
         threads: [],
         approvals: [],
         reviewTasks: [],
@@ -383,6 +457,12 @@ export const useStore = create<AppStore>()((set, get) => {
         taskMutationError: null,
         taskSaving: false,
         boardFilter: "all",
+        boardLabelFilter: null,
+        labelCatalog: [],
+        blockedMove: null,
+        taskSearchQuery: "",
+        taskSearchResults: [],
+        myTasks: [],
         activeProjectId: null,
       });
     },
@@ -418,8 +498,32 @@ export const useStore = create<AppStore>()((set, get) => {
       }
     },
 
+    async loadProjectPeople(projectId) {
+      try {
+        const { people } = await api.projectPeople(projectId);
+        set({ projectPeople: people, projectPeopleId: projectId });
+      } catch {
+        // Sin roster de proyecto la ficha usa el global: peor filtro, pero
+        // nunca un selector vacío por un fallo de red.
+        set({ projectPeople: null, projectPeopleId: projectId });
+      }
+    },
+
     setBoardFilter(filter) {
       set({ boardFilter: filter });
+    },
+
+    setBoardLabelFilter(label) {
+      set({ boardLabelFilter: label });
+    },
+
+    async loadLabels(projectId) {
+      try {
+        const { labels } = await api.labels(projectId ?? get().activeProjectId ?? undefined);
+        set({ labelCatalog: labels });
+      } catch {
+        /* el catálogo es una ayuda: sin él la ficha sigue aceptando texto libre */
+      }
     },
 
     async setActiveProject(projectId) {
@@ -454,6 +558,8 @@ export const useStore = create<AppStore>()((set, get) => {
           projects: get().projects.map((p) => (p.id === snap.project.id ? snap.project : p)),
         });
         subscribeBoard(projectId, snap.board_seq);
+        void get().loadLabels(projectId);
+        void get().loadProjectPeople(projectId);
       } catch (err) {
         set({
           boardLoading: false,
@@ -500,11 +606,188 @@ export const useStore = create<AppStore>()((set, get) => {
         set({
           board: { ...get().board, tasks: { ...get().board.tasks, [taskId]: prev } },
         });
+        // La regla anti-teatro (ningún REVIEW/DONE sin artefacto) es la causa
+        // más frecuente de rechazo y la única que el humano puede resolver ahí
+        // mismo: en vez de revertir en silencio, se abre la ficha explicando
+        // qué falta para que adjunte la evidencia y reintente.
+        if (err instanceof ApiError && err.code === "missing_artifact") {
+          set({
+            blockedMove: {
+              taskId,
+              to,
+              code: err.code,
+              message: err.message,
+            },
+          });
+          get().pushToast(
+            "error",
+            `Falta evidencia para llevar la tarea a ${to}: adjunta un archivo o un enlace en la ficha.`,
+          );
+          await get().openTask(taskId);
+          return false;
+        }
         toastError(err, "La API rechazó la transición");
         if (err instanceof ApiError && (err.code === "version_conflict" || err.code === "conflict")) {
           void get().refetchBoard();
         }
         return false;
+      }
+    },
+
+    clearBlockedMove() {
+      set({ blockedMove: null });
+    },
+
+    async retryBlockedMove() {
+      const blocked = get().blockedMove;
+      if (!blocked) return false;
+      const task = currentTask(blocked.taskId);
+      if (!task) {
+        set({ blockedMove: null });
+        return false;
+      }
+      try {
+        const { task: updated } = await api.moveTask(blocked.taskId, {
+          to: blocked.to,
+          expected_version: task.version,
+        });
+        mergeTask(updated);
+        set({ blockedMove: null });
+        get().pushToast("ok", `Tarea movida a ${blocked.to}`);
+        void get().refetchBoard();
+        return true;
+      } catch (err) {
+        // Sigue faltando algo: se conserva el aviso con el mensaje nuevo.
+        if (err instanceof ApiError) {
+          set({ blockedMove: { ...blocked, code: err.code, message: err.message } });
+        }
+        toastError(err, "La API rechazó la transición");
+        return false;
+      }
+    },
+
+    async createTask(input) {
+      set({ taskCreating: true });
+      try {
+        const { task } = await api.createTask({
+          project_id: input.project_id,
+          title: input.title,
+          stage: input.stage,
+          ...(input.description ? { description: input.description } : {}),
+          ...(input.definition_of_done ? { definition_of_done: input.definition_of_done } : {}),
+          ...(input.priority ? { priority: input.priority } : {}),
+          ...(input.assignee_person_ids && input.assignee_person_ids.length > 0
+            ? { assignee_person_ids: input.assignee_person_ids }
+            : {}),
+          ...(input.primary_assignee_person_id
+            ? { primary_assignee_person_id: input.primary_assignee_person_id }
+            : {}),
+          ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
+          ...(input.labels && input.labels.length > 0 ? { labels: input.labels } : {}),
+        });
+        mergeTask(task);
+        get().pushToast("ok", `Tarea creada: ${task.title}`);
+        // El snapshot manda: el WS es optimización, no fuente de verdad.
+        void get().refetchBoard();
+        void get().loadLabels();
+        return task;
+      } catch (err) {
+        toastError(err, "No se pudo crear la tarea");
+        return null;
+      } finally {
+        set({ taskCreating: false });
+      }
+    },
+
+    async setTaskLabels(taskId, labels) {
+      set({ taskSaving: true, taskMutationError: null });
+      try {
+        const result = await api.setTaskLabels(taskId, labels);
+        mergeTask(result.task);
+        void get().loadLabels();
+        get().pushToast("ok", "Etiquetas actualizadas");
+        return true;
+      } catch (err) {
+        const message = normalizeMutationError(err, "No se pudieron guardar las etiquetas");
+        set({ taskMutationError: message });
+        toastError(err, "No se pudieron guardar las etiquetas");
+        return false;
+      } finally {
+        set({ taskSaving: false });
+      }
+    },
+
+    async attachArtifactLink(taskId, input) {
+      set({ taskSaving: true });
+      try {
+        await api.attachArtifact(taskId, { kind: "link", title: input.title, content: input.url });
+        await get().openTask(taskId);
+        get().pushToast("ok", "Enlace adjuntado como artefacto");
+        return true;
+      } catch (err) {
+        toastError(err, "No se pudo adjuntar el enlace");
+        return false;
+      } finally {
+        set({ taskSaving: false });
+      }
+    },
+
+    async uploadTaskArtifact(taskId, file, title) {
+      set({ taskSaving: true });
+      try {
+        await api.uploadArtifact(taskId, file, title);
+        await get().openTask(taskId);
+        get().pushToast("ok", `Archivo adjuntado: ${file.name}`);
+        return true;
+      } catch (err) {
+        toastError(err, "No se pudo subir el archivo");
+        return false;
+      } finally {
+        set({ taskSaving: false });
+      }
+    },
+
+    async searchTasks(query, opts = {}) {
+      const trimmed = query.trim();
+      set({ taskSearchQuery: query, taskSearchError: null });
+      if (!trimmed) {
+        set({ taskSearchResults: [], taskSearchLoading: false });
+        return;
+      }
+      set({ taskSearchLoading: true });
+      try {
+        const { hits } = await api.searchTasks(trimmed, opts);
+        // Una respuesta vieja no puede pisar a la búsqueda que el humano ve.
+        if (get().taskSearchQuery !== query) return;
+        set({ taskSearchResults: hits, taskSearchLoading: false });
+      } catch (err) {
+        if (get().taskSearchQuery !== query) return;
+        set({
+          taskSearchLoading: false,
+          taskSearchResults: [],
+          taskSearchError: normalizeMutationError(err, "No se pudo buscar"),
+        });
+      }
+    },
+
+    clearTaskSearch() {
+      set({ taskSearchQuery: "", taskSearchResults: [], taskSearchError: null, taskSearchLoading: false });
+    },
+
+    async loadMyTasks(opts = {}) {
+      set({ myTasksLoading: true, myTasksError: null });
+      try {
+        const { tasks } = await api.tasks({
+          mine: "1",
+          ...(opts.label ? { label: opts.label } : {}),
+          ...(opts.status ? { status: opts.status } : {}),
+        });
+        set({ myTasks: tasks, myTasksLoading: false });
+      } catch (err) {
+        set({
+          myTasksLoading: false,
+          myTasksError: normalizeMutationError(err, "No se pudieron cargar tus tareas"),
+        });
       }
     },
 

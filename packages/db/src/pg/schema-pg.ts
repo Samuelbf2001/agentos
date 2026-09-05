@@ -240,6 +240,24 @@ export const taskAssignees = pgTable(
   ],
 );
 
+/** Espejo de task_labels: unión tarea↔etiqueta, filtrable en ambos motores. */
+export const taskLabels = pgTable(
+  "task_labels",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    label: text("label").notNull(),
+    createdBy: text("created_by"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.label], name: "pk_task_labels" }),
+    index("idx_task_labels_label").on(t.label),
+    index("idx_task_labels_task").on(t.taskId),
+  ],
+);
+
 /** Log durable e idempotente de avisos assignment/due_24h. */
 export const taskNotificationLog = pgTable(
   "task_notification_log",
@@ -769,6 +787,7 @@ export const PG_TABLE_ORDER = [
   "phase_modules",
   "tasks",
   "task_assignees",
+  "task_labels",
   "task_notification_log",
   "runs",
   "spans",

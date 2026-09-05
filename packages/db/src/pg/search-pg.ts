@@ -26,7 +26,7 @@ import {
   toPgVector,
   type EmbeddingProvider,
 } from "../embeddings.js";
-import type { KnowledgeSearchHit, MessageSearchHit } from "../search.js";
+import type { KnowledgeSearchHit, MessageSearchHit, TaskSearchHit, TaskSearchOptions } from "../search.js";
 
 /** Configuración de diccionario de `to_tsvector`. `spanish` viene de serie en PG. */
 export const DEFAULT_TS_CONFIG = "spanish";
@@ -79,6 +79,27 @@ export async function ensurePgSearch(
   `);
   await db.execute(
     sql`CREATE INDEX IF NOT EXISTS idx_knowledge_tsv ON knowledge_docs USING GIN (doc_tsv)`,
+  );
+
+  // Tareas: la ficha (título + descripción + DoD) y los comentarios, que en
+  // ambos motores viven dentro del payload del evento, no en una columna.
+  await db.execute(sql`
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_tsv tsvector
+      GENERATED ALWAYS AS (
+        to_tsvector(${sql.raw(`'${cfg}'`)},
+          coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(definition_of_done, ''))
+      ) STORED
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_tasks_tsv ON tasks USING GIN (task_tsv)`);
+
+  await db.execute(sql`
+    ALTER TABLE task_events ADD COLUMN IF NOT EXISTS comment_tsv tsvector
+      GENERATED ALWAYS AS (
+        to_tsvector(${sql.raw(`'${cfg}'`)}, coalesce(payload ->> 'body', ''))
+      ) STORED
+  `);
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS idx_task_events_comment_tsv ON task_events USING GIN (comment_tsv)`,
   );
 
   const caps: PgSearchCapabilities = {
@@ -218,6 +239,156 @@ export async function searchKnowledgePg(
     LIMIT ${limit}
   `);
   return rows.map(toKnowledgeHit);
+}
+
+export interface TaskSearchPgOptions extends TaskSearchOptions {
+  /** Diccionario de to_tsvector; el mismo que usó `ensurePgSearch`. */
+  textSearchConfig?: string;
+  /**
+   * `tsvector` (default) usa las columnas generadas; `ilike` es el plan B
+   * portátil para una base donde `ensurePgSearch` todavía no ha corrido.
+   */
+  mode?: "tsvector" | "ilike";
+}
+
+/**
+ * Equivalente Postgres de `searchTasks` (FTS5). Devuelve exactamente la misma
+ * forma, incluido el criterio de rank (menor = mejor, ver la nota de
+ * portabilidad de arriba). Si las columnas generadas aún no existen, cae a
+ * ILIKE en vez de romper la búsqueda.
+ */
+export async function searchTasksPg(
+  db: AgentosPgDb,
+  query: string,
+  options: TaskSearchPgOptions = {},
+): Promise<TaskSearchHit[]> {
+  const cfg = options.textSearchConfig ?? DEFAULT_TS_CONFIG;
+  assertSafeIdentifier(cfg, "textSearchConfig");
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  if (options.mode === "ilike") return searchTasksIlike(db, trimmed, options);
+  try {
+    return await searchTasksTsv(db, trimmed, options, cfg);
+  } catch {
+    // Base sin `ensurePgSearch`: la búsqueda sigue respondiendo, más lenta.
+    return searchTasksIlike(db, trimmed, options);
+  }
+}
+
+function taskScope(options: TaskSearchOptions) {
+  return {
+    project: options.projectId ? sql` AND t.project_id = ${options.projectId}` : sql``,
+    person: options.personId
+      ? sql` AND EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.person_id = ${options.personId})`
+      : sql``,
+  };
+}
+
+async function searchTasksTsv(
+  db: AgentosPgDb,
+  query: string,
+  options: TaskSearchOptions,
+  cfg: string,
+): Promise<TaskSearchHit[]> {
+  const limit = options.limit ?? 20;
+  const q = sql.raw(`'${cfg}'`);
+  const scope = taskScope(options);
+  const rows = await db.execute(sql`
+    SELECT t.id,
+           t.project_id AS "projectId",
+           t.title,
+           t.status,
+           t.stage,
+           t.due_at AS "dueAt",
+           ts_headline(${q}, coalesce(t.description, t.title),
+                       websearch_to_tsquery(${q}, ${query}),
+                       'StartSel=«, StopSel=», MaxWords=20, MinWords=5, MaxFragments=1') AS snippet,
+           -ts_rank(t.task_tsv, websearch_to_tsquery(${q}, ${query})) AS rank,
+           'task' AS source
+    FROM tasks t
+    WHERE t.task_tsv @@ websearch_to_tsquery(${q}, ${query})${scope.project}${scope.person}
+    UNION ALL
+    SELECT t.id,
+           t.project_id AS "projectId",
+           t.title,
+           t.status,
+           t.stage,
+           t.due_at AS "dueAt",
+           ts_headline(${q}, coalesce(e.payload ->> 'body', ''),
+                       websearch_to_tsquery(${q}, ${query}),
+                       'StartSel=«, StopSel=», MaxWords=20, MinWords=5, MaxFragments=1') AS snippet,
+           -ts_rank(e.comment_tsv, websearch_to_tsquery(${q}, ${query})) AS rank,
+           'comment' AS source
+    FROM task_events e
+    JOIN tasks t ON t.id = e.task_id
+    WHERE e.kind = 'comment'
+      AND e.comment_tsv @@ websearch_to_tsquery(${q}, ${query})${scope.project}${scope.person}
+    ORDER BY rank
+    LIMIT ${limit * 4}
+  `);
+  return mergeTaskHits(rows, limit);
+}
+
+async function searchTasksIlike(
+  db: AgentosPgDb,
+  query: string,
+  options: TaskSearchOptions,
+): Promise<TaskSearchHit[]> {
+  const limit = options.limit ?? 20;
+  const like = `%${query.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  const scope = taskScope(options);
+  const rows = await db.execute(sql`
+    SELECT t.id,
+           t.project_id AS "projectId",
+           t.title,
+           t.status,
+           t.stage,
+           t.due_at AS "dueAt",
+           coalesce(t.description, t.title) AS snippet,
+           0 AS rank,
+           'task' AS source
+    FROM tasks t
+    WHERE (t.title ILIKE ${like} OR t.description ILIKE ${like} OR t.definition_of_done ILIKE ${like})
+      ${scope.project}${scope.person}
+    UNION ALL
+    SELECT t.id,
+           t.project_id AS "projectId",
+           t.title,
+           t.status,
+           t.stage,
+           t.due_at AS "dueAt",
+           coalesce(e.payload ->> 'body', '') AS snippet,
+           1 AS rank,
+           'comment' AS source
+    FROM task_events e
+    JOIN tasks t ON t.id = e.task_id
+    WHERE e.kind = 'comment' AND e.payload ->> 'body' ILIKE ${like}
+      ${scope.project}${scope.person}
+    ORDER BY rank
+    LIMIT ${limit * 4}
+  `);
+  return mergeTaskHits(rows, limit);
+}
+
+/** Una fila por tarea, quedándose con el mejor rank (mismo criterio que FTS5). */
+function mergeTaskHits(rows: Record<string, unknown>[], limit: number): TaskSearchHit[] {
+  const best = new Map<string, TaskSearchHit>();
+  for (const r of rows) {
+    const hit: TaskSearchHit = {
+      id: String(r.id),
+      projectId: String(r.projectId),
+      title: String(r.title),
+      status: String(r.status),
+      stage: String(r.stage),
+      dueAt: r.dueAt === null || r.dueAt === undefined ? null : Number(r.dueAt),
+      snippet: String(r.snippet ?? ""),
+      source: r.source === "comment" ? "comment" : "task",
+      rank: Number(r.rank),
+    };
+    const previous = best.get(hit.id);
+    if (!previous || hit.rank < previous.rank) best.set(hit.id, hit);
+  }
+  return [...best.values()].sort((a, b) => a.rank - b.rank).slice(0, limit);
 }
 
 /** Normaliza una fila cruda de tsvector/pgvector al contrato de `KnowledgeSearchHit`. */

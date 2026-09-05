@@ -27,6 +27,87 @@ import { listTaskAssignees, type TaskAssigneeView } from "./task-contract.js";
 
 export const NOTIFICATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** Cada 15 minutos: la ventana de aviso es de 24 h, no hace falta más fino. */
+export const DEFAULT_NOTIFICATION_INTERVAL_MS = 15 * 60 * 1000;
+
+/**
+ * Intervalo del reloj de recordatorios leído del entorno.
+ * `AGENTOS_NOTIFICATIONS_INTERVAL_MS=0` (u `off`/`false`) lo desactiva; sin la
+ * variable se usa el default. Un valor no numérico también apaga el reloj en
+ * vez de arrancar con una cadencia inventada.
+ */
+export function resolveNotificationIntervalMs(
+  raw: string | undefined = process.env.AGENTOS_NOTIFICATIONS_INTERVAL_MS,
+): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_NOTIFICATION_INTERVAL_MS;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "off" || normalized === "false" || normalized === "0") return 0;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.floor(parsed);
+}
+
+export interface NotificationScheduler {
+  readonly intervalMs: number;
+  readonly running: boolean;
+  start(): void;
+  stop(): void;
+  /** Corre un ciclo ya, sin esperar al temporizador (tests y operación). */
+  runOnce(): Promise<NotificationDispatchResult>;
+}
+
+/**
+ * Reloj del procesador de avisos. `processDue` existía pero nadie lo llamaba:
+ * sin este temporizador, el recordatorio de vencimiento sólo salía si alguien
+ * golpeaba `POST /api/notifications/process-due` a mano.
+ *
+ * No se solapa consigo mismo (un ciclo lento no encola otro) y un fallo se
+ * registra sin tumbar el proceso: el siguiente tick lo reintenta.
+ */
+export function createNotificationScheduler(input: {
+  processor: Pick<NotificationProcessor, "processDue">;
+  intervalMs?: number;
+  onError?: (err: unknown) => void;
+}): NotificationScheduler {
+  const intervalMs = input.intervalMs ?? resolveNotificationIntervalMs();
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let inFlight = false;
+
+  async function runOnce(): Promise<NotificationDispatchResult> {
+    return input.processor.processDue();
+  }
+
+  async function tick(): Promise<void> {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      await runOnce();
+    } catch (err) {
+      input.onError?.(err);
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  return {
+    intervalMs,
+    get running() {
+      return timer !== null;
+    },
+    start(): void {
+      if (timer || intervalMs <= 0) return;
+      timer = setInterval(() => void tick(), intervalMs);
+      timer.unref?.();
+    },
+    stop(): void {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+    },
+    runOnce,
+  };
+}
+
 export interface EmailMessage {
   to: string;
   subject: string;

@@ -13,6 +13,8 @@ import {
   getTaskWithAssignees as dbGetTaskWithAssignees,
   listTaskAssignees as dbListTaskAssignees,
   listTasksWithAssignees as dbListTasksWithAssignees,
+  listLabelsForTasks,
+  listTaskLabels,
   replaceTaskAssignees as dbReplaceTaskAssignees,
   type AgentosDb,
   type Person,
@@ -28,6 +30,8 @@ export interface TaskAssigneeView extends TaskAssignee {
 
 export interface TaskWithAssignees extends Task {
   assignees: TaskAssigneeView[];
+  /** Etiquetas normalizadas de la tarjeta (tabla puente `task_labels`). */
+  labels: string[];
 }
 
 export interface ReplaceTaskAssigneesInput {
@@ -94,7 +98,11 @@ export function normalizePersonIds(
   return { personIds: unique, primaryPersonId: primary };
 }
 
-/** Valida existencia y pertenencia organizacional antes de mutar. */
+/**
+ * Valida existencia y pertenencia organizacional antes de mutar. Personal
+ * interno (`is_internal`) es asignable a cualquier proyecto sin importar su
+ * organización (I3).
+ */
 export function validatePeopleForProject(
   db: AgentosDb,
   project: Project,
@@ -106,13 +114,16 @@ export function validatePeopleForProject(
   for (const personId of normalized.personIds) {
     const person = getPerson(db, personId);
     if (!person) throw errors.notFound("person", personId);
-    if (person.orgId !== project.orgId) {
-      throw errors.validation("La persona responsable debe pertenecer a la organización del proyecto", {
-        personId,
-        projectId: project.id,
-        projectOrgId: project.orgId,
-        personOrgId: person.orgId,
-      });
+    if (!person.isInternal && person.orgId !== project.orgId) {
+      throw errors.validation(
+        "La persona responsable debe pertenecer a la organización del proyecto o al equipo interno",
+        {
+          personId,
+          projectId: project.id,
+          projectOrgId: project.orgId,
+          personOrgId: person.orgId,
+        },
+      );
     }
     people.push(person);
   }
@@ -156,7 +167,7 @@ export function taskWithAssignees(db: AgentosDb, task: Task): TaskWithAssignees 
     ? source.assignees
     : dbListTaskAssignees(db, task.id)
   ).map((row) => withPerson(db, row));
-  return { ...source, assignees } as TaskWithAssignees;
+  return { ...source, assignees, labels: listTaskLabels(db, task.id) } as TaskWithAssignees;
 }
 
 export function listTasksWithAssignees(
@@ -166,6 +177,8 @@ export function listTasksWithAssignees(
     status?: Task["status"];
     assigneeAgentId?: string;
     assigneePersonId?: string;
+    /** Etiqueta exacta (ya normalizada) por la que filtrar el listado. */
+    label?: string;
   } = {},
 ): TaskWithAssignees[] {
   const rows = dbListTasksWithAssignees(db, {
@@ -174,8 +187,15 @@ export function listTasksWithAssignees(
     ...(filter.assigneeAgentId ? { assigneeAgentId: filter.assigneeAgentId } : {}),
     ...(filter.assigneePersonId ? { personId: filter.assigneePersonId } : {}),
   });
-  return rows.map((row) => ({
+  const labels = listLabelsForTasks(
+    db,
+    rows.map((row) => row.id),
+  );
+  const withLabels = rows.map((row) => ({
     ...row,
     assignees: row.assignees.map((assignee) => withPerson(db, assignee)),
+    labels: labels.get(row.id) ?? [],
   }));
+  // Una sola consulta de etiquetas sirve para pintar la tarjeta y para filtrar.
+  return filter.label ? withLabels.filter((row) => row.labels.includes(filter.label!)) : withLabels;
 }

@@ -213,6 +213,7 @@ export function reduceEvent(
       case "task.claimed":
       case "task.assigned":
       case "task.commented":
+      case "task.labels_changed":
       case "task.artifact_attached": {
         if (taskId) effects.push({ kind: "refetch_task", taskId });
         break;

@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ConfigKeys,
+  createPerson,
   getAgentBySlug,
   getConfig,
   getTask,
@@ -373,6 +374,110 @@ describe("tablero", () => {
     expect(result.project.gateState).toBe("approved");
     const audit = queryAudit(f.db, { action: "gate.approve", entityId: f.project.id });
     expect(audit.length).toBe(1);
+  });
+});
+
+// ── Etiquetas y responsables múltiples ──────────────────────────────────────
+
+describe("etiquetas y responsables múltiples", () => {
+  // Las personas del seed (Ernesto, Sebastián…) cuelgan de la org interna
+  // "Sixteam"; el proyecto demo "Assessment ACME" cuelga de la org cliente
+  // "ACME S.A.". replaceTaskAssignees exige que responsable y proyecto
+  // compartan organización, así que estos tests crean personas ad-hoc en la
+  // org del proyecto en vez de reutilizar las del seed.
+  function makePerson(fullName: string) {
+    return createPerson(f.db, { orgId: f.project.orgId, fullName, isInternal: false, role: "Cliente" });
+  }
+
+  it("tasks.create acepta due_at + assignee_person_ids + labels", async () => {
+    const ana = makePerson("Ana de prueba");
+    const seb = makePerson("Sebastián de prueba");
+    const dueAtIso = "2026-12-01T10:00:00.000Z";
+    const result = (await f.call("agentos.tasks.create", {
+      project_id: f.project.id,
+      title: "Tarea con metadatos",
+      stage: "ENTENDER",
+      assignee_person_ids: [ana.id, seb.id],
+      primary_assignee_person_id: seb.id,
+      due_at: dueAtIso,
+      // Mayúsculas y duplicado para probar la normalización de replaceTaskLabels.
+      labels: ["Cliente", "urgente", "cliente"],
+    })) as {
+      task: Task & { assignees?: { personId: string; isPrimary: boolean }[] };
+      labels: string[];
+    };
+    expect(result.task.dueAt).toBe(Date.parse(dueAtIso));
+    expect(result.task.assigneePersonId).toBe(seb.id);
+    expect(result.task.assignees?.map((a) => a.personId).sort()).toEqual([ana.id, seb.id].sort());
+    expect(result.task.assignees?.find((a) => a.isPrimary)?.personId).toBe(seb.id);
+    expect(result.labels).toEqual(["cliente", "urgente"]);
+  });
+
+  it("tasks.list filtra por assignee_person_id (tabla puente)", async () => {
+    const seb = makePerson("Sebastián de prueba");
+    const { task } = (await f.call("agentos.tasks.create", {
+      project_id: f.project.id,
+      title: "Tarea de Sebastián",
+      stage: "ENTENDER",
+      assignee_person_id: seb.id,
+    })) as { task: Task };
+    const rows = (await f.call("agentos.tasks.list", {
+      project_id: f.project.id,
+      assignee_person_id: seb.id,
+    })) as (Task & { labels: string[] })[];
+    expect(rows.some((r) => r.id === task.id)).toBe(true);
+    expect(rows.every((r) => Array.isArray(r.labels))).toBe(true);
+  });
+
+  it("tasks.list filtra por label normalizada", async () => {
+    await f.call("agentos.tasks.create", {
+      project_id: f.project.id,
+      title: "Con etiqueta",
+      stage: "ENTENDER",
+      labels: ["Facturación"],
+    });
+    await f.call("agentos.tasks.create", {
+      project_id: f.project.id,
+      title: "Sin esa etiqueta",
+      stage: "ENTENDER",
+      labels: ["otra"],
+    });
+    const rows = (await f.call("agentos.tasks.list", {
+      project_id: f.project.id,
+      // Entrada en mayúsculas: normalizeLabel debe igualarla a "facturación".
+      label: "FACTURACIÓN",
+    })) as { title: string; labels: string[] }[];
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.title).toBe("Con etiqueta");
+    expect(rows[0]!.labels).toEqual(["facturación"]);
+  });
+
+  it("tasks.update reemplaza el conjunto completo de etiquetas y actualiza due_at", async () => {
+    const { task } = (await f.call("agentos.tasks.create", {
+      project_id: f.project.id,
+      title: "Tarea a reetiquetar",
+      stage: "ENTENDER",
+      labels: ["a", "b"],
+    })) as { task: Task };
+    const first = (await f.call("agentos.tasks.update", {
+      task_id: task.id,
+      expected_version: task.version,
+      patch: { labels: ["c"] },
+    })) as Task & { labels: string[] };
+    // Reemplazo completo: "a" y "b" desaparecen, no se acumulan con "c".
+    expect(first.labels).toEqual(["c"]);
+    // Etiquetar no consume expected_version: sigue siendo la misma tras el patch.
+    expect(first.version).toBe(task.version);
+
+    const dueAtIso = "2026-11-15T00:00:00.000Z";
+    const second = (await f.call("agentos.tasks.update", {
+      task_id: task.id,
+      expected_version: first.version,
+      patch: { due_at: dueAtIso },
+    })) as Task & { labels: string[] };
+    expect(second.dueAt).toBe(Date.parse(dueAtIso));
+    // El patch de due_at no tocó etiquetas: siguen igual que antes.
+    expect(second.labels).toEqual(["c"]);
   });
 });
 

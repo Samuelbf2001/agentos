@@ -33,6 +33,8 @@ export type TaskCreateInput = Omit<NewTask, "id" | "createdAt" | "updatedAt" | "
   TaskAssigneeSelectionInput & { id?: string };
 export type TaskAssignee = typeof s.taskAssignees.$inferSelect;
 export type NewTaskAssignee = typeof s.taskAssignees.$inferInsert;
+export type TaskLabel = typeof s.taskLabels.$inferSelect;
+export type NewTaskLabel = typeof s.taskLabels.$inferInsert;
 export type TaskNotificationKind = "assignment" | "due_24h";
 export type TaskNotificationStatus = "pending" | "processing" | "delivered" | "failed" | "suppressed";
 export type TaskNotificationLog = typeof s.taskNotificationLog.$inferSelect;

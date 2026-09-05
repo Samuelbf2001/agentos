@@ -124,6 +124,34 @@ describe("contrato visual de proyectos y tareas", () => {
     });
   });
 
+  it("marcar el primer responsable en una tarea sin nadie asignado lo deja como principal (defecto de usabilidad)", async () => {
+    const task = makeTask({ assignees: [], assigneePersonId: null });
+    useStore.setState({
+      taskDetail: { task, events: [], artifacts: [], runs: [], project },
+    });
+    const { calls } = mockFetch([
+      {
+        method: "POST",
+        path: "/api/tasks/t1/assign",
+        body: { task: makeTask({ version: 4, assigneePersonId: "p-ana", assignees: [{ personId: "p-ana", isPrimary: true }] }) },
+      },
+    ]);
+    render(
+      <MemoryRouter>
+        <TaskDrawer />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /Ana/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Guardar responsables" }));
+    await waitFor(() => {
+      expect(calls.find((call) => call.method === "POST" && call.url.includes("/assign"))?.body).toEqual({
+        expected_version: 3,
+        assignee_person_ids: ["p-ana"],
+        primary_assignee_person_id: "p-ana",
+      });
+    });
+  });
+
   it("edita la descripción en la ficha e inserta enlace e imagen con vista previa", async () => {
     const task = makeTask({ description: null });
     useStore.setState({

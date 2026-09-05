@@ -61,6 +61,7 @@ export const TABLE_PAIRS: TablePair[] = [
   { name: "phase_modules", from: lite.phaseModules, to: pg.phaseModules, pk: "id", orderBy: "created_at" },
   { name: "tasks", from: lite.tasks, to: pg.tasks, pk: "id", orderBy: "created_at" },
   { name: "task_assignees", from: lite.taskAssignees, to: pg.taskAssignees, pk: ["task_id", "person_id"], orderBy: "created_at" },
+  { name: "task_labels", from: lite.taskLabels, to: pg.taskLabels, pk: ["task_id", "label"], orderBy: "created_at" },
   { name: "task_notification_log", from: lite.taskNotificationLog, to: pg.taskNotificationLog, pk: "id", orderBy: "created_at" },
   { name: "runs", from: lite.runs, to: pg.runs, pk: "id", orderBy: "created_at" },
   { name: "spans", from: lite.spans, to: pg.spans, pk: "id", orderBy: "started_at" },
