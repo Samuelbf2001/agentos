@@ -52,13 +52,13 @@ export default function LoginView() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-slate-100">
+    <div className="flex h-full items-center justify-center bg-line-soft">
       <form
         onSubmit={onSubmit}
-        className="w-96 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        className="w-96 rounded-panel border border-line bg-surface p-6 shadow-rest"
       >
-        <h1 className="text-lg font-bold">AgentOS — Sixteam</h1>
-        <p className="mt-1 text-xs text-slate-500">
+        <h1 className="text-title font-bold">AgentOS — Sixteam</h1>
+        <p className="mt-1 text-small text-muted">
           Contraseña compartida + persona del equipo (auth simple del MVP).
         </p>
 
@@ -66,14 +66,14 @@ export default function LoginView() {
           <Spinner label="Cargando personas…" />
         ) : (
           <>
-            <label className="mt-4 block text-xs font-medium text-slate-600" htmlFor="person">
+            <label className="mt-4 block text-small font-medium text-muted" htmlFor="person">
               ¿Quién eres?
             </label>
             <select
               id="person"
               value={personId}
               onChange={(e) => setPersonId(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              className="mt-1 w-full rounded-tight border border-line px-2 py-1.5 text-body"
             >
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -83,7 +83,7 @@ export default function LoginView() {
               ))}
             </select>
             {loadError ? (
-              <p className="mt-2 text-xs text-rose-600">
+              <p className="mt-2 text-small text-broken">
                 {loadError}{" "}
                 <button type="button" onClick={() => void loadPeople()} className="underline">
                   reintentar
@@ -91,7 +91,7 @@ export default function LoginView() {
               </p>
             ) : null}
 
-            <label className="mt-3 block text-xs font-medium text-slate-600" htmlFor="password">
+            <label className="mt-3 block text-small font-medium text-muted" htmlFor="password">
               Contraseña compartida
             </label>
             <input
@@ -99,16 +99,16 @@ export default function LoginView() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              className="mt-1 w-full rounded-tight border border-line px-2 py-1.5 text-body"
               autoFocus
             />
 
-            {error ? <p className="mt-2 text-xs text-rose-600">{error}</p> : null}
+            {error ? <p className="mt-2 text-small text-broken">{error}</p> : null}
 
             <button
               type="submit"
               disabled={busy || !personId || !password}
-              className="mt-4 w-full rounded-md bg-slate-900 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-40"
+              className="mt-4 w-full rounded-tight bg-ink py-2 text-body font-medium text-surface hover:bg-ink-2 disabled:opacity-40"
             >
               {busy ? "Entrando…" : "Entrar"}
             </button>

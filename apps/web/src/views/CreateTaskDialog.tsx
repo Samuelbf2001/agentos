@@ -196,30 +196,30 @@ export function CreateTaskDialog({
   }
 
   const inputClass =
-    "mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300";
-  const hintClass = "mt-1 text-[11px] text-amber-700";
+    "mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
+  const hintClass = "mt-1 text-label text-work";
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-[1px]" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-[1px]" />
         <Dialog.Content
-          className="fixed inset-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl focus:outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:w-[480px] sm:max-w-[100vw]"
+          className="fixed inset-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-surface shadow-float focus:outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:w-[480px] sm:max-w-[100vw]"
           aria-describedby="create-task-description"
           data-testid="create-task-dialog"
         >
-          <div className="flex shrink-0 items-start gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
+          <div className="flex shrink-0 items-start gap-3 border-b border-line px-4 py-3 sm:px-5">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Nueva tarea</p>
-              <Dialog.Title className="mt-1 text-base font-semibold leading-snug text-slate-900">
+              <p className="text-label font-bold uppercase text-faint">Nueva tarea</p>
+              <Dialog.Title className="mt-1 text-title font-semibold leading-snug text-ink">
                 Crear tarea en el tablero
               </Dialog.Title>
-              <Dialog.Description id="create-task-description" className="mt-0.5 text-[11px] text-slate-500">
+              <Dialog.Description id="create-task-description" className="mt-0.5 text-label text-muted">
                 Nace en BACKLOG. Para pasar a READY necesitará definición de terminado y responsable.
               </Dialog.Description>
             </div>
             <Dialog.Close
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-soft text-title text-faint hover:bg-line-soft hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
               aria-label="Cerrar formulario"
             >
               ×
@@ -234,8 +234,8 @@ export function CreateTaskDialog({
             }}
           >
             <div>
-              <label htmlFor="new-task-title" className="text-[11px] font-semibold text-slate-600">
-                Título <span className="text-rose-600">*</span>
+              <label htmlFor="new-task-title" className="text-label font-semibold text-muted">
+                Título <span className="text-broken">*</span>
               </label>
               <input
                 ref={titleRef}
@@ -252,14 +252,14 @@ export function CreateTaskDialog({
                 className={inputClass}
               />
               {touched.title && issues.title ? (
-                <p className="mt-1 text-[11px] text-rose-700" role="alert">
+                <p className="mt-1 text-label text-broken" role="alert">
                   {issues.title}
                 </p>
               ) : null}
             </div>
 
             <div className="mt-3">
-              <label htmlFor="new-task-description" className="text-[11px] font-semibold text-slate-600">
+              <label htmlFor="new-task-description" className="text-label font-semibold text-muted">
                 Descripción
               </label>
               <textarea
@@ -269,13 +269,13 @@ export function CreateTaskDialog({
                 onChange={(event) => patch({ description: event.target.value })}
                 rows={3}
                 placeholder="Contexto, enlaces, qué se espera…"
-                className="mt-1 w-full resize-y rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="mt-1 w-full resize-y rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
               />
             </div>
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="new-task-stage" className="text-[11px] font-semibold text-slate-600">
+                <label htmlFor="new-task-stage" className="text-label font-semibold text-muted">
                   Etapa
                 </label>
                 <select
@@ -293,7 +293,7 @@ export function CreateTaskDialog({
                 </select>
               </div>
               <div>
-                <label htmlFor="new-task-priority" className="text-[11px] font-semibold text-slate-600">
+                <label htmlFor="new-task-priority" className="text-label font-semibold text-muted">
                   Prioridad
                 </label>
                 <select
@@ -313,7 +313,7 @@ export function CreateTaskDialog({
             </div>
 
             <div className="mt-3">
-              <label htmlFor="new-task-dod" className="text-[11px] font-semibold text-slate-600">
+              <label htmlFor="new-task-dod" className="text-label font-semibold text-muted">
                 Definición de terminado
               </label>
               <textarea
@@ -323,7 +323,7 @@ export function CreateTaskDialog({
                 onChange={(event) => patch({ definitionOfDone: event.target.value })}
                 rows={2}
                 placeholder="Ej. Mapa SIPOC validado por el cliente"
-                className="mt-1 w-full resize-y rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="mt-1 w-full resize-y rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
               />
               {issues.definitionOfDone ? (
                 <p className={hintClass} data-testid="new-task-dod-hint">
@@ -333,7 +333,7 @@ export function CreateTaskDialog({
             </div>
 
             <div className="mt-3">
-              <label htmlFor="new-task-due" className="text-[11px] font-semibold text-slate-600">
+              <label htmlFor="new-task-due" className="text-label font-semibold text-muted">
                 Vencimiento
               </label>
               <input
@@ -348,17 +348,17 @@ export function CreateTaskDialog({
                 className={inputClass}
               />
               {touched.due && issues.due ? (
-                <p className="mt-1 text-[11px] text-rose-700" role="alert">
+                <p className="mt-1 text-label text-broken" role="alert">
                   {issues.due}
                 </p>
               ) : null}
             </div>
 
-            <fieldset className="mt-4 rounded-xl border border-slate-200 p-3">
-              <legend className="px-1 text-[11px] font-semibold text-slate-600">Responsables</legend>
-              {peopleLoading ? <p className="text-xs text-slate-400">Cargando equipo…</p> : null}
+            <fieldset className="mt-4 rounded-panel border border-line p-3">
+              <legend className="px-1 text-label font-semibold text-muted">Responsables</legend>
+              {peopleLoading ? <p className="text-small text-faint">Cargando equipo…</p> : null}
               {!peopleLoading && peopleOptions.length === 0 ? (
-                <p className="text-xs text-amber-700" data-testid="no-project-people">
+                <p className="text-small text-work" data-testid="no-project-people">
                   La organización de este proyecto no tiene personas registradas. Una tarea sólo
                   admite responsables de la organización dueña del proyecto.
                 </p>
@@ -367,24 +367,24 @@ export function CreateTaskDialog({
                 {peopleOptions.map((person) => (
                   <label
                     key={person.id}
-                    className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 hover:bg-slate-50"
+                    className="flex min-h-9 cursor-pointer items-center gap-2 rounded-tight px-1.5 py-1 hover:bg-surface-2"
                   >
                     <input
                       type="checkbox"
                       checked={draft.assigneeIds.includes(person.id)}
                       onChange={(event) => togglePerson(person.id, event.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-sky-500"
+                      className="h-4 w-4 rounded border-line text-ink focus:ring-link"
                     />
                     <PersonAvatar name={displayPersonName(person)} size={5} />
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">
+                    <span className="min-w-0 flex-1 truncate text-small font-medium text-ink-2">
                       {displayPersonName(person)}
                     </span>
                   </label>
                 ))}
               </div>
               {draft.assigneeIds.length > 1 ? (
-                <div className="mt-2 border-t border-slate-100 pt-2">
-                  <label htmlFor="new-task-primary" className="text-[11px] font-semibold text-slate-600">
+                <div className="mt-2 border-t border-line-soft pt-2">
+                  <label htmlFor="new-task-primary" className="text-label font-semibold text-muted">
                     Persona principal
                   </label>
                   <select
@@ -411,7 +411,7 @@ export function CreateTaskDialog({
             </fieldset>
 
             <div className="mt-4">
-              <label htmlFor="new-task-label" className="text-[11px] font-semibold text-slate-600">
+              <label htmlFor="new-task-label" className="text-label font-semibold text-muted">
                 Etiquetas
               </label>
               <div className="mt-1 flex gap-2">
@@ -428,13 +428,13 @@ export function CreateTaskDialog({
                     }
                   }}
                   placeholder="cliente, urgente…"
-                  className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  className="min-h-10 min-w-0 flex-1 rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
                 />
                 <button
                   type="button"
                   onClick={() => addLabel(labelInput)}
                   disabled={!labelInput.trim()}
-                  className="min-h-10 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="min-h-10 rounded-soft border border-line px-3 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Añadir
                 </button>
@@ -449,14 +449,14 @@ export function CreateTaskDialog({
                   {draft.labels.map((label) => (
                     <span
                       key={label}
-                      className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700"
+                      className="inline-flex items-center gap-1 rounded-full bg-line-soft px-2 py-0.5 text-label font-medium text-ink-2"
                     >
                       {label}
                       <button
                         type="button"
                         aria-label={`Quitar etiqueta ${label}`}
                         onClick={() => patch({ labels: draft.labels.filter((item) => item !== label) })}
-                        className="text-slate-400 hover:text-rose-600"
+                        className="text-faint hover:text-broken"
                       >
                         ×
                       </button>
@@ -466,11 +466,11 @@ export function CreateTaskDialog({
               ) : null}
             </div>
 
-            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-line-soft pt-3">
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
-                className="min-h-10 rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                className="min-h-10 rounded-soft px-3 py-2 text-small font-semibold text-muted hover:bg-line-soft"
               >
                 Cancelar
               </button>
@@ -478,7 +478,7 @@ export function CreateTaskDialog({
                 type="submit"
                 data-testid="new-task-submit"
                 disabled={blocking || taskCreating}
-                className="min-h-10 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="min-h-10 rounded-soft bg-ink px-4 py-2 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {taskCreating ? "Creando…" : "Crear tarea"}
               </button>

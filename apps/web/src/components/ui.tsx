@@ -1,76 +1,68 @@
-/** Piezas pequeñas compartidas: avatar de agente, pills, vacíos, errores, toasts. */
+/**
+ * Piezas pequeñas compartidas: avatares, pills de estado, vacíos, errores y
+ * toasts. Todas hablan la gramática de color única del sistema (ámbar trabajo,
+ * violeta decisión humana, rojo roto o vencido, verde cerrado, azul enlace):
+ * no existe color por categoría ni por agente.
+ */
 import { useStore } from "../state/store";
+import { Chip, type Tone } from "./system";
 import { taskDueState, taskDueTimestamp, type Task, type TaskPriority, type TaskStatus } from "../lib/types";
 
-// ── Avatar de agente: iniciales + color determinista por slug ───────────────
+// ── Avatares: iniciales sobre neutro. La identidad la da el nombre. ─────────
 
-const AVATAR_COLORS = [
-  "bg-rose-500",
-  "bg-orange-500",
-  "bg-amber-500",
-  "bg-emerald-500",
-  "bg-teal-500",
-  "bg-sky-500",
-  "bg-indigo-500",
-  "bg-violet-500",
-  "bg-fuchsia-500",
-];
-
-export function agentColor(slug: string): string {
-  let h = 0;
-  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
-}
-
-export function AgentAvatar({ name, slug, size = 6 }: { name: string; slug: string; size?: 5 | 6 | 8 }) {
-  const initials = name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-  const sizeCls = size === 8 ? "h-8 w-8 text-sm" : size === 5 ? "h-5 w-5 text-[10px]" : "h-6 w-6 text-xs";
-  return (
-    <span
-      title={name}
-      className={`inline-flex items-center justify-center rounded-full font-semibold text-white ${sizeCls} ${agentColor(slug)}`}
-    >
-      {initials}
-    </span>
-  );
-}
-
-/** Avatar humano deliberadamente neutro: no expone correo en tarjetas ni listas. */
-export function PersonAvatar({ name, size = 6 }: { name: string; size?: 5 | 6 | 8 }) {
-  const initials = name
+function initialsOf(name: string): string {
+  return name
     .trim()
     .split(/\s+/)
     .map((w) => w[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const sizeCls = size === 8 ? "h-8 w-8 text-sm" : size === 5 ? "h-5 w-5 text-[10px]" : "h-6 w-6 text-xs";
+}
+
+const AVATAR_SIZES: Record<5 | 6 | 8, string> = {
+  5: "h-5 w-5 text-[0.625rem]",
+  6: "h-6 w-6 text-label",
+  8: "h-8 w-8 text-small",
+};
+
+/** Agente: neutro con anillo, para distinguirlo de una persona sin usar color. */
+export function AgentAvatar({ name, slug, size = 6 }: { name: string; slug: string; size?: 5 | 6 | 8 }) {
+  return (
+    <span
+      title={name}
+      data-agent={slug}
+      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-ink-2 font-semibold text-surface ring-2 ring-line ${AVATAR_SIZES[size]}`}
+    >
+      {initialsOf(name)}
+    </span>
+  );
+}
+
+/** Avatar humano deliberadamente neutro: no expone correo en tarjetas ni listas. */
+export function PersonAvatar({ name, size = 6 }: { name: string; size?: 5 | 6 | 8 }) {
   return (
     <span
       title={name}
       aria-hidden="true"
-      className={`inline-flex items-center justify-center rounded-full border border-slate-300 bg-slate-200 font-semibold text-slate-700 ${sizeCls}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-full border border-line bg-canvas-deep font-semibold text-ink-2 ${AVATAR_SIZES[size]}`}
     >
-      {initials || "?"}
+      {initialsOf(name) || "?"}
     </span>
   );
 }
 
 // ── Pills de estado ─────────────────────────────────────────────────────────
 
-export const STATUS_STYLES: Record<TaskStatus, string> = {
-  BACKLOG: "bg-slate-200 text-slate-700",
-  READY: "bg-sky-100 text-sky-800",
-  IN_PROGRESS: "bg-amber-100 text-amber-800",
-  REVIEW: "bg-violet-100 text-violet-800",
-  BLOCKED: "bg-rose-100 text-rose-800",
-  DONE: "bg-emerald-100 text-emerald-800",
-  CANCELLED: "bg-slate-100 text-slate-400 line-through",
+/** Un estado, un tono. REVIEW es el único violeta: espera decisión humana. */
+export const STATUS_TONES: Record<TaskStatus, Tone> = {
+  BACKLOG: "quiet",
+  READY: "quiet",
+  IN_PROGRESS: "work",
+  REVIEW: "decide",
+  BLOCKED: "broken",
+  DONE: "done",
+  CANCELLED: "quiet",
 };
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -85,24 +77,21 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
 
 export function StatusPill({ status }: { status: TaskStatus }) {
   return (
-    <span
-      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLES[status]}`}
-      data-status={status}
-      aria-label={status}
-      title={status}
-    >
-      {STATUS_LABELS[status]}
+    <span data-status={status} aria-label={STATUS_LABELS[status]}>
+      <Chip tone={STATUS_TONES[status]} className={status === "CANCELLED" ? "line-through" : ""}>
+        {STATUS_LABELS[status]}
+      </Chip>
     </span>
   );
 }
 
-export const DUE_STYLES: Record<ReturnType<typeof taskDueState>, string> = {
-  none: "text-slate-400",
-  overdue: "text-rose-700",
-  today: "text-orange-700",
-  upcoming: "text-amber-700",
-  later: "text-slate-500",
-  complete: "text-emerald-700",
+export const DUE_TONES: Record<ReturnType<typeof taskDueState>, string> = {
+  none: "text-faint",
+  overdue: "text-broken",
+  today: "text-work",
+  upcoming: "text-work",
+  later: "text-muted",
+  complete: "text-done",
 };
 
 export function dueLabel(task: Pick<Task, "status" | "dueAt" | "due_at">, now = Date.now()): string {
@@ -110,7 +99,10 @@ export function dueLabel(task: Pick<Task, "status" | "dueAt" | "due_at">, now = 
   const dueAt = taskDueTimestamp(task);
   if (state === "none") return "Sin vencimiento";
   if (state === "complete") return dueAt ? `Venció ${new Date(dueAt).toLocaleDateString("es")}` : "Sin vencimiento";
-  if (state === "overdue") return "Vencida";
+  if (state === "overdue") {
+    const days = Math.max(1, Math.floor((now - (dueAt ?? now)) / 86_400_000));
+    return days === 1 ? "Vencida hace 1 día" : `Vencida hace ${days} días`;
+  }
   if (state === "today") return "Vence hoy";
   if (state === "upcoming") {
     const days = Math.max(1, Math.ceil(((dueAt ?? now) - now) / 86_400_000));
@@ -122,68 +114,81 @@ export function dueLabel(task: Pick<Task, "status" | "dueAt" | "due_at">, now = 
 export function DuePill({ task, now = Date.now() }: { task: Pick<Task, "status" | "dueAt" | "due_at">; now?: number }) {
   const state = taskDueState(task, now);
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${DUE_STYLES[state]}`}>
-      <span aria-hidden="true">{state === "overdue" ? "!" : state === "complete" ? "✓" : "◷"}</span>
+    <span className={`inline-flex items-center gap-1 text-label font-medium ${DUE_TONES[state]}`}>
       {dueLabel(task, now)}
     </span>
   );
 }
 
-export const PRIORITY_STYLES: Record<TaskPriority, string> = {
-  low: "text-slate-400",
-  normal: "text-slate-500",
-  high: "text-orange-600",
-  urgent: "text-rose-600",
+export const PRIORITY_TONES: Record<TaskPriority, string> = {
+  low: "text-faint",
+  normal: "text-muted",
+  high: "text-work",
+  urgent: "text-broken",
+};
+
+const PRIORITY_WORDS: Record<TaskPriority, string> = {
+  low: "baja",
+  normal: "normal",
+  high: "alta",
+  urgent: "urgente",
 };
 
 export function PriorityDot({ priority }: { priority: TaskPriority }) {
-  const label: Record<TaskPriority, string> = {
-    low: "baja",
-    normal: "normal",
-    high: "alta",
-    urgent: "urgente",
-  };
   return (
-    <span title={`Prioridad ${label[priority]}`} className={`text-[10px] font-bold ${PRIORITY_STYLES[priority]}`}>
+    <span title={`Prioridad ${PRIORITY_WORDS[priority]}`} className={`text-label font-bold ${PRIORITY_TONES[priority]}`}>
       {priority === "urgent" ? "!!" : priority === "high" ? "!" : "·"}
     </span>
   );
 }
 
+export const RUN_STATUS_TONES: Record<string, Tone> = {
+  succeeded: "done",
+  running: "work",
+  queued: "quiet",
+  failed: "broken",
+  cancelled: "quiet",
+  interrupted: "broken",
+};
+
+export const RUN_STATUS_LABELS: Record<string, string> = {
+  succeeded: "Terminado",
+  running: "En curso",
+  queued: "En cola",
+  failed: "Falló",
+  cancelled: "Cancelado",
+  interrupted: "Interrumpido",
+};
+
 export function RunStatusPill({ status }: { status: string }) {
-  const cls =
-    status === "succeeded"
-      ? "bg-emerald-100 text-emerald-800"
-      : status === "running"
-        ? "bg-amber-100 text-amber-800"
-        : status === "failed"
-          ? "bg-rose-100 text-rose-800"
-          : status === "queued"
-            ? "bg-sky-100 text-sky-800"
-            : "bg-slate-200 text-slate-600";
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${cls}`}>{status}</span>;
+  return (
+    <span data-run-status={status}>
+      <Chip tone={RUN_STATUS_TONES[status] ?? "quiet"}>{RUN_STATUS_LABELS[status] ?? status}</Chip>
+    </span>
+  );
 }
 
-// ── Vacíos y errores legibles ───────────────────────────────────────────────
+// ── Vacíos y errores escritos para quien los lee, no para quien programa ────
 
-export function EmptyState({ title, hint }: { title: string; hint?: string }) {
+export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white/60 p-8 text-center">
-      <p className="text-sm font-medium text-slate-600">{title}</p>
-      {hint ? <p className="text-xs text-slate-400">{hint}</p> : null}
+    <div className="flex flex-col items-center justify-center gap-2 rounded-panel border border-dashed border-line bg-surface/60 p-10 text-center">
+      <p className="text-body font-semibold text-ink-2">{title}</p>
+      {hint ? <p className="max-w-prose text-small text-muted">{hint}</p> : null}
+      {action}
     </div>
   );
 }
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-      <p className="font-medium">Algo falló</p>
-      <p className="mt-1 text-xs">{message}</p>
+    <div role="alert" className="rounded-panel border border-broken-line bg-broken-bg p-4 text-small text-broken">
+      <p className="font-semibold">Algo falló</p>
+      <p className="mt-1">{message}</p>
       {onRetry ? (
         <button
           onClick={onRetry}
-          className="mt-2 rounded bg-rose-600 px-2 py-1 text-xs font-medium text-white hover:bg-rose-700"
+          className="press mt-2 rounded-tight border border-broken-line bg-surface px-2.5 py-1 text-small font-semibold text-broken"
         >
           Reintentar
         </button>
@@ -194,8 +199,8 @@ export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () =
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex items-center gap-2 p-4 text-sm text-slate-500">
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+    <div className="flex items-center gap-2 p-4 text-small text-muted">
+      <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-muted" />
       {label ?? "Cargando…"}
     </div>
   );
@@ -212,16 +217,16 @@ export function Toasts() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`flex items-start justify-between gap-2 rounded-lg border p-3 text-sm shadow-lg ${
+          className={`enter-rise flex items-start justify-between gap-2 rounded-soft border p-3 text-small shadow-float ${
             t.kind === "error"
-              ? "border-rose-200 bg-rose-50 text-rose-800"
+              ? "border-broken-line bg-broken-bg text-broken"
               : t.kind === "ok"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-sky-200 bg-sky-50 text-sky-800"
+                ? "border-done-line bg-done-bg text-done"
+                : "border-line bg-surface text-ink-2"
           }`}
         >
           <span className="break-words">{t.text}</span>
-          <button onClick={() => dismiss(t.id)} className="text-xs opacity-60 hover:opacity-100">
+          <button onClick={() => dismiss(t.id)} className="press text-label opacity-60 hover:opacity-100">
             ✕
           </button>
         </div>
@@ -243,7 +248,12 @@ export function timeAgo(ts: number | null | undefined): string {
 
 export function fmtDate(ts: number | null | undefined): string {
   if (!ts) return "—";
-  return new Date(ts).toLocaleString("es", { dateStyle: "short", timeStyle: "medium" });
+  return new Date(ts).toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
+}
+
+export function fmtDay(ts: number | null | undefined): string {
+  if (!ts) return "—";
+  return new Date(ts).toLocaleDateString("es", { day: "numeric", month: "short" });
 }
 
 /** null = "no reportado", nunca cero inferido (PRD CA-7.2). */

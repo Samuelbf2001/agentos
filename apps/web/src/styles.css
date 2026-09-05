@@ -1,8 +1,190 @@
 @import "tailwindcss";
 
-/* Sin dark mode (PRD §6.10): la UI fija tema claro. */
+/*
+ * Sistema visual de AgentOS (docs/DIRECCION-VISUAL.md + PLAN-v1.5 §Sistema visual).
+ *
+ * Una sola gramática de color: ámbar = trabajo en curso, violeta = espera una
+ * decisión humana (y nada más), rojo = roto o vencido, verde = cerrado o
+ * aprobado, azul = enlace y selección (nunca estado). Todo lo demás es
+ * estructura, con neutros de sesgo frío. Queda prohibido el color por categoría.
+ *
+ * Cinco tamaños de tipografía, cada uno con su propio tracking (los títulos
+ * cierran, el cuerpo queda en cero, las etiquetas abren). Nada por debajo de
+ * 12 px en elementos que se pueden pulsar.
+ *
+ * Tres sombras, tres radios, dos densidades y ninguna intermedia.
+ */
+
+@theme {
+  /* ── Tipografía del sistema ───────────────────────────────────────────── */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Cinco tamaños. El tracking va POR tamaño, nunca uno solo para todos. */
+  --text-display: 1.625rem; /* 26px */
+  --text-display--line-height: 1.12;
+  --text-display--letter-spacing: -0.021em;
+  --text-display--font-weight: 680;
+
+  --text-title: 1.1875rem; /* 19px */
+  --text-title--line-height: 1.25;
+  --text-title--letter-spacing: -0.014em;
+  --text-title--font-weight: 640;
+
+  --text-body: 0.9375rem; /* 15px */
+  --text-body--line-height: 1.55;
+  --text-body--letter-spacing: 0em;
+
+  --text-small: 0.8125rem; /* 13px */
+  --text-small--line-height: 1.45;
+  --text-small--letter-spacing: 0.002em;
+
+  --text-label: 0.75rem; /* 12px — el mínimo absoluto, también en lo clicable */
+  --text-label--line-height: 1.3;
+  --text-label--letter-spacing: 0.075em;
+  --text-label--font-weight: 640;
+
+  /* ── Neutros con sesgo frío ───────────────────────────────────────────── */
+  --color-canvas: #f2f4f7;
+  --color-canvas-deep: #e8ebf0;
+  --color-surface: #ffffff;
+  --color-surface-2: #fbfcfd;
+  --color-ink: #14181d;
+  --color-ink-2: #3d454e;
+  --color-muted: #6b747e;
+  --color-faint: #98a1ab;
+  --color-line: #dde2e8;
+  --color-line-soft: #e9edf1;
+
+  /* ── Gramática de estado ──────────────────────────────────────────────── */
+  /* Ámbar: trabajo en curso. */
+  --color-work: #a96a0b;
+  --color-work-bg: #fbefd9;
+  --color-work-line: #efd6a8;
+  /* Violeta: espera una decisión humana. Uso único. */
+  --color-decide: #6a4ca8;
+  --color-decide-bg: #ede7f8;
+  --color-decide-line: #d3c6ee;
+  /* Rojo: roto o vencido. */
+  --color-broken: #a33a31;
+  --color-broken-bg: #fae4e1;
+  --color-broken-line: #f0c6c1;
+  /* Verde: cerrado o aprobado. */
+  --color-done: #2c6a45;
+  --color-done-bg: #dfede4;
+  --color-done-line: #bfdccb;
+  /* Azul: enlace y selección. Nunca estado. */
+  --color-link: #2a5da8;
+  --color-link-bg: #e4edfa;
+
+  /* Cromática flotante */
+  --color-chrome: rgb(255 255 255 / 0.68);
+  --color-chrome-edge: rgb(255 255 255 / 0.5);
+
+  /* ── Profundidad: tres sombras, tres radios ───────────────────────────── */
+  --shadow-rest: 0 1px 2px rgb(16 24 36 / 0.05), 0 1px 1px rgb(16 24 36 / 0.03);
+  --shadow-raise: 0 4px 14px rgb(16 24 36 / 0.07), 0 1px 3px rgb(16 24 36 / 0.05);
+  --shadow-float: 0 18px 40px rgb(16 24 36 / 0.13), 0 3px 10px rgb(16 24 36 / 0.07);
+
+  --radius-tight: 8px;
+  --radius-soft: 12px;
+  --radius-panel: 18px;
+
+  /* ── Movimiento: muelle amortiguado 1.0, sin rebote ───────────────────── */
+  --ease-exit: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-quick: cubic-bezier(0.25, 0.9, 0.3, 1);
+}
+
+/*
+ * Modo oscuro por tokens: sólo se redefinen los valores, ni una utilidad ni un
+ * componente saben de qué tema se trata. Las reglas van fuera de @layer para
+ * ganar a los defaults del tema.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-canvas: #101317;
+    --color-canvas-deep: #0b0e11;
+    --color-surface: #191d22;
+    --color-surface-2: #1e232a;
+    --color-ink: #e9ecef;
+    --color-ink-2: #c3cad1;
+    --color-muted: #939ca6;
+    --color-faint: #6b747e;
+    --color-line: #2a3037;
+    --color-line-soft: #232930;
+    --color-work: #e0ae5e;
+    --color-work-bg: #33270f;
+    --color-work-line: #4c3c18;
+    --color-decide: #b4a0e4;
+    --color-decide-bg: #251f38;
+    --color-decide-line: #3a3055;
+    --color-broken: #e39189;
+    --color-broken-bg: #36201d;
+    --color-broken-line: #50302b;
+    --color-done: #7fc79b;
+    --color-done-bg: #15301f;
+    --color-done-line: #23472f;
+    --color-link: #8fb6ec;
+    --color-link-bg: #182437;
+    --color-chrome: rgb(22 26 31 / 0.72);
+    --color-chrome-edge: rgb(255 255 255 / 0.07);
+    --shadow-rest: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-raise: 0 4px 14px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+    --shadow-float: 0 18px 40px rgb(0 0 0 / 0.55), 0 3px 10px rgb(0 0 0 / 0.35);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-canvas: #101317;
+  --color-canvas-deep: #0b0e11;
+  --color-surface: #191d22;
+  --color-surface-2: #1e232a;
+  --color-ink: #e9ecef;
+  --color-ink-2: #c3cad1;
+  --color-muted: #939ca6;
+  --color-faint: #6b747e;
+  --color-line: #2a3037;
+  --color-line-soft: #232930;
+  --color-work: #e0ae5e;
+  --color-work-bg: #33270f;
+  --color-work-line: #4c3c18;
+  --color-decide: #b4a0e4;
+  --color-decide-bg: #251f38;
+  --color-decide-line: #3a3055;
+  --color-broken: #e39189;
+  --color-broken-bg: #36201d;
+  --color-broken-line: #50302b;
+  --color-done: #7fc79b;
+  --color-done-bg: #15301f;
+  --color-done-line: #23472f;
+  --color-link: #8fb6ec;
+  --color-link-bg: #182437;
+  --color-chrome: rgb(22 26 31 / 0.72);
+  --color-chrome-edge: rgb(255 255 255 / 0.07);
+  --shadow-rest: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-raise: 0 4px 14px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+  --shadow-float: 0 18px 40px rgb(0 0 0 / 0.55), 0 3px 10px rgb(0 0 0 / 0.35);
+}
+
+/* Sin transparencia: la cromática deja de flotar y se vuelve sólida. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --color-chrome: var(--color-surface);
+  }
+}
+
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
+  /* Movimiento: respuesta 0.4 s, amortiguación 1.0 (sin rebote). */
+  --motion-press: 100ms;
+  --motion-fast: 140ms;
+  --motion-base: 320ms;
+  --motion-slow: 400ms;
+  /* Densidad: dos modos, ninguno intermedio. Operar es el valor por defecto. */
+  --density-row-y: 0.5rem;
+  --density-gap: 0.5rem;
+  --density-card-p: 0.75rem;
 }
 
 html,
@@ -12,14 +194,196 @@ body,
 }
 
 body {
-  @apply bg-slate-100 text-slate-900 antialiased;
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.55;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbars discretos para paneles densos */
 * {
   scrollbar-width: thin;
 }
 
+:focus-visible {
+  outline: 2px solid var(--color-link);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Densidades ─────────────────────────────────────────────────────────── */
+
+/* Operar: filas compactas. Tablero, decisiones y actividad. */
+.density-operar {
+  --density-row-y: 0.5rem;
+  --density-gap: 0.5rem;
+  --density-card-p: 0.75rem;
+}
+
+/* Explorar: tarjetas y prosa. Ruta, contexto y método. */
+.density-explorar {
+  --density-row-y: 0.875rem;
+  --density-gap: 0.875rem;
+  --density-card-p: 1rem;
+}
+
+.row-y {
+  padding-top: var(--density-row-y);
+  padding-bottom: var(--density-row-y);
+}
+
+/* ── Cromática flotante: el contenido pasa por debajo ───────────────────── */
+
+.chrome {
+  background: var(--color-chrome);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  border-bottom: 1px solid var(--color-chrome-edge);
+}
+
+/* Donde el contenido se encuentra con la barra: degradado, no una línea seca. */
+.scroll-edge {
+  height: 22px;
+  margin-bottom: -22px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--color-canvas), transparent);
+}
+
+/* ── Late el punto, nunca el contenedor ─────────────────────────────────── */
+
+.pip {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 99px;
+  background: var(--color-work);
+}
+
+.pip::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 99px;
+  border: 1.5px solid var(--color-work);
+  opacity: 0.45;
+  animation: pip-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes pip-breathe {
+  0%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+/* ── Un solo patrón de atraso en todo el producto ───────────────────────── */
+
+.late {
+  border-left: 3px solid var(--color-broken);
+}
+
+/* ── Responder al pulsar, no al soltar ──────────────────────────────────── */
+
+.press {
+  transition:
+    transform var(--motion-press) var(--ease-quick),
+    box-shadow var(--motion-fast) var(--ease-exit),
+    border-color var(--motion-fast) var(--ease-exit),
+    background-color var(--motion-fast) var(--ease-exit);
+}
+
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Superficies grandes se hunden menos: el mismo gesto, escala proporcionada. */
+.press-soft:active:not(:disabled) {
+  transform: scale(0.994);
+}
+
+/* ── Paneles: entran y salen por el mismo lado, con origen en el disparador */
+
+.enter-right {
+  animation: enter-right var(--motion-base) var(--ease-exit);
+}
+
+@keyframes enter-right {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.enter-rise {
+  animation: enter-rise var(--motion-base) var(--ease-exit);
+}
+
+@keyframes enter-rise {
+  from {
+    transform: translateY(6px) scale(0.985);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/*
+ * Movimiento reducido no significa sin respuesta: se cambia el desplazamiento
+ * por un fundido corto y se quitan los muelles, pero el estado se sigue
+ * confirmando.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .pip::after {
+    animation: none;
+    opacity: 0.35;
+  }
+  .press:active:not(:disabled),
+  .press-soft:active:not(:disabled) {
+    transform: none;
+    background-color: var(--color-canvas-deep);
+  }
+  .enter-right,
+  .enter-rise {
+    animation: fade-in 120ms linear;
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Bloques de código de Markdown */
 .shiki {
-  @apply overflow-x-auto rounded-md p-3 text-xs leading-relaxed;
+  overflow-x: auto;
+  border-radius: var(--radius-tight);
+  padding: 0.75rem;
+  font-size: var(--text-label);
+  line-height: 1.6;
 }

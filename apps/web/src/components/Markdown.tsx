@@ -49,10 +49,10 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
     };
   }, [code, lang]);
   if (html) {
-    return <div className="my-2 text-xs" dangerouslySetInnerHTML={{ __html: html }} />;
+    return <div className="my-2 text-small" dangerouslySetInnerHTML={{ __html: html }} />;
   }
   return (
-    <pre className="my-2 overflow-x-auto rounded-md bg-slate-100 p-3 text-xs leading-relaxed">
+    <pre className="my-2 overflow-x-auto rounded-tight bg-line-soft p-3 text-small leading-relaxed">
       <code>{code}</code>
     </pre>
   );
@@ -60,7 +60,7 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 
 export function Markdown({ children }: { children: string }) {
   return (
-    <div className="prose-sm max-w-none [&_a]:text-sky-700 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-500 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:text-[0.85em] [&_h1]:mt-3 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:mt-3 [&_h2]:text-base [&_h2]:font-bold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_img]:my-2 [&_img]:max-h-72 [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-slate-200 [&_img]:object-contain [&_li]:ml-4 [&_ol]:list-decimal [&_p]:my-1.5 [&_table]:my-2 [&_table]:text-xs [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc">
+    <div className="prose-sm max-w-none [&_a]:text-link [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_blockquote]:text-muted [&_code]:rounded [&_code]:bg-line-soft [&_code]:px-1 [&_code]:text-[0.85em] [&_h1]:mt-3 [&_h1]:text-title [&_h1]:font-bold [&_h2]:mt-3 [&_h2]:text-title [&_h2]:font-bold [&_h3]:mt-2 [&_h3]:text-body [&_h3]:font-semibold [&_img]:my-2 [&_img]:max-h-72 [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-soft [&_img]:border [&_img]:border-line [&_img]:object-contain [&_li]:ml-4 [&_ol]:list-decimal [&_p]:my-1.5 [&_table]:my-2 [&_table]:text-small [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

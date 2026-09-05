@@ -29,6 +29,7 @@ import {
   type TaskStatus,
 } from "../lib/types";
 import TaskSearchBox from "./TaskSearchBox";
+import { STAGE_LABELS } from "../components/system";
 
 /** Estados que no aportan a "lo que tengo que hacer" y se ocultan por defecto. */
 const CLOSED_STATUSES: TaskStatus[] = ["DONE", "CANCELLED"];
@@ -57,19 +58,19 @@ function MyTaskRow({ task, projectName }: { task: Task; projectName: string | nu
         type="button"
         data-testid={`my-task-${task.id}`}
         onClick={() => void openTask(task.id)}
-        className="flex w-full flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+        className="flex w-full flex-col gap-1.5 rounded-soft border border-line bg-surface px-3 py-2.5 text-left shadow-rest transition-colors hover:border-line hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-link"
       >
         <span className="flex items-start gap-2">
           <PriorityDot priority={task.priority} />
-          <span className="min-w-0 flex-1 text-xs font-semibold leading-snug text-slate-800">{task.title}</span>
+          <span className="min-w-0 flex-1 text-small font-semibold leading-snug text-ink">{task.title}</span>
           <StatusPill status={task.status} />
         </span>
-        <span className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+        <span className="flex flex-wrap items-center gap-1.5 text-label text-muted">
           {projectName ? <span className="max-w-[14rem] truncate font-medium">{projectName}</span> : null}
-          <span className="rounded bg-slate-100 px-1 py-0.5">{task.stage}</span>
+          <span className="rounded bg-line-soft px-1 py-0.5">{STAGE_LABELS[task.stage]}</span>
           <DuePill task={task} />
           {labels.map((label) => (
-            <span key={label} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-sky-800">
+            <span key={label} className="rounded-full bg-link-bg px-1.5 py-0.5 text-link">
               {label}
             </span>
           ))}
@@ -117,32 +118,31 @@ export default function MyTasksView() {
   const todayCount = groups.get("today")?.length ?? 0;
 
   return (
-    <div className="min-h-full bg-slate-50 p-3 sm:p-4">
+    <div className="density-operar min-h-full p-3 sm:p-4">
       <div className="mx-auto max-w-3xl">
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-3 py-3 sm:px-4 sm:py-4">
+        <div className="rounded-panel border border-line-soft bg-surface shadow-rest">
+          <div className="border-b border-line-soft px-3 py-3 sm:px-4 sm:py-4">
             <div className="flex flex-wrap items-start gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Mi día</p>
-                <h1 className="mt-1 text-base font-semibold tracking-tight text-slate-900 sm:text-lg">
+                <h1 className="text-display text-ink">
                   Mis tareas{person ? ` · ${person.full_name}` : ""}
                 </h1>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-small text-muted">
                   Todo lo asignado a ti en todos los proyectos, agrupado por vencimiento.
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-1.5 text-right sm:gap-3">
-                <div className="rounded-lg bg-slate-50 px-2 py-1.5 sm:px-3">
-                  <p className="text-[9px] uppercase tracking-wide text-slate-400">Abiertas</p>
-                  <p className="text-sm font-semibold tabular-nums text-slate-800">{visible.length}</p>
+                <div className="rounded-soft bg-surface-2 px-2 py-1.5 sm:px-3">
+                  <p className="text-label uppercase text-faint">Abiertas</p>
+                  <p className="text-body font-semibold tabular-nums text-ink">{visible.length}</p>
                 </div>
-                <div className="rounded-lg bg-rose-50 px-2 py-1.5 sm:px-3">
-                  <p className="text-[9px] uppercase tracking-wide text-rose-500">Vencidas</p>
-                  <p className="text-sm font-semibold tabular-nums text-rose-700">{overdueCount}</p>
+                <div className="rounded-soft bg-broken-bg px-2 py-1.5 sm:px-3">
+                  <p className="text-label uppercase text-broken">Vencidas</p>
+                  <p className="text-body font-semibold tabular-nums text-broken">{overdueCount}</p>
                 </div>
-                <div className="rounded-lg bg-orange-50 px-2 py-1.5 sm:px-3">
-                  <p className="text-[9px] uppercase tracking-wide text-orange-600">Hoy</p>
-                  <p className="text-sm font-semibold tabular-nums text-orange-700">{todayCount}</p>
+                <div className="rounded-soft bg-work-bg px-2 py-1.5 sm:px-3">
+                  <p className="text-label uppercase text-work">Hoy</p>
+                  <p className="text-body font-semibold tabular-nums text-work">{todayCount}</p>
                 </div>
               </div>
             </div>
@@ -152,7 +152,7 @@ export default function MyTasksView() {
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label htmlFor="my-tasks-label" className="text-[11px] font-semibold text-slate-600">
+              <label htmlFor="my-tasks-label" className="text-label font-semibold text-muted">
                 Etiqueta
               </label>
               <select
@@ -160,7 +160,7 @@ export default function MyTasksView() {
                 data-testid="my-tasks-label"
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
-                className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="min-h-9 rounded-soft border border-line bg-surface px-2 py-1.5 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
               >
                 <option value="">Todas</option>
                 {labelCatalog.map((usage) => (
@@ -170,7 +170,7 @@ export default function MyTasksView() {
                 ))}
               </select>
 
-              <label htmlFor="my-tasks-status" className="text-[11px] font-semibold text-slate-600">
+              <label htmlFor="my-tasks-status" className="text-label font-semibold text-muted">
                 Estado
               </label>
               <select
@@ -178,7 +178,7 @@ export default function MyTasksView() {
                 data-testid="my-tasks-status"
                 value={status}
                 onChange={(event) => setStatus(event.target.value as TaskStatus | "")}
-                className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="min-h-9 rounded-soft border border-line bg-surface px-2 py-1.5 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
               >
                 <option value="">Todos</option>
                 {TASK_STATUSES.map((value) => (
@@ -188,13 +188,13 @@ export default function MyTasksView() {
                 ))}
               </select>
 
-              <label className="ml-auto inline-flex min-h-9 cursor-pointer items-center gap-1.5 text-[11px] text-slate-600">
+              <label className="ml-auto inline-flex min-h-9 cursor-pointer items-center gap-1.5 text-label text-muted">
                 <input
                   type="checkbox"
                   data-testid="my-tasks-show-closed"
                   checked={showClosed}
                   onChange={(event) => setShowClosed(event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-sky-500"
+                  className="h-4 w-4 rounded border-line text-ink focus:ring-link"
                 />
                 Incluir cerradas
               </label>
@@ -216,9 +216,9 @@ export default function MyTasksView() {
                   if (tasks.length === 0) return null;
                   return (
                     <section key={bucket} className="mb-4" data-testid={`bucket-${bucket}`}>
-                      <h2 className="mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      <h2 className="mb-1.5 flex items-center gap-2 text-label font-bold uppercase text-muted">
                         {DUE_BUCKET_LABELS[bucket]}
-                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">
+                        <span className="rounded-full bg-line-soft px-1.5 py-0.5 text-label tabular-nums text-muted">
                           {tasks.length}
                         </span>
                       </h2>

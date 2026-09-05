@@ -46,9 +46,9 @@ function AgentsTab() {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-      <table className="w-full text-left text-xs">
-        <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+    <div className="overflow-x-auto rounded-soft border border-line bg-surface">
+      <table className="w-full text-left text-small">
+        <thead className="bg-surface-2 text-label uppercase text-faint">
           <tr>
             <th className="px-3 py-2">Agente</th>
             <th className="px-3 py-2">Capa</th>
@@ -59,34 +59,34 @@ function AgentsTab() {
             <th className="px-3 py-2">Acciones</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-line-soft">
           {agents.map((a) => (
-            <tr key={a.id} className="hover:bg-slate-50">
+            <tr key={a.id} className="hover:bg-surface-2">
               <td className="px-3 py-2">
                 <span className="flex items-center gap-1.5 font-medium">
                   <AgentAvatar name={a.name} slug={a.slug} size={5} />
                   {a.name}
-                  <span className="font-mono text-[10px] text-slate-400">{a.slug}</span>
+                  <span className="font-mono text-label text-faint">{a.slug}</span>
                 </span>
               </td>
               <td className="px-3 py-2">{LAYER_LABEL[a.layer] ?? a.layer}</td>
-              <td className="px-3 py-2 font-mono text-[10px]">{a.runtime}</td>
+              <td className="px-3 py-2 font-mono text-label">{a.runtime}</td>
               <td className="px-3 py-2">
                 {editingModel === a.id ? (
                   <span className="flex gap-1">
                     <input
                       value={modelDraft}
                       onChange={(e) => setModelDraft(e.target.value)}
-                      className="w-40 rounded border border-slate-300 px-1 py-0.5 font-mono text-[10px]"
+                      className="w-40 rounded border border-line px-1 py-0.5 font-mono text-label"
                       placeholder="(por defecto del proveedor)"
                     />
                     <button
                       onClick={() => void saveModel(a.id, a.version)}
-                      className="rounded bg-slate-900 px-1.5 text-[10px] text-white"
+                      className="rounded bg-ink px-1.5 text-label text-surface"
                     >
                       ✓
                     </button>
-                    <button onClick={() => setEditingModel(null)} className="text-[10px] text-slate-400">
+                    <button onClick={() => setEditingModel(null)} className="text-label text-faint">
                       ✕
                     </button>
                   </span>
@@ -96,7 +96,7 @@ function AgentsTab() {
                       setEditingModel(a.id);
                       setModelDraft(a.model ?? "");
                     }}
-                    className="font-mono text-[10px] text-sky-700 underline"
+                    className="font-mono text-label text-link underline"
                   >
                     {a.model ?? "(por defecto)"}
                   </button>
@@ -105,12 +105,12 @@ function AgentsTab() {
               <td className="px-3 py-2">{a.autonomy}</td>
               <td className="px-3 py-2">
                 <span
-                  className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                  className={`rounded px-1.5 py-0.5 text-label font-semibold ${
                     a.status === "active"
-                      ? "bg-emerald-100 text-emerald-700"
+                      ? "bg-done-bg text-done"
                       : a.status === "paused"
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-slate-200 text-slate-500"
+                        ? "bg-work-bg text-work"
+                        : "bg-line text-muted"
                   }`}
                 >
                   {a.status === "active" ? "activo" : a.status === "paused" ? "pausado" : "desactivado"}
@@ -120,14 +120,14 @@ function AgentsTab() {
                 {a.status === "active" ? (
                   <button
                     onClick={() => void setAgentStatus(a.id, "paused", a.version)}
-                    className="rounded border border-amber-300 px-2 py-0.5 text-[10px] text-amber-700 hover:bg-amber-50"
+                    className="rounded border border-work px-2 py-0.5 text-label text-work hover:bg-work-bg"
                   >
                     ⏸ Pausar
                   </button>
                 ) : (
                   <button
                     onClick={() => void setAgentStatus(a.id, "active", a.version)}
-                    className="rounded bg-emerald-600 px-2 py-0.5 text-[10px] text-white hover:bg-emerald-700"
+                    className="rounded bg-done px-2 py-0.5 text-label text-surface hover:bg-done"
                   >
                     ▶ Activar
                   </button>
@@ -137,9 +137,9 @@ function AgentsTab() {
           ))}
         </tbody>
       </table>
-      <p className="border-t border-slate-100 p-3 text-[11px] text-slate-400">
+      <p className="border-t border-line-soft p-3 text-label text-faint">
         Prompts (3 capas, versionados con rollback) y proveedores LLM se administran por el MCP
-        <code className="mx-1 rounded bg-slate-100 px-1">agentos-admin</code>
+        <code className="mx-1 rounded bg-line-soft px-1">agentos-admin</code>
         desde Claude Code — la API no los expone a la UI (las claves jamás salen: solo nombres de
         variables de entorno).
       </p>
@@ -168,51 +168,51 @@ function ConfigTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex items-center gap-3 rounded-soft border border-line bg-surface p-4">
         <div>
-          <p className="text-sm font-bold">Kill switch (US-11)</p>
-          <p className="text-xs text-slate-500">
+          <p className="text-body font-bold">Kill switch (US-11)</p>
+          <p className="text-small text-muted">
             Al activarlo no arrancan runs nuevos y los activos se cancelan en ≤10 s.
           </p>
         </div>
         <button
           onClick={() => void setKillSwitch(!killSwitch)}
-          className={`ml-auto rounded-md px-3 py-1.5 text-xs font-medium text-white ${
-            killSwitch ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+          className={`ml-auto rounded-tight px-3 py-1.5 text-small font-medium text-surface ${
+            killSwitch ? "bg-done hover:bg-done" : "bg-broken hover:bg-broken"
           }`}
         >
           {killSwitch ? "▶ Reanudar agentes" : "⏸ Pausar agentes"}
         </button>
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+      <div className="rounded-soft border border-line bg-surface p-4">
+        <p className="text-small font-bold uppercase text-faint">
           app_config (semáforos y presupuestos)
         </p>
         {error ? <ErrorBox message={error} onRetry={() => void load()} /> : null}
         {rows === null && !error ? <Spinner label="Cargando…" /> : null}
-        {rows && rows.length === 0 ? <p className="mt-2 text-xs text-slate-400">(vacío)</p> : null}
+        {rows && rows.length === 0 ? <p className="mt-2 text-small text-faint">(vacío)</p> : null}
         {rows && rows.length > 0 ? (
-          <table className="mt-2 w-full text-left text-xs">
-            <thead className="text-[10px] uppercase text-slate-400">
+          <table className="mt-2 w-full text-left text-small">
+            <thead className="text-label uppercase text-faint">
               <tr>
                 <th className="py-1 pr-4">Clave</th>
                 <th className="py-1 pr-4">Valor</th>
                 <th className="py-1">Actualizado</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-line-soft">
               {rows.map((r) => (
                 <tr key={r.key}>
                   <td className="py-1.5 pr-4 font-mono">{r.key}</td>
-                  <td className="py-1.5 pr-4 font-mono text-slate-600">{JSON.stringify(r.value)}</td>
-                  <td className="py-1.5 text-slate-400">{fmtDate(r.updatedAt)}</td>
+                  <td className="py-1.5 pr-4 font-mono text-muted">{JSON.stringify(r.value)}</td>
+                  <td className="py-1.5 text-faint">{fmtDate(r.updatedAt)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : null}
-        <p className="mt-3 text-[11px] text-slate-400">
+        <p className="mt-3 text-label text-faint">
           Edición de presupuestos y semáforos: MCP admin (mutaciones con idempotency_key +
           expected_version + reason, todo auditado).
         </p>
@@ -228,16 +228,16 @@ export default function AdminView() {
       <div className="mb-3 flex gap-1">
         <button
           onClick={() => setTab("agents")}
-          className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-            tab === "agents" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+          className={`rounded-tight px-3 py-1.5 text-small font-medium ${
+            tab === "agents" ? "bg-ink text-surface" : "bg-surface text-muted hover:bg-line-soft"
           }`}
         >
           Agentes
         </button>
         <button
           onClick={() => setTab("config")}
-          className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-            tab === "config" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+          className={`rounded-tight px-3 py-1.5 text-small font-medium ${
+            tab === "config" ? "bg-ink text-surface" : "bg-surface text-muted hover:bg-line-soft"
           }`}
         >
           Config
