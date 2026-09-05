@@ -1,6 +1,6 @@
 /** Piezas pequeñas compartidas: avatar de agente, pills, vacíos, errores, toasts. */
 import { useStore } from "../state/store";
-import type { TaskPriority, TaskStatus } from "../lib/types";
+import { taskDueState, taskDueTimestamp, type Task, type TaskPriority, type TaskStatus } from "../lib/types";
 
 // ── Avatar de agente: iniciales + color determinista por slug ───────────────
 
@@ -40,22 +40,91 @@ export function AgentAvatar({ name, slug, size = 6 }: { name: string; slug: stri
   );
 }
 
+/** Avatar humano deliberadamente neutro: no expone correo en tarjetas ni listas. */
+export function PersonAvatar({ name, size = 6 }: { name: string; size?: 5 | 6 | 8 }) {
+  const initials = name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  const sizeCls = size === 8 ? "h-8 w-8 text-sm" : size === 5 ? "h-5 w-5 text-[10px]" : "h-6 w-6 text-xs";
+  return (
+    <span
+      title={name}
+      aria-hidden="true"
+      className={`inline-flex items-center justify-center rounded-full border border-slate-300 bg-slate-200 font-semibold text-slate-700 ${sizeCls}`}
+    >
+      {initials || "?"}
+    </span>
+  );
+}
+
 // ── Pills de estado ─────────────────────────────────────────────────────────
 
 export const STATUS_STYLES: Record<TaskStatus, string> = {
   BACKLOG: "bg-slate-200 text-slate-700",
   READY: "bg-sky-100 text-sky-800",
   IN_PROGRESS: "bg-amber-100 text-amber-800",
-  BLOCKED: "bg-rose-100 text-rose-800",
   REVIEW: "bg-violet-100 text-violet-800",
+  BLOCKED: "bg-rose-100 text-rose-800",
   DONE: "bg-emerald-100 text-emerald-800",
   CANCELLED: "bg-slate-100 text-slate-400 line-through",
 };
 
+export const STATUS_LABELS: Record<TaskStatus, string> = {
+  BACKLOG: "Backlog",
+  READY: "Lista",
+  IN_PROGRESS: "En curso",
+  REVIEW: "En revisión",
+  BLOCKED: "Bloqueada",
+  DONE: "Terminada",
+  CANCELLED: "Cancelada",
+};
+
 export function StatusPill({ status }: { status: TaskStatus }) {
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLES[status]}`}>
-      {status}
+    <span
+      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLES[status]}`}
+      data-status={status}
+      aria-label={status}
+      title={status}
+    >
+      {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+export const DUE_STYLES: Record<ReturnType<typeof taskDueState>, string> = {
+  none: "text-slate-400",
+  overdue: "text-rose-700",
+  today: "text-orange-700",
+  upcoming: "text-amber-700",
+  later: "text-slate-500",
+  complete: "text-emerald-700",
+};
+
+export function dueLabel(task: Pick<Task, "status" | "dueAt" | "due_at">, now = Date.now()): string {
+  const state = taskDueState(task, now);
+  const dueAt = taskDueTimestamp(task);
+  if (state === "none") return "Sin vencimiento";
+  if (state === "complete") return dueAt ? `Venció ${new Date(dueAt).toLocaleDateString("es")}` : "Sin vencimiento";
+  if (state === "overdue") return "Vencida";
+  if (state === "today") return "Vence hoy";
+  if (state === "upcoming") {
+    const days = Math.max(1, Math.ceil(((dueAt ?? now) - now) / 86_400_000));
+    return `Vence en ${days} d`;
+  }
+  return dueAt ? `Vence ${new Date(dueAt).toLocaleDateString("es")}` : "Sin vencimiento";
+}
+
+export function DuePill({ task, now = Date.now() }: { task: Pick<Task, "status" | "dueAt" | "due_at">; now?: number }) {
+  const state = taskDueState(task, now);
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${DUE_STYLES[state]}`}>
+      <span aria-hidden="true">{state === "overdue" ? "!" : state === "complete" ? "✓" : "◷"}</span>
+      {dueLabel(task, now)}
     </span>
   );
 }

@@ -60,10 +60,27 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 
 export function Markdown({ children }: { children: string }) {
   return (
-    <div className="prose-sm max-w-none [&_a]:text-sky-700 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-500 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:text-[0.85em] [&_h1]:mt-3 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:mt-3 [&_h2]:text-base [&_h2]:font-bold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-4 [&_ol]:list-decimal [&_p]:my-1.5 [&_table]:my-2 [&_table]:text-xs [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc">
+    <div className="prose-sm max-w-none [&_a]:text-sky-700 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-500 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:text-[0.85em] [&_h1]:mt-3 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:mt-3 [&_h2]:text-base [&_h2]:font-bold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_img]:my-2 [&_img]:max-h-72 [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-slate-200 [&_img]:object-contain [&_li]:ml-4 [&_ol]:list-decimal [&_p]:my-1.5 [&_table]:my-2 [&_table]:text-xs [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          a(props) {
+            const { href, children: kids } = props;
+            const external = typeof href === "string" && /^https?:\/\//i.test(href);
+            return (
+              <a
+                href={href}
+                {...(external ? { target: "_blank", rel: "noreferrer noopener" } : {})}
+              >
+                {kids as ReactNode}
+              </a>
+            );
+          },
+          img(props) {
+            const { src, alt } = props;
+            if (typeof src !== "string") return null;
+            return <img src={src} alt={alt ?? ""} loading="lazy" />;
+          },
           code(props) {
             const { className, children: kids } = props;
             const match = /language-(\w+)/.exec(className ?? "");

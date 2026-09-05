@@ -285,6 +285,33 @@ describe("Fuentes del proyecto (REST)", () => {
     expect(body.has_more).toBe(false);
   });
 
+  it("expone el ledger de procesamiento sin transcript ni extracción", async () => {
+    const res = await fx.api.app.inject({
+      method: "GET",
+      url: "/api/meetings/processing?status=pending&page=1&page_size=10",
+      headers: fx.authHeaders,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      mode: string;
+      status: string;
+      queue: { pending: number | null; errors: number | null; complete: number | null };
+      meetings: Array<Record<string, unknown>>;
+    };
+    expect(body.mode).toBe("remote_read_only");
+    expect(body.status).toBe("pending");
+    expect(body.queue).toEqual({ pending: 2, errors: 2, complete: 2 });
+    expect(body.meetings[0]).toMatchObject({
+      id: "m-1",
+      title: "Diagnóstico de producción",
+      association_status: "awaiting_confirmation",
+      task_status: "candidates_pending_confirmation",
+    });
+    expect(body.meetings[0]).not.toHaveProperty("transcript");
+    expect(body.meetings[0]).not.toHaveProperty("extraction");
+    expect(state.calls.some((call) => call.includes('"status":"pending"'))).toBe(true);
+  });
+
   it("browse proxy: contactos con búsqueda y paginación local", async () => {
     const filtered = await fx.api.app.inject({
       method: "GET",

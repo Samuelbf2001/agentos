@@ -4,7 +4,7 @@
  */
 import type { z } from "zod";
 import type { WhatsAppHubConnector } from "@agentos/shared";
-import type { AgentosDb } from "@agentos/db";
+import type { AgentosDb, Task, TaskAssignee } from "@agentos/db";
 import type { BoardEngine, EventSink } from "@agentos/core";
 
 /** Flags de política de una tool. */
@@ -38,6 +38,14 @@ export interface ToolExecutionContext extends ToolCallContext {
   workspaceRoot: string;
   /** Conector WhatsAppHub (Fuentes del proyecto). Ausente = no configurado. */
   whatsappHub?: WhatsAppHubConnector | undefined;
+  /** Hook opcional para avisos de responsables; apagado si no se inyecta. */
+  notifyAssignment?: (input: {
+    task: Task;
+    beforePersonIds: readonly string[];
+    beforePrimaryPersonId?: string | null;
+    afterAssignees: readonly TaskAssignee[];
+    actor: string;
+  }) => unknown | Promise<unknown>;
 }
 
 /** Una tool del catálogo: nombre, schema Zod, handler y flags. */

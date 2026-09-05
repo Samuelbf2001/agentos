@@ -15,6 +15,8 @@ import {
   type WhatsAppHubMeetingDetail,
   type WhatsAppHubMeetingsPage,
   type WhatsAppHubMeetingSummary,
+  type WhatsAppHubWikiPagesStatus,
+  type WhatsAppHubWikiStats,
 } from "@agentos/shared";
 
 export const DEFAULT_TIMEOUT_MS = 8_000;
@@ -35,6 +37,73 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function asNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+  return value;
+}
+
+function asIsoDate(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/**
+ * Normaliza solo los agregados documentados por WhatsAppHub. Las claves
+ * desconocidas se descartan para evitar que el VPS pueda inyectar contenido o
+ * PII en la respuesta de AgentOS.
+ */
+function normalizeWikiStats(payload: unknown): WhatsAppHubWikiStats {
+  const obj = asRecord(payload);
+  const counts: Record<string, number> = {};
+  const keys: Record<string, string> = {
+    total_contacts: "contacts",
+    total_inbound: "messages_inbound",
+    total_outbound: "messages_outbound",
+    active_7d: "active_7d",
+  };
+  for (const [remoteKey, localKey] of Object.entries(keys)) {
+    const count = asNonNegativeInt(obj[remoteKey]);
+    if (count !== undefined) counts[localKey] = count;
+  }
+  const lastActivity = asIsoDate(obj.last_activity);
+  if (Object.keys(counts).length === 0 && !lastActivity) {
+    throw new SourceConnectorError(
+      "http_error",
+      "WhatsAppHub devolvió un agregado inválido en /api/wiki/stats",
+    );
+  }
+  return { counts, lastActivity };
+}
+
+function normalizeWikiPagesStatus(payload: unknown): WhatsAppHubWikiPagesStatus {
+  const obj = asRecord(payload);
+  const total = asNonNegativeInt(obj.total);
+  if (total === undefined) {
+    throw new SourceConnectorError(
+      "http_error",
+      "WhatsAppHub devolvió un agregado inválido en /api/wiki/pages/status",
+    );
+  }
+  const countsByType: Record<string, number> = {};
+  const rawByType = asRecord(obj.byType ?? obj.by_type);
+  for (const [type, value] of Object.entries(rawByType)) {
+    // El nombre del tipo se muestra solo como una faceta; no permitimos rutas,
+    // HTML ni cadenas excesivas procedentes del endpoint remoto.
+    if (!/^[a-z0-9_-]{1,64}$/u.test(type)) continue;
+    const count = asNonNegativeInt(value);
+    if (count !== undefined) countsByType[type] = count;
+  }
+  return {
+    total,
+    byType: countsByType,
+    lastIngestedAt: asIsoDate(obj.lastIngestedAt ?? obj.last_ingested_at),
+  };
+}
+
 /** Normaliza la página de reuniones: acepta array pelado o {meetings|items|data}. */
 function normalizeMeetingsPage(payload: unknown): WhatsAppHubMeetingsPage {
   if (Array.isArray(payload)) return { meetings: payload as WhatsAppHubMeetingSummary[] };
@@ -44,7 +113,11 @@ function normalizeMeetingsPage(payload: unknown): WhatsAppHubMeetingsPage {
     meetings: (Array.isArray(list) ? list : []) as WhatsAppHubMeetingSummary[],
     ...(typeof obj.total === "number" ? { total: obj.total } : {}),
     ...(typeof obj.page === "number" ? { page: obj.page } : {}),
-    ...(typeof obj.pageSize === "number" ? { pageSize: obj.pageSize } : {}),
+    ...(typeof obj.pageSize === "number"
+      ? { pageSize: obj.pageSize }
+      : typeof obj.limit === "number"
+        ? { pageSize: obj.limit }
+        : {}),
     ...(typeof obj.hasMore === "boolean" ? { hasMore: obj.hasMore } : {}),
   };
 }
@@ -118,8 +191,61 @@ export function createWhatsAppHubConnector(
     }
   }
 
+  /** Igual que request(), pero para los endpoints de agregados que el VPS
+   * permite consultar sin key. Si hay key, se manda igualmente por consistencia
+   * y para que instalaciones que protegen también estas lecturas funcionen. */
+  async function requestOverview(path: string): Promise<Response> {
+    if (!baseUrl) {
+      throw new SourceConnectorError(
+        "not_configured",
+        "Conector WhatsAppHub no configurado: define AGENTOS_WHATSAPPHUB_URL",
+      );
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKey) headers["x-wiki-key"] = apiKey;
+      const res = await fetchFn(`${baseUrl}${path}`, {
+        headers,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new SourceConnectorError(
+          "http_error",
+          `WhatsAppHub respondió ${res.status} en ${path}`,
+          res.status,
+        );
+      }
+      return res;
+    } catch (err) {
+      if (err instanceof SourceConnectorError) throw err;
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new SourceConnectorError(
+          "timeout",
+          `WhatsAppHub no respondió en ${timeoutMs} ms (${path}). El VPS puede estar saturado; reintenta más tarde.`,
+        );
+      }
+      throw new SourceConnectorError(
+        "unreachable",
+        `No se pudo conectar con WhatsAppHub (${path}). ¿VPS caído? Reintenta más tarde.`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function requestJson(path: string): Promise<unknown> {
     const res = await request(path);
+    try {
+      return await res.json();
+    } catch {
+      throw new SourceConnectorError("http_error", `WhatsAppHub devolvió una respuesta no-JSON en ${path}`);
+    }
+  }
+
+  async function requestOverviewJson(path: string): Promise<unknown> {
+    const res = await requestOverview(path);
     try {
       return await res.json();
     } catch {
@@ -135,20 +261,33 @@ export function createWhatsAppHubConnector(
 
   return {
     isConfigured: () => Boolean(baseUrl && apiKey),
+    isOverviewConfigured: () => Boolean(baseUrl),
+
+    async getWikiStats() {
+      return normalizeWikiStats(await requestOverviewJson("/api/wiki/stats"));
+    },
+
+    async getWikiPagesStatus() {
+      return normalizeWikiPagesStatus(await requestOverviewJson("/api/wiki/pages/status"));
+    },
 
     async listMeetings(params = {}) {
       const qs = new URLSearchParams();
       if (params.q?.trim()) qs.set("q", params.q.trim());
       if (params.page !== undefined) qs.set("page", String(params.page));
-      if (params.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
+      // WhatsAppHub documenta `limit`; antes enviábamos `pageSize`, que el
+      // backend histórico ignora y podía devolver hasta 100 filas por lectura.
+      if (params.pageSize !== undefined) qs.set("limit", String(params.pageSize));
+      if (params.status && params.status !== "all") qs.set("status", params.status);
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       return normalizeMeetingsPage(await requestJson(`/api/meetings/audit${suffix}`));
     },
 
     async getMeeting(meetingId) {
-      return asRecord(
-        await requestJson(`/api/meetings/${encodeURIComponent(meetingId)}`),
-      ) as WhatsAppHubMeetingDetail;
+      const payload = asRecord(await requestJson(`/api/meetings/${encodeURIComponent(meetingId)}`));
+      // El backend legado responde { meeting: {...} }; aceptar también el
+      // objeto plano conserva compatibilidad con instalaciones anteriores.
+      return asRecord(payload.meeting ?? payload) as WhatsAppHubMeetingDetail;
     },
 
     async getMeetingMarkdown(meetingId) {

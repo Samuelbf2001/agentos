@@ -10,6 +10,8 @@ import { Spinner, Toasts } from "./components/ui";
 import LoginView from "./views/LoginView";
 import ChatView from "./views/ChatView";
 import BoardView from "./views/BoardView";
+import BrainView from "./views/BrainView";
+import MeetingProcessingView from "./views/MeetingProcessingView";
 import SwarmView from "./views/SwarmView";
 import RunsView from "./views/RunsView";
 import RunDetailView from "./views/RunDetailView";
@@ -22,6 +24,8 @@ import { TaskDrawer } from "./views/TaskDrawer";
 const NAV = [
   { to: "/chat", label: "Chat", icon: "💬" },
   { to: "/board", label: "Tablero", icon: "🗂️" },
+  { to: "/brain", label: "Cerebro", icon: "◈" },
+  { to: "/meetings", label: "Reuniones", icon: "🎙️" },
   { to: "/swarm", label: "Enjambre", icon: "🕸️" },
   { to: "/runs", label: "Runs", icon: "🛰️" },
   { to: "/waiting", label: "Esperando por ti", icon: "✋" },
@@ -63,7 +67,7 @@ function Shell() {
   return (
     <div className="flex h-full flex-col">
       {killSwitch ? (
-        <div className="flex items-center justify-center gap-3 bg-rose-600 px-4 py-1.5 text-sm font-medium text-white">
+        <div className="flex flex-wrap items-center justify-center gap-2 bg-rose-600 px-3 py-1.5 text-xs font-medium text-white sm:gap-3 sm:px-4 sm:text-sm">
           ⛔ Kill switch activo: los agentes están pausados y no arrancan runs nuevos.
           <button
             onClick={() => void setKillSwitch(false)}
@@ -73,8 +77,8 @@ function Shell() {
           </button>
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <aside className="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-white sm:flex">
           <div className="border-b border-slate-200 px-4 py-3">
             <p className="text-sm font-bold tracking-tight">AgentOS</p>
             <p className="text-[11px] text-slate-400">Sixteam · Entender → Construir → Operar</p>
@@ -115,7 +119,7 @@ function Shell() {
           </div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
+          <header className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:gap-3 sm:px-4">
             <label className="text-xs text-slate-500" htmlFor="project-select">
               Proyecto
             </label>
@@ -123,7 +127,7 @@ function Shell() {
               id="project-select"
               value={activeProjectId ?? ""}
               onChange={(e) => void setActiveProject(e.target.value || null)}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
+              className="min-w-0 max-w-[11rem] flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm sm:max-w-none sm:flex-none"
             >
               {projects.length === 0 ? <option value="">(sin proyectos)</option> : null}
               {projects.map((p) => (
@@ -134,11 +138,11 @@ function Shell() {
             </select>
             <button
               onClick={() => navigate("/new-project")}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              className="hidden rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 sm:block"
             >
               ＋ Nuevo proyecto
             </button>
-            <span className="text-[11px] text-slate-400">{location.pathname}</span>
+            <span className="hidden text-[11px] text-slate-400 sm:inline">{location.pathname}</span>
             <div className="ml-auto flex items-center gap-2">
               {!killSwitch ? (
                 <button
@@ -157,11 +161,31 @@ function Shell() {
               )}
             </div>
           </header>
+          <nav className="overflow-x-auto border-b border-slate-200 bg-white px-2 py-1.5 sm:hidden" aria-label="Navegación principal">
+            <div className="flex min-w-max gap-1">
+              {NAV.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-xs ${
+                      isActive ? "bg-slate-900 font-medium text-white" : "text-slate-600 hover:bg-slate-100"
+                    }`
+                  }
+                >
+                  <span aria-hidden>{item.icon}</span>
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          </nav>
           <main className="min-h-0 flex-1 overflow-auto">
             <Routes>
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/chat" element={<ChatView />} />
               <Route path="/board" element={<BoardView />} />
+              <Route path="/brain" element={<BrainView />} />
+              <Route path="/meetings" element={<MeetingProcessingView />} />
               <Route path="/new-project" element={<NewProjectWizard />} />
               <Route path="/swarm" element={<SwarmView />} />
               <Route path="/runs" element={<RunsView />} />

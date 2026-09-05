@@ -2,17 +2,41 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type TaskStatus } from "@agentos/shared";
 import type { AgentosDb } from "../client.js";
 import { artifacts, taskEvents, tasks } from "../schema.js";
-import type { Artifact, NewArtifact, NewTask, NewTaskEvent, Task, TaskEvent } from "../types.js";
+import {
+  insertTaskAssigneeRows,
+  normalizeNewTaskAssignees,
+  synchronizeTaskAssignees,
+  validateTaskAssigneeOrganization,
+} from "./task-assignees.js";
+import type { Artifact, NewArtifact, NewTask, NewTaskEvent, Task, TaskCreateInput, TaskEvent } from "../types.js";
 
 // ── CRUD ────────────────────────────────────────────────────────────────────
 
 export function createTask(
   db: AgentosDb,
-  input: Omit<NewTask, "id" | "createdAt" | "updatedAt" | "version"> & { id?: string },
+  input: TaskCreateInput,
 ): Task {
   const now = nowMs();
-  const row: NewTask = { ...input, id: input.id ?? newId(), createdAt: now, updatedAt: now };
-  db.insert(tasks).values(row).run();
+  const { normalized, taskInput } = normalizeNewTaskAssignees(input);
+  const row: NewTask = {
+    ...taskInput,
+    // The singular column is always written from the canonical selection,
+    // including when callers provide only assigneePersonIds.
+    assigneePersonId: normalized.primaryPersonId,
+    id: input.id ?? newId(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const insert = (): void => {
+    validateTaskAssigneeOrganization(db, row.projectId, normalized.personIds);
+    db.insert(tasks).values(row).run();
+    insertTaskAssigneeRows(db, row.id!, normalized, now);
+  };
+  // Module launches already own a better-sqlite3 transaction. Avoid nesting a
+  // second BEGIN there while keeping direct repository writes atomic.
+  const inTransaction = (db.$client as unknown as { inTransaction?: boolean }).inTransaction === true;
+  if (inTransaction) insert();
+  else db.$client.transaction(insert)();
   return getTask(db, row.id!)!;
 }
 
@@ -22,12 +46,26 @@ export function getTask(db: AgentosDb, id: string): Task | undefined {
 
 export function listTasks(
   db: AgentosDb,
-  filter: { projectId?: string; status?: TaskStatus; assigneeAgentId?: string } = {},
+  filter: {
+    projectId?: string;
+    status?: TaskStatus;
+    assigneeAgentId?: string;
+    /** Filtro humano canónico (incluye responsables no primarios). */
+    personId?: string;
+    /** Alias de compatibilidad para el contrato HTTP. */
+    assigneePersonId?: string;
+  } = {},
 ): Task[] {
   const conds = [];
   if (filter.projectId) conds.push(eq(tasks.projectId, filter.projectId));
   if (filter.status) conds.push(eq(tasks.status, filter.status));
   if (filter.assigneeAgentId) conds.push(eq(tasks.assigneeAgentId, filter.assigneeAgentId));
+  const personId = filter.personId ?? filter.assigneePersonId;
+  if (personId) {
+    conds.push(
+      sql`EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = ${tasks.id} AND ta.person_id = ${personId})`,
+    );
+  }
   const base = db.select().from(tasks);
   const q = conds.length > 0 ? base.where(and(...conds)) : base;
   return q.orderBy(asc(tasks.status), asc(tasks.orderKey)).all();
@@ -53,15 +91,39 @@ export function updateTask(
   patch: Partial<Omit<Task, "id" | "createdAt" | "version">>,
   expectedVersion: number,
 ): Task {
-  const res = db
-    .update(tasks)
-    .set({ ...patch, updatedAt: nowMs(), version: sql`${tasks.version} + 1` })
-    .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
-    .run();
-  if (res.changes === 0) {
-    if (!getTask(db, id)) throw errors.notFound("task", id);
-    throw errors.versionConflict("task", id, expectedVersion);
-  }
+  const hasLegacyAssignee = patch.assigneePersonId !== undefined;
+  const legacyAssignee = patch.assigneePersonId ?? null;
+  const taskPatch = hasLegacyAssignee
+    ? (() => {
+        const { assigneePersonId: _ignored, ...rest } = patch;
+        return rest;
+      })()
+    : patch;
+  const work = (): void => {
+    if (hasLegacyAssignee) {
+      const current = getTask(db, id);
+      if (!current) throw errors.notFound("task", id);
+      validateTaskAssigneeOrganization(db, current.projectId, legacyAssignee ? [legacyAssignee] : []);
+    }
+    const res = db
+      .update(tasks)
+      .set({
+        ...taskPatch,
+        ...(hasLegacyAssignee ? { assigneePersonId: legacyAssignee } : {}),
+        updatedAt: nowMs(),
+        version: sql`${tasks.version} + 1`,
+      })
+      .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
+      .run();
+    if (res.changes === 0) {
+      if (!getTask(db, id)) throw errors.notFound("task", id);
+      throw errors.versionConflict("task", id, expectedVersion);
+    }
+    if (hasLegacyAssignee) synchronizeTaskAssignees(db, id, legacyAssignee);
+  };
+  const inTransaction = (db.$client as unknown as { inTransaction?: boolean }).inTransaction === true;
+  if (hasLegacyAssignee && !inTransaction) db.$client.transaction(work)();
+  else work();
   return getTask(db, id)!;
 }
 

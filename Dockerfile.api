@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# Runtime reproducible para la API. La configuración (DB, secretos, conectores)
+# se inyecta exclusivamente en ejecución mediante EasyPanel.
+FROM node:22-bookworm-slim AS base
+
+WORKDIR /app
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+
+COPY . .
+# better-sqlite3 sigue siendo una dependencia cargable mientras el runtime PG
+# termina su portabilidad; se compila dentro de Linux, nunca en la máquina host.
+RUN pnpm install --frozen-lockfile
+
+ENV NODE_ENV=production
+ENV AGENTOS_API_PORT=4300
+ENV AGENTOS_API_HOST=0.0.0.0
+EXPOSE 4300
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:4300/api/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["pnpm", "--filter", "@agentos/api", "start"]

@@ -15,6 +15,20 @@ export type PromptVersion = typeof s.promptVersions.$inferSelect;
 export type NewPromptVersion = typeof s.promptVersions.$inferInsert;
 export type Task = typeof s.tasks.$inferSelect;
 export type NewTask = typeof s.tasks.$inferInsert;
+/** Campos opcionales de la nueva escritura multi-responsable. */
+export interface TaskAssigneeSelectionInput {
+  assigneePersonIds?: readonly string[];
+  primaryAssigneePersonId?: string | null;
+  assignedBy?: string;
+}
+export type TaskCreateInput = Omit<NewTask, "id" | "createdAt" | "updatedAt" | "version"> &
+  TaskAssigneeSelectionInput & { id?: string };
+export type TaskAssignee = typeof s.taskAssignees.$inferSelect;
+export type NewTaskAssignee = typeof s.taskAssignees.$inferInsert;
+export type TaskNotificationKind = "assignment" | "due_24h";
+export type TaskNotificationStatus = "pending" | "processing" | "delivered" | "failed" | "suppressed";
+export type TaskNotificationLog = typeof s.taskNotificationLog.$inferSelect;
+export type NewTaskNotificationLog = typeof s.taskNotificationLog.$inferInsert;
 export type TaskEvent = typeof s.taskEvents.$inferSelect;
 export type NewTaskEvent = typeof s.taskEvents.$inferInsert;
 export type Artifact = typeof s.artifacts.$inferSelect;

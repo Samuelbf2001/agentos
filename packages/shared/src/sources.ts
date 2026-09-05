@@ -38,6 +38,19 @@ export interface WhatsAppHubMeetingSummary {
   date?: string | null;
   is_internal?: boolean | null;
   url?: string | null;
+  /** Campos del audit del procesador histórico de reuniones (solo metadatos). */
+  source?: string | null;
+  meetingDate?: string | null;
+  createdAt?: string | null;
+  extractedAt?: string | null;
+  extractAttempts?: number | null;
+  notionSyncedAt?: string | null;
+  notionAttempts?: number | null;
+  associationStatus?: string | null;
+  taskStatus?: string | null;
+  processingError?: string | null;
+  wikiExported?: boolean | null;
+  wikiSyncedAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -63,8 +76,25 @@ export interface WhatsAppHubContact {
   [key: string]: unknown;
 }
 
+/** Agregados de la wiki/conversation store para el cockpit de 2brain.
+ *
+ * Estos tipos son deliberadamente pequeños: el endpoint remoto puede contener
+ * PII, pero el resumen que consume AgentOS solo transporta contadores y marcas
+ * de tiempo normalizadas.
+ */
+export interface WhatsAppHubWikiStats {
+  counts: Record<string, number>;
+  lastActivity: string | null;
+}
+
+export interface WhatsAppHubWikiPagesStatus {
+  total: number;
+  byType: Record<string, number>;
+  lastIngestedAt: string | null;
+}
+
 /**
- * Cliente tipado de los 5 endpoints REST de WhatsAppHub. La implementación
+ * Cliente tipado de los endpoints REST de WhatsAppHub. La implementación
  * real (apps/api) mete timeout corto y errores legibles; los tests inyectan
  * un mock — ninguna llamada real sale de los tests.
  */
@@ -75,11 +105,19 @@ export interface WhatsAppHubConnector {
     q?: string;
     page?: number;
     pageSize?: number;
+    /** Filtro del audit remoto: all, pending, error u ok. */
+    status?: "all" | "pending" | "error" | "ok";
   }): Promise<WhatsAppHubMeetingsPage>;
   getMeeting(meetingId: string): Promise<WhatsAppHubMeetingDetail>;
   getMeetingMarkdown(meetingId: string): Promise<string>;
   listContacts(): Promise<WhatsAppHubContact[]>;
   getDossierMarkdown(contactId: string): Promise<string>;
+  /** ¿Hay URL para lecturas agregadas? La key es opcional en ese endpoint del VPS. */
+  isOverviewConfigured?: () => boolean;
+  /** Lectura agregada, sin títulos, ids ni contenido de clientes. */
+  getWikiStats?: () => Promise<WhatsAppHubWikiStats>;
+  /** Estado agregado del espejo de páginas, sin devolver las páginas. */
+  getWikiPagesStatus?: () => Promise<WhatsAppHubWikiPagesStatus>;
 }
 
 /** Códigos de fallo del conector — siempre con mensaje legible para la UI. */

@@ -40,8 +40,8 @@ interface TablePair {
   name: string;
   from: SQLiteTable;
   to: PgTable;
-  /** Columna PK (para el filtro de idempotencia). */
-  pk: string;
+  /** Columna PK o columnas de la PK compuesta (para idempotencia). */
+  pk: string | readonly string[];
   /** Columna por la que ordenar (auto-FKs: el padre es siempre anterior). */
   orderBy: string;
 }
@@ -60,6 +60,8 @@ export const TABLE_PAIRS: TablePair[] = [
   { name: "methodologies", from: lite.methodologies, to: pg.methodologies, pk: "id", orderBy: "created_at" },
   { name: "phase_modules", from: lite.phaseModules, to: pg.phaseModules, pk: "id", orderBy: "created_at" },
   { name: "tasks", from: lite.tasks, to: pg.tasks, pk: "id", orderBy: "created_at" },
+  { name: "task_assignees", from: lite.taskAssignees, to: pg.taskAssignees, pk: ["task_id", "person_id"], orderBy: "created_at" },
+  { name: "task_notification_log", from: lite.taskNotificationLog, to: pg.taskNotificationLog, pk: "id", orderBy: "created_at" },
   { name: "runs", from: lite.runs, to: pg.runs, pk: "id", orderBy: "created_at" },
   { name: "spans", from: lite.spans, to: pg.spans, pk: "id", orderBy: "started_at" },
   { name: "events", from: lite.events, to: pg.events, pk: "id", orderBy: "created_at" },
@@ -132,9 +134,9 @@ export async function copyAllTables(
     const rows = readAll(lite_, pair);
     const existing = await existingKeys(pg_, pair);
 
-    // La PK de la fila decodificada por Drizzle es `id` en 22 tablas y `key`
-    // en `app_config`; ambas son camelCase-idénticas a su nombre SQL.
-    const pending = rows.filter((r) => !existing.has(String(r[pair.pk])));
+    // La mayoría de PKs son `id` (y `key` en app_config); task_assignees usa
+    // una PK compuesta. `rowKey` mantiene ambos casos idempotentes.
+    const pending = rows.filter((r) => !existing.has(rowKey(r, pair.pk)));
     let inserted = 0;
 
     if (!opts.dryRun && pending.length > 0) {
@@ -179,7 +181,7 @@ export async function migrateSqliteToPostgres(
     if (opts.applySchema !== false && !opts.dryRun) {
       const caps = await runPgMigrations(target);
       log(
-        `Esquema : 23 tablas aplicadas · tsvector(${caps.textSearchConfig}) · ` +
+          `Esquema : 25 tablas aplicadas · tsvector(${caps.textSearchConfig}) · ` +
           (caps.vector ? `pgvector(${caps.embeddingDimensions})` : "sin pgvector"),
       );
     }
@@ -236,10 +238,22 @@ function readAll(db: AgentosDb, pair: TablePair): Record<string, unknown>[] {
 }
 
 async function existingKeys(db: AgentosPgDb, pair: TablePair): Promise<Set<string>> {
-  const rows = await db.execute<{ k: string }>(
-    sql`SELECT ${sql.raw(quoteIdent(pair.pk))} AS k FROM ${sql.raw(quoteIdent(pair.name))}`,
+  const columns = Array.isArray(pair.pk) ? pair.pk : [pair.pk];
+  const projection = columns.map(quoteIdent).join(", ");
+  const rows = await db.execute<Record<string, unknown>>(
+    sql`SELECT ${sql.raw(projection)} FROM ${sql.raw(quoteIdent(pair.name))}`,
   );
-  return new Set(rows.map((r) => String(r.k)));
+  return new Set(rows.map((r) => rowKey(r, pair.pk)));
+}
+
+function rowKey(row: Record<string, unknown>, pk: string | readonly string[]): string {
+  const columns = Array.isArray(pk) ? pk : [pk];
+  // JSON encoding keeps null, separators and numeric/text values unambiguous.
+  return JSON.stringify(columns.map((column) => row[column] ?? row[snakeToCamel(column)] ?? null));
+}
+
+function snakeToCamel(name: string): string {
+  return name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
 
 async function countRows(db: AgentosPgDb, table: string): Promise<number> {

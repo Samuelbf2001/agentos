@@ -25,6 +25,9 @@ import type {
   Project,
   Run,
   Task,
+  TaskDetailResponse,
+  TaskProjectContext,
+  BoardFilter,
   TaskEvent,
   TaskStatus,
   Thread,
@@ -48,6 +51,9 @@ export interface TaskDetail {
   events: TaskEvent[];
   artifacts: Artifact[];
   runs: Run[];
+  /** Franja contextual del proyecto; opcional para servidores anteriores. */
+  projectContext?: TaskProjectContext | null;
+  project?: Project | null;
 }
 
 /** Entregable en REVIEW esperando decisión humana (bandeja, CA-4.2 / fix H10). */
@@ -66,6 +72,9 @@ export interface AppStore extends EventState {
   // datos
   projects: Project[];
   activeProjectId: string | null;
+  people: Person[];
+  peopleLoading: boolean;
+  peopleError: string | null;
   threads: Thread[];
   approvals: Approval[];
   reviewTasks: ReviewEntry[];
@@ -75,6 +84,11 @@ export interface AppStore extends EventState {
   boardError: string | null;
   taskDetail: TaskDetail | null;
   taskDetailLoading: boolean;
+  taskDetailId: string | null;
+  taskDetailError: string | null;
+  taskMutationError: string | null;
+  taskSaving: boolean;
+  boardFilter: BoardFilter;
   chatSending: boolean;
 
   toasts: Toast[];
@@ -87,12 +101,27 @@ export interface AppStore extends EventState {
   dismissToast(id: number): void;
 
   loadProjects(): Promise<void>;
+  loadPeople(): Promise<void>;
   setActiveProject(projectId: string | null): Promise<void>;
+  setBoardFilter(filter: BoardFilter): void;
   refetchBoard(): Promise<void>;
   moveTaskOptimistic(taskId: string, to: TaskStatus): Promise<boolean>;
 
   openTask(taskId: string): Promise<void>;
+  retryTaskDetail(): Promise<void>;
   closeTask(): void;
+  updateTask(
+    taskId: string,
+    patch: {
+      due_at?: number | null;
+      title?: string;
+      description?: string | null;
+      definition_of_done?: string | null;
+      activity_type?: string | null;
+      priority?: Task["priority"];
+    },
+  ): Promise<boolean>;
+  assignTaskPeople(taskId: string, personIds: string[], primaryPersonId: string | null): Promise<boolean>;
   commentOnTask(taskId: string, body: string): Promise<void>;
   approveTaskReview(taskId: string, note?: string): Promise<void>;
   rejectTaskReview(taskId: string, note: string): Promise<void>;
@@ -134,6 +163,8 @@ export function getWs(): WsClient | null {
 }
 
 export const useStore = create<AppStore>()((set, get) => {
+  let taskDetailRequestSeq = 0;
+
   function runEffects(effects: Effect[]): void {
     for (const eff of effects) {
       switch (eff.kind) {
@@ -171,6 +202,31 @@ export const useStore = create<AppStore>()((set, get) => {
     } catch {
       /* la tarjeta puede haber sido borrada o no ser visible; el snapshot manda */
     }
+  }
+
+  function currentTask(taskId: string): Task | null {
+    const detail = get().taskDetail;
+    if (detail?.task.id === taskId) return detail.task;
+    return get().board.tasks[taskId] ?? null;
+  }
+
+  function mergeTask(updated: Task): void {
+    const state = get();
+    const inBoard = state.board.tasks[updated.id];
+    if (inBoard || updated.projectId === state.board.projectId) {
+      set({ board: { ...state.board, tasks: { ...state.board.tasks, [updated.id]: updated } } });
+    }
+    if (state.taskDetail?.task.id === updated.id) {
+      set({ taskDetail: { ...state.taskDetail, task: updated } });
+    }
+  }
+
+  function normalizeMutationError(err: unknown, fallback: string): string {
+    return err instanceof ApiError
+      ? `${err.code}: ${err.message}`
+      : err instanceof Error
+        ? err.message
+        : fallback;
   }
 
   function connectWs(token: string): void {
@@ -237,6 +293,9 @@ export const useStore = create<AppStore>()((set, get) => {
 
     projects: [],
     activeProjectId: null,
+    people: [],
+    peopleLoading: false,
+    peopleError: null,
     threads: [],
     approvals: [],
     reviewTasks: [],
@@ -246,6 +305,11 @@ export const useStore = create<AppStore>()((set, get) => {
     boardError: null,
     taskDetail: null,
     taskDetailLoading: false,
+    taskDetailId: null,
+    taskDetailError: null,
+    taskMutationError: null,
+    taskSaving: false,
+    boardFilter: "all",
     chatSending: false,
     toasts: [],
 
@@ -264,6 +328,7 @@ export const useStore = create<AppStore>()((set, get) => {
       set({ bootstrapped: true });
       await Promise.allSettled([
         get().loadProjects(),
+        get().loadPeople(),
         get().loadApprovals(),
         get().loadAgents(),
         get().loadKillSwitch(),
@@ -284,6 +349,7 @@ export const useStore = create<AppStore>()((set, get) => {
       connectWs(res.token);
       await Promise.allSettled([
         get().loadProjects(),
+        get().loadPeople(),
         get().loadApprovals(),
         get().loadAgents(),
         get().loadKillSwitch(),
@@ -304,11 +370,19 @@ export const useStore = create<AppStore>()((set, get) => {
         token: null,
         wsStatus: "closed",
         projects: [],
+        people: [],
+        peopleLoading: false,
+        peopleError: null,
         threads: [],
         approvals: [],
         reviewTasks: [],
         agents: [],
         taskDetail: null,
+        taskDetailId: null,
+        taskDetailError: null,
+        taskMutationError: null,
+        taskSaving: false,
+        boardFilter: "all",
         activeProjectId: null,
       });
     },
@@ -332,8 +406,30 @@ export const useStore = create<AppStore>()((set, get) => {
       }
     },
 
+    async loadPeople() {
+      set({ peopleLoading: true, peopleError: null });
+      try {
+        const { people } = await api.people();
+        set({ people, peopleLoading: false });
+      } catch (err) {
+        const message = normalizeMutationError(err, "No se pudo cargar el equipo");
+        set({ peopleLoading: false, peopleError: message });
+        // El roster es recuperable desde el drawer; no ocultamos el resto del tablero.
+      }
+    },
+
+    setBoardFilter(filter) {
+      set({ boardFilter: filter });
+    },
+
     async setActiveProject(projectId) {
-      set({ activeProjectId: projectId });
+      set({
+        activeProjectId: projectId,
+        taskDetail: null,
+        taskDetailId: null,
+        taskDetailError: null,
+        taskMutationError: null,
+      });
       try {
         if (projectId) localStorage.setItem("agentos_project", projectId);
       } catch {
@@ -413,18 +509,93 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     async openTask(taskId) {
-      set({ taskDetailLoading: true });
+      const requestSeq = ++taskDetailRequestSeq;
+      set({
+        taskDetailId: taskId,
+        taskDetailLoading: true,
+        taskDetailError: null,
+        taskMutationError: null,
+        taskDetail: null,
+      });
       try {
-        const detail = await api.task(taskId);
-        set({ taskDetail: detail, taskDetailLoading: false });
+        const detail = (await api.task(taskId)) as TaskDetailResponse;
+        if (requestSeq !== taskDetailRequestSeq) return;
+        const normalized: TaskDetail = {
+          task: detail.task,
+          events: detail.events,
+          artifacts: detail.artifacts,
+          runs: detail.runs,
+          projectContext: detail.projectContext ?? detail.project_context ?? detail.context ?? undefined,
+          project: detail.project ?? undefined,
+        };
+        set({ taskDetail: normalized, taskDetailLoading: false, taskDetailError: null });
+        mergeTask(normalized.task);
       } catch (err) {
-        set({ taskDetailLoading: false });
+        if (requestSeq !== taskDetailRequestSeq) return;
+        const message = normalizeMutationError(err, "No se pudo abrir la tarjeta");
+        set({ taskDetailLoading: false, taskDetailError: message });
         toastError(err, "No se pudo abrir la tarjeta");
       }
     },
 
+    async retryTaskDetail() {
+      const taskId = get().taskDetailId;
+      if (taskId) await get().openTask(taskId);
+    },
+
     closeTask() {
-      set({ taskDetail: null });
+      taskDetailRequestSeq += 1;
+      set({ taskDetail: null, taskDetailId: null, taskDetailLoading: false, taskDetailError: null, taskMutationError: null, taskSaving: false });
+    },
+
+    async updateTask(taskId, patch) {
+      const current = currentTask(taskId);
+      if (!current) return false;
+      set({ taskSaving: true, taskMutationError: null });
+      try {
+        const { task } = await api.updateTask(taskId, {
+          ...patch,
+          expected_version: current.version,
+        });
+        mergeTask(task);
+        get().pushToast("ok", "Cambios de tarea guardados");
+        return true;
+      } catch (err) {
+        const message = normalizeMutationError(err, "No se pudieron guardar los cambios");
+        set({ taskMutationError: message });
+        toastError(err, "No se pudieron guardar los cambios");
+        return false;
+      } finally {
+        set({ taskSaving: false });
+      }
+    },
+
+    async assignTaskPeople(taskId, personIds, primaryPersonId) {
+      const current = currentTask(taskId);
+      if (!current) return false;
+      const uniqueIds = [...new Set(personIds.filter(Boolean))];
+      const primary = primaryPersonId && uniqueIds.includes(primaryPersonId) ? primaryPersonId : uniqueIds[0] ?? null;
+      set({ taskSaving: true, taskMutationError: null });
+      try {
+        const result = await api.assignTask(taskId, {
+          expected_version: current.version,
+          assignee_person_ids: uniqueIds,
+          primary_assignee_person_id: primary,
+        });
+        const task = result.assignees && !result.task.assignees
+          ? { ...result.task, assignees: result.assignees }
+          : result.task;
+        mergeTask(task);
+        get().pushToast("ok", "Responsables actualizados");
+        return true;
+      } catch (err) {
+        const message = normalizeMutationError(err, "No se pudieron actualizar los responsables");
+        set({ taskMutationError: message });
+        toastError(err, "No se pudieron actualizar los responsables");
+        return false;
+      } finally {
+        set({ taskSaving: false });
+      }
     },
 
     async commentOnTask(taskId, body) {

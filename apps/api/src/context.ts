@@ -8,6 +8,7 @@ import {
   closeDb,
   countDomainTables,
   openDb,
+  type DbDriver,
   runMigrations,
   seed,
   type AgentosDb,
@@ -26,6 +27,11 @@ import { busSink, createBus } from "./bus-bridge.js";
 import { createAuthService, type AuthService } from "./auth.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { recoverOnBoot, type RecoveryReport } from "./recovery.js";
+import {
+  createNotificationProcessor,
+  type NotificationDelivery,
+  type NotificationProcessor,
+} from "./notifications.js";
 
 export const API_VERSION = "0.1.0";
 export const DEFAULT_PORT = 4300;
@@ -34,6 +40,10 @@ export const DEFAULT_WEB_ORIGIN = "http://localhost:4301";
 export interface ApiOptions {
   /** Ruta de la DB (default: env AGENTOS_DB_PATH o ./data/agentos.db). */
   dbPath?: string;
+  /** Backend explícito; por defecto se resuelve desde AGENTOS_DB_DRIVER (sqlite). */
+  dbDriver?: DbDriver;
+  /** URL PG explícita para el runtime asíncrono (por defecto AGENTOS_PG_URL). */
+  pgUrl?: string;
   /** Aplica seeds al arrancar (default true; los seeds son idempotentes). */
   seedOnBoot?: boolean;
   /** Contraseña compartida (default: env AGENTOS_SHARED_PASSWORD). */
@@ -47,6 +57,10 @@ export interface ApiOptions {
   autoStartLoops?: boolean;
   /** Conector WhatsAppHub inyectable (tests: SIEMPRE mock; jamás red real en tests). */
   whatsappHub?: WhatsAppHubConnector;
+  /** Adaptador de avisos; por defecto queda apagado y no toca la red. */
+  notificationDelivery?: NotificationDelivery;
+  /** Reloj inyectable para tests de ventana 24h y deduplicación. */
+  notificationNow?: () => number;
   dispatchIntervalMs?: number;
   reaperIntervalMs?: number;
   leaseMs?: number;
@@ -63,6 +77,8 @@ export interface ApiContext {
   toolRuntime: ToolRuntime;
   /** Conector 2brain/WhatsAppHub (Fuentes del proyecto). */
   whatsappHub: WhatsAppHubConnector;
+  /** Procesador de los únicos avisos permitidos por el MVP. */
+  notifications: NotificationProcessor;
   pool: RunnerPool;
   dispatcher: Dispatcher;
   auth: AuthService;
@@ -97,8 +113,26 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
   // El conector WhatsAppHub (Fuentes del proyecto) se inyecta al gateway para
   // que la tool sources.ingest use el MISMO cliente que las rutas REST.
   const whatsappHub = options.whatsappHub ?? createWhatsAppHubConnector();
+  const notifications = createNotificationProcessor({
+    db,
+    ...(options.notificationDelivery ? { delivery: options.notificationDelivery } : {}),
+    ...(options.notificationNow ? { now: options.notificationNow } : {}),
+  });
   const engine = createBoardEngine({ db, sink, ...(options.leaseMs ? { leaseMs: options.leaseMs } : {}) });
-  const toolRuntime = createToolRuntime({ db, sink, engine, whatsappHub });
+  const toolRuntime = createToolRuntime({
+    db,
+    sink,
+    engine,
+    whatsappHub,
+    notifyAssignment: (input) =>
+      notifications.notifyAssignment({
+        task: input.task,
+        beforePersonIds: input.beforePersonIds,
+        beforePrimaryPersonId: input.beforePrimaryPersonId,
+        afterAssignees: input.afterAssignees,
+        actor: input.actor,
+      }),
+  });
 
   // 4) Recuperación al arrancar (NFR-4) ANTES de despachar nada.
   const recovery = recoverOnBoot(db, engine);
@@ -148,6 +182,7 @@ export function createApiContext(options: ApiOptions = {}): ApiContext {
     engine,
     toolRuntime,
     whatsappHub,
+    notifications,
     pool,
     dispatcher,
     auth,

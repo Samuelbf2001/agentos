@@ -53,7 +53,7 @@ $env:AGENTOS_PG_URL = "postgres://agentos:agentos@localhost:55432/agentos"
 pnpm --filter @agentos/db migrate:pg
 ```
 
-`migrate:pg` aplica las 23 tablas **y** deja listas las estructuras de búsqueda
+`migrate:pg` aplica las 25 tablas **y** deja listas las estructuras de búsqueda
 (tsvector + pgvector). Imprime qué quedó disponible:
 
 ```
@@ -146,7 +146,7 @@ pnpm --filter @agentos/db migrate-to-pg --embed            # vectoriza al termin
 
 Lo que garantiza:
 
-- **Orden topológico**: las 23 tablas se copian en un orden en el que ninguna FK
+- **Orden topológico**: las 25 tablas se copian en un orden en el que ninguna FK
   apunta a algo que aún no existe. Las auto-FKs (`tasks.parent_task_id`,
   `runs.parent_run_id`, `agents.reports_to`, `module_launches.previous_launch_id`)
   se resuelven ordenando por fecha de creación dentro de cada tabla.
@@ -158,12 +158,12 @@ Lo que garantiza:
   estructuralmente idénticos; hay un test que lo fija).
 - **No toca el origen**: la SQLite se abre y se cierra sin escribir.
 
-Informe real de la `agentos.db` de desarrollo (558 filas, 23 tablas):
+Informe real de la `agentos.db` de desarrollo (558 filas, 25 tablas):
 
 ```
 Origen  : …\data\agentos.db
 Destino : postgres://agentos:***@localhost:55432/agentos_real
-Esquema : 23 tablas aplicadas · tsvector(spanish) · pgvector(1536)
+Esquema : 25 tablas aplicadas · tsvector(spanish) · pgvector(1536)
 Copiando (orden topológico):
   organizations        origen=     3  insertadas=     3  ya estaban=     0  destino=     3
   …
@@ -185,7 +185,7 @@ Total: 558 filas insertadas de 558 en origen (795 ms). Integridad: OK ✓
 
 | | |
 |---|---|
-| **Las 23 tablas** | Mismos nombres de tabla, columna, índice y índice único. Incluido el **único parcial** `uq_phase_modules_slug_active` (Postgres lo soporta nativo). |
+| **Las 25 tablas** | Mismos nombres de tabla, columna, índice y índice único. Incluido el **único parcial** `uq_phase_modules_slug_active` (Postgres lo soporta nativo). |
 | **Las convenciones de §5** | `id` TEXT uuidv7 (generado en JS, nunca en SQL), `*_at` epoch ms, JSON estructurado, `version` para optimistic locking. |
 | **El claim atómico** | `UPDATE … WHERE status='READY' AND (lease vencido o nulo)` es atómico por fila en Postgres igual que en SQLite. `changes=0` se traduce a `RETURNING id` vacío. Verificado con 8 clientes concurrentes: gana exactamente uno y `attempts` sube **una** vez. |
 | **`expected_version`** | Idéntico: conflicto → `version_conflict`, nunca last-write-wins. |
@@ -252,7 +252,7 @@ pnpm --filter @agentos/db test
 ```
 
 - `test/pg-portability.test.ts` — corre **siempre**, sin Postgres: equivalencia
-  de esquema (23 tablas en ambos motores), orden topológico de la copia,
+  de esquema (25 tablas en ambos motores), orden topológico de la copia,
   equivalencia de **tipos** en tiempo de compilación, resolución de driver,
   detección del pooler de Supabase, redacción de contraseñas y el proveedor de
   embeddings (mock determinista, degradación sin key).

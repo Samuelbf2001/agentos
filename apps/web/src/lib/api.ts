@@ -8,6 +8,7 @@ import type {
   AppConfigRow,
   Approval,
   Artifact,
+  BrainOverview,
   KnowledgeDoc,
   LaunchReceipt,
   LaunchResponse,
@@ -24,18 +25,32 @@ import type {
   ProjectSourceExternalRef,
   ProjectSourceKind,
   SourceBrowseItem,
+  MeetingProcessingFilter,
+  MeetingProcessingOverview,
   Run,
   Span,
   Stage,
+  TaskAssignee,
+  TaskAssigneePerson,
+  TaskDetailResponse,
   Task,
   TaskEvent,
   TaskStatus,
   Thread,
 } from "./types";
 
-export const API_BASE: string =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_AGENTOS_API_URL) ||
-  "http://localhost:4300";
+const configuredApiBase =
+  typeof import.meta !== "undefined" ? import.meta.env?.VITE_AGENTOS_API_URL : undefined;
+
+// Desarrollo conserva la API local directa. La imagen de producción usa el
+// mismo origen y el proxy interno de Nginx para que la URL de PostgreSQL/API
+// jamás llegue al navegador.
+const defaultApiBase =
+  typeof window !== "undefined" && import.meta.env.PROD
+    ? window.location.origin
+    : "http://localhost:4300";
+
+export const API_BASE: string = configuredApiBase || defaultApiBase;
 
 export function wsUrl(token: string): string {
   const base = API_BASE.replace(/^http/, "ws");
@@ -90,6 +105,68 @@ export function clearSession(): void {
 let currentToken: string | null = null;
 export function setToken(token: string | null): void {
   currentToken = token;
+}
+
+type WireTask = Task & {
+  assignees?: TaskAssignee[] | null;
+  assignee_person_id?: string | null;
+  due_at?: number | null;
+};
+
+function normalizeAssignee(assignee: TaskAssignee): TaskAssignee {
+  const person = assignee.person as (TaskAssigneePerson & { fullName?: string }) | null | undefined;
+  if (!person) return assignee;
+  const fullName = person.full_name ?? person.fullName;
+  return {
+    ...assignee,
+    person: fullName
+      ? { ...person, full_name: fullName, fullName }
+      : person,
+  };
+}
+
+/**
+ * Normaliza únicamente aliases de transporte. No rellena personas ni fechas:
+ * la UI debe distinguir "sin dato" de un valor inventado.
+ */
+export function normalizeTask(task: WireTask): Task {
+  const next = { ...task } as Task;
+  if (next.assignees) next.assignees = next.assignees.map(normalizeAssignee);
+  if (next.assignees === undefined && task.assignees !== undefined && task.assignees !== null) {
+    next.assignees = task.assignees;
+  }
+  if (next.dueAt === undefined && task.due_at !== undefined) next.dueAt = task.due_at;
+  if (next.assigneePersonId === undefined && task.assignee_person_id !== undefined) {
+    next.assigneePersonId = task.assignee_person_id;
+  }
+  if (next.assigneePersonId === undefined || next.assigneePersonId === null) {
+    const primary = (next.assignees ?? []).find((a) => a.isPrimary ?? a.is_primary);
+    if (primary) next.assigneePersonId = primary.personId ?? primary.person_id ?? primary.person?.id ?? null;
+  }
+  return next;
+}
+
+function normalizeTaskDetail(raw: TaskDetailResponse): TaskDetailResponse {
+  const response = {
+    ...raw,
+    task: normalizeTask({
+      ...(raw.task as WireTask),
+      ...(raw.assignees && !raw.task.assignees ? { assignees: raw.assignees } : {}),
+    }),
+  };
+  const context = raw.projectContext ?? raw.project_context ?? raw.context;
+  const topLevelSources = raw.sources;
+  const topLevelDocuments = raw.documents ?? raw.knowledge_docs;
+  if (context || topLevelSources || topLevelDocuments || raw.project) {
+    const sourceContext = context ?? {};
+    response.projectContext = {
+      ...sourceContext,
+      project: sourceContext.project ?? raw.project ?? null,
+      sources: sourceContext.sources ?? sourceContext.project_sources ?? topLevelSources ?? [],
+      documents: sourceContext.documents ?? sourceContext.knowledge_docs ?? topLevelDocuments ?? [],
+    };
+  }
+  return response;
 }
 
 /** Hook para 401: la shell lo usa para volver al login. */
@@ -152,6 +229,7 @@ export const api = {
       kill_switch: boolean;
       counts: Record<string, number>;
     }>("/api/health"),
+  brainOverview: () => request<BrainOverview>("/api/brain/overview"),
 
   // ── Projects / board ──────────────────────────────────────────────────────
   projects: () => request<{ projects: Project[] }>("/api/projects"),
@@ -170,10 +248,22 @@ export const api = {
     }),
 
   // ── Tasks ─────────────────────────────────────────────────────────────────
+  tasks: async (q: {
+    project_id?: string;
+    status?: TaskStatus;
+    assignee_person_id?: string;
+    assignee_agent_id?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(q)) {
+      if (value !== undefined && value !== "") params.set(key, String(value));
+    }
+    const query = params.toString();
+    const result = await request<{ tasks: Task[] }>(`/api/tasks${query ? `?${query}` : ""}`);
+    return { ...result, tasks: result.tasks.map((task) => normalizeTask(task as WireTask)) };
+  },
   task: (id: string) =>
-    request<{ task: Task; events: TaskEvent[]; artifacts: Artifact[]; runs: Run[] }>(
-      `/api/tasks/${id}`,
-    ),
+    request<TaskDetailResponse>(`/api/tasks/${id}`).then(normalizeTaskDetail),
   moveTask: (
     id: string,
     body: { to: TaskStatus; expected_version: number; note?: string; blocked_reason?: string },
@@ -190,6 +280,86 @@ export const api = {
       method: "POST",
       body: { expected_version: expectedVersion, note },
     }),
+  updateTask: (
+    id: string,
+    body: {
+      expected_version: number;
+      title?: string;
+      description?: string | null;
+      definition_of_done?: string | null;
+      activity_type?: string | null;
+      priority?: Task["priority"];
+      due_at?: number | null;
+    },
+  ) =>
+    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}`, {
+      method: "PATCH",
+      body,
+    }).then((result) => ({
+      ...result,
+      task: normalizeTask({
+        ...(result.task as WireTask),
+        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
+      }),
+    })),
+  /** Alias explícito para callers que nombran la mutación por verbo HTTP. */
+  patchTask: (
+    id: string,
+    body: {
+      expected_version: number;
+      title?: string;
+      description?: string | null;
+      definition_of_done?: string | null;
+      activity_type?: string | null;
+      priority?: Task["priority"];
+      due_at?: number | null;
+    },
+  ) =>
+    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}`, {
+      method: "PATCH",
+      body,
+    }).then((result) => ({
+      ...result,
+      task: normalizeTask({
+        ...(result.task as WireTask),
+        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
+      }),
+    })),
+  assignTask: (
+    id: string,
+    body: {
+      expected_version: number;
+      assignee_person_ids: string[];
+      primary_assignee_person_id?: string | null;
+      /** Optional: kept separate from people; the UI does not edit it. */
+      agent_slug?: string | null;
+    },
+  ) =>
+    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/assign`, {
+      method: "POST",
+      body,
+    }).then((result) => ({
+      ...result,
+      task: normalizeTask({
+        ...(result.task as WireTask),
+        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
+      }),
+    })),
+  /** Nombre de dominio alternativo usado por algunos consumidores del módulo. */
+  assignPeople: (
+    id: string,
+    body: { expected_version: number; assignee_person_ids: string[]; primary_assignee_person_id?: string | null },
+  ) =>
+    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/assign`, {
+      method: "POST",
+      body,
+    }).then((result) => ({
+      ...result,
+      task: normalizeTask({
+        ...(result.task as WireTask),
+        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
+      }),
+    })),
   createTask: (body: {
     project_id: string;
     title: string;
@@ -197,6 +367,9 @@ export const api = {
     description?: string;
     definition_of_done?: string;
     assignee_agent_slug?: string;
+    assignee_person_ids?: string[];
+    primary_assignee_person_id?: string | null;
+    due_at?: number | null;
   }) => request<{ task: Task }>("/api/tasks", { method: "POST", body }),
 
   // ── Runs ──────────────────────────────────────────────────────────────────
@@ -330,6 +503,10 @@ export const api = {
       total: number | null;
       has_more: boolean;
     }>(`/api/sources/browse?${params.toString()}`);
+  },
+  meetingProcessing: (status: MeetingProcessingFilter = "all", page = 1) => {
+    const params = new URLSearchParams({ status, page: String(page) });
+    return request<MeetingProcessingOverview>(`/api/meetings/processing?${params.toString()}`);
   },
 };
 

@@ -14,9 +14,20 @@ export { recoverOnBoot, type RecoveryReport } from "./recovery.js";
 export { createBus, busSink, publishRaw, domainPayload } from "./bus-bridge.js";
 export { bindDomainTools, claudeCodeAllowlist } from "./domain-tools.js";
 export { createAuthService, extractToken, type Session } from "./auth.js";
+export {
+  createNotificationProcessor,
+  createEmailDeliveryFromEnv,
+  type EmailMessage,
+  type NotificationDelivery,
+  type NotificationProcessor,
+  type NotificationDispatchResult,
+} from "./notifications.js";
 
 async function main(): Promise<void> {
   const port = Number(process.env.AGENTOS_API_PORT ?? DEFAULT_PORT);
+  // En local mantiene loopback; los contenedores declaran explícitamente 0.0.0.0
+  // para que el proxy interno de EasyPanel pueda alcanzar la API.
+  const host = process.env.AGENTOS_API_HOST ?? "127.0.0.1";
   // AGENTOS_DISPATCHER_DISABLED=1 → API viva sin bucles (diagnóstico/smoke:
   // el canal chat sigue encolando runs, pero el tablero no despacha solo).
   const loopsDisabled =
@@ -32,13 +43,13 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-  await app.listen({ port, host: "127.0.0.1" });
+  await app.listen({ port, host });
   app.log.info(
     {
       recovery: ctx.recovery,
       killSwitch: ctx.engine.isKillSwitchActive(),
     },
-    `AgentOS API escuchando en http://127.0.0.1:${port}`,
+    `AgentOS API escuchando en http://${host}:${port}`,
   );
 }
 

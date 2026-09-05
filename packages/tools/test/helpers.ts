@@ -40,6 +40,8 @@ export const ALEX_ALLOWLIST = [
   "tasks.attach_artifact",
   "tasks.list",
   "tasks.get",
+  "tasks.assign_people",
+  "tasks.set_due_date",
   "board.get",
   "projects.get",
   "projects.update",

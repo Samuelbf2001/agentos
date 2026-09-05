@@ -19,8 +19,10 @@ import {
   getAgentBySlug,
   getProject,
   getTask,
+  listDocs,
   listArtifacts,
   listProjects,
+  listProjectSources,
   listRunsForTask,
   listTaskEvents,
   listTasks,
@@ -32,6 +34,31 @@ import {
 import { GATE_G1_PLAN } from "@agentos/core";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
+import {
+  listTaskAssignees,
+  listTasksWithAssignees,
+  normalizePersonIds,
+  replaceTaskAssignees,
+  taskWithAssignees,
+  validatePeopleForProject,
+} from "../task-contract.js";
+
+/** Epoch ms is canonical in SQLite/PG; accepting ISO keeps REST ergonomic. */
+const DueAt = z.preprocess(
+  (value) => {
+    if (value === null || value === undefined || typeof value === "number") return value;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return value;
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) return numeric;
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return value;
+  },
+  z.number().int().nonnegative().nullable().optional(),
+);
 
 const CreateProjectBody = z.object({
   org_id: z.string().min(1),
@@ -64,6 +91,9 @@ const CreateTaskBody = z.object({
   priority: TaskPriority.optional(),
   assignee_agent_slug: z.string().optional(),
   assignee_person_id: z.string().optional(),
+  assignee_person_ids: z.array(z.string().min(1)).max(100).optional(),
+  primary_assignee_person_id: z.string().min(1).nullable().optional(),
+  due_at: DueAt,
   parent_task_id: z.string().optional(),
   external_effect: z.boolean().optional(),
   requires_approval: z.boolean().optional(),
@@ -76,6 +106,7 @@ const UpdateTaskBody = z.object({
   definition_of_done: z.string().nullable().optional(),
   activity_type: z.string().nullable().optional(),
   priority: TaskPriority.optional(),
+  due_at: DueAt,
 });
 
 const MoveTaskBody = z.object({
@@ -90,6 +121,9 @@ const CommentBody = z.object({ body: z.string().min(1) });
 const AssignBody = z.object({
   expected_version: z.number().int().positive(),
   agent_slug: z.string().nullable().optional(),
+  assignee_person_ids: z.array(z.string().min(1)).max(100).optional(),
+  primary_assignee_person_id: z.string().min(1).nullable().optional(),
+  /** Entrada singular histórica; se transforma en una lista de una persona. */
   person_id: z.string().nullable().optional(),
 });
 
@@ -209,7 +243,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const { projectId } = req.params as { projectId: string };
     const project = getProject(db, projectId);
     if (!project) throw errors.notFound("project", projectId);
-    const rows = boardTasks(db, projectId);
+    const rows = listTasksWithAssignees(db, { projectId });
     const columns: Partial<Record<TaskStatusT, Task[]>> = {};
     const cells: Record<string, Partial<Record<TaskStatusT, Task[]>>> = {};
     for (const t of rows) {
@@ -228,13 +262,22 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
   // ── Tasks ─────────────────────────────────────────────────────────────────
 
   app.get("/api/tasks", async (req) => {
-    const q = req.query as { project_id?: string; status?: string; assignee_agent_id?: string };
+    const q = parse(
+      z.object({
+        project_id: z.string().min(1).optional(),
+        status: z.string().optional(),
+        assignee_agent_id: z.string().min(1).optional(),
+        assignee_person_id: z.string().min(1).optional(),
+      }),
+      req.query,
+    );
     const status = q.status ? parse(TaskStatus, q.status) : undefined;
     return {
-      tasks: listTasks(db, {
+      tasks: listTasksWithAssignees(db, {
         ...(q.project_id ? { projectId: q.project_id } : {}),
         ...(status ? { status } : {}),
         ...(q.assignee_agent_id ? { assigneeAgentId: q.assignee_agent_id } : {}),
+        ...(q.assignee_person_id ? { assigneePersonId: q.assignee_person_id } : {}),
       }),
     };
   });
@@ -243,16 +286,43 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const { id } = req.params as { id: string };
     const task = getTask(db, id);
     if (!task) throw errors.notFound("task", id);
+    const project = getProject(db, task.projectId);
+    if (!project) throw errors.notFound("project", task.projectId);
+    const assigneeTask = taskWithAssignees(db, task);
+    const projectSources = listProjectSources(db, { projectId: project.id });
+    const knowledgeDocs = listDocs(db, { projectId: project.id });
     return {
-      task,
+      task: assigneeTask,
+      project,
+      assignees: assigneeTask.assignees,
       events: listTaskEvents(db, id),
       artifacts: listArtifacts(db, id),
       runs: listRunsForTask(db, id),
+      /** Referencias existentes: no se copian ni se indexan archivos aquí. */
+      project_sources: projectSources,
+      sources: projectSources,
+      knowledge_docs: knowledgeDocs,
+      documents: knowledgeDocs,
     };
   });
 
   app.post("/api/tasks", async (req, reply) => {
     const body = parse(CreateTaskBody, req.body);
+    const project = getProject(db, body.project_id);
+    if (!project) throw errors.notFound("project", body.project_id);
+    const selection = normalizePersonIds(
+      body.assignee_person_ids !== undefined
+        ? body.assignee_person_ids
+        : body.assignee_person_id
+          ? [body.assignee_person_id]
+          : [],
+      body.primary_assignee_person_id !== undefined
+        ? body.primary_assignee_person_id
+        : body.assignee_person_ids !== undefined
+          ? null
+          : body.assignee_person_id ?? null,
+    );
+    validatePeopleForProject(db, project, selection.personIds, selection.primaryPersonId);
     let assigneeAgentId: string | null = null;
     if (body.assignee_agent_slug) {
       const agent = getAgentBySlug(db, body.assignee_agent_slug);
@@ -269,20 +339,69 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         activityType: body.activity_type ?? null,
         priority: body.priority ?? "normal",
         assigneeAgentId,
-        assigneePersonId: body.assignee_person_id ?? null,
+        assigneePersonId: selection.primaryPersonId,
         parentTaskId: body.parent_task_id ?? null,
         ...(body.external_effect !== undefined ? { externalEffect: body.external_effect } : {}),
         ...(body.requires_approval !== undefined ? { requiresApproval: body.requires_approval } : {}),
       },
       { actor: personActor(req) },
     );
+    let savedTask = task;
+    if (body.due_at !== undefined && body.due_at !== null) {
+      savedTask = updateTask(db, task.id, { dueAt: body.due_at }, savedTask.version);
+    } else if (body.due_at === null) {
+      savedTask = updateTask(db, task.id, { dueAt: null }, savedTask.version);
+    }
+    if (selection.personIds.length > 0) {
+      const assigned = replaceTaskAssignees(db, {
+        taskId: savedTask.id,
+        personIds: selection.personIds,
+        primaryPersonId: selection.primaryPersonId,
+        assignedBy: personActor(req),
+        expectedVersion: savedTask.version,
+      });
+      savedTask = assigned.task;
+      // La tarea es nueva: aunque BoardEngine haya materializado la persona
+      // primaria legacy durante createTask, para avisos la asignación completa
+      // es un cambio real y se registra una sola vez por persona.
+      if (selection.personIds.length > 0) {
+        appendTaskEvent(db, {
+          taskId: savedTask.id,
+          kind: "assigned",
+          actor: personActor(req),
+          payload: {
+            beforePersonIds: [],
+            afterPersonIds: selection.personIds,
+            primaryPersonId: selection.primaryPersonId,
+          },
+        });
+        appendAudit(db, {
+          actor: personActor(req),
+          source: "ui",
+          action: "task.assign",
+          entityType: "task",
+          entityId: savedTask.id,
+          before: { assigneePersonIds: [], primaryAssigneePersonId: null },
+          after: { assigneePersonIds: selection.personIds, primaryAssigneePersonId: selection.primaryPersonId },
+        });
+        await ctx.notifications.notifyAssignment({
+          task: savedTask,
+          beforePersonIds: [],
+          afterAssignees: assigned.assignees,
+          actor: personActor(req),
+          beforePrimaryPersonId: null,
+        });
+      }
+    }
     reply.status(201);
-    return { task };
+    return { task: taskWithAssignees(db, savedTask) };
   });
 
   app.patch("/api/tasks/:id", async (req) => {
     const { id } = req.params as { id: string };
     const body = parse(UpdateTaskBody, req.body);
+    const before = getTask(db, id);
+    if (!before) throw errors.notFound("task", id);
     const task = updateTask(
       db,
       id,
@@ -292,10 +411,20 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         ...(body.definition_of_done !== undefined ? { definitionOfDone: body.definition_of_done } : {}),
         ...(body.activity_type !== undefined ? { activityType: body.activity_type } : {}),
         ...(body.priority !== undefined ? { priority: body.priority } : {}),
+        ...(body.due_at !== undefined ? { dueAt: body.due_at } : {}),
       },
       body.expected_version,
     );
-    return { task };
+    appendAudit(db, {
+      actor: personActor(req),
+      source: "ui",
+      action: "task.update",
+      entityType: "task",
+      entityId: id,
+      before: { title: before.title, dueAt: before.dueAt },
+      after: { title: task.title, dueAt: task.dueAt },
+    });
+    return { task: taskWithAssignees(db, task) };
   });
 
   app.post("/api/tasks/:id/move", async (req) => {
@@ -336,6 +465,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(AssignBody, req.body);
     const before = getTask(db, id);
     if (!before) throw errors.notFound("task", id);
+    const beforeAssignees = listTaskAssignees(db, id);
     let assigneeAgentId: string | null | undefined;
     if (body.agent_slug !== undefined) {
       if (body.agent_slug === null) assigneeAgentId = null;
@@ -345,26 +475,114 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
         assigneeAgentId = agent.id;
       }
     }
-    const task = updateTask(
-      db,
-      id,
-      {
-        ...(assigneeAgentId !== undefined ? { assigneeAgentId } : {}),
-        ...(body.person_id !== undefined ? { assigneePersonId: body.person_id } : {}),
-      },
-      body.expected_version,
-    );
-    appendTaskEvent(db, {
-      taskId: id,
-      kind: "assigned",
-      actor: personActor(req),
-      payload: { agentSlug: body.agent_slug ?? null, personId: body.person_id ?? null },
-    });
-    sink.publish(`board:${task.projectId}`, {
-      type: "task.assigned",
-      payload: { taskId: id, actor: personActor(req) },
-    });
-    return { task };
+    const humanSelectionProvided =
+      body.assignee_person_ids !== undefined ||
+      body.primary_assignee_person_id !== undefined ||
+      body.person_id !== undefined;
+    let task = before;
+    let assignmentChanged = false;
+    let afterAssignees = beforeAssignees;
+
+    // La entrada singular se conserva sólo como compatibilidad; cuando llega
+    // la lista nueva, ésta es la autoridad y no se mezclan ambos contratos.
+    if (humanSelectionProvided) {
+      const personIds =
+        body.assignee_person_ids !== undefined
+          ? body.assignee_person_ids
+          : body.person_id
+            ? [body.person_id]
+            : [];
+      const primary =
+        body.primary_assignee_person_id !== undefined
+          ? body.primary_assignee_person_id
+          : body.assignee_person_ids !== undefined
+            ? null
+            : body.person_id ?? null;
+      const selection = normalizePersonIds(personIds, primary);
+      const project = getProject(db, before.projectId);
+      if (!project) throw errors.notFound("project", before.projectId);
+      validatePeopleForProject(db, project, selection.personIds, selection.primaryPersonId);
+
+      // Si también cambia el agente, primero se actualiza su proyección y se
+      // usa la versión resultante para el reemplazo humano. Ambos guards son
+      // optimistic-locking; una carrera siempre devuelve conflicto.
+      if (assigneeAgentId !== undefined) {
+        task = updateTask(db, id, { assigneeAgentId }, body.expected_version);
+        const assigned = replaceTaskAssignees(db, {
+          taskId: id,
+          personIds: selection.personIds,
+          primaryPersonId: selection.primaryPersonId,
+          assignedBy: personActor(req),
+          expectedVersion: task.version,
+        });
+        task = assigned.task;
+        afterAssignees = assigned.assignees;
+        assignmentChanged = assigned.changed;
+      } else {
+        const assigned = replaceTaskAssignees(db, {
+          taskId: id,
+          personIds: selection.personIds,
+          primaryPersonId: selection.primaryPersonId,
+          assignedBy: personActor(req),
+          expectedVersion: body.expected_version,
+        });
+        task = assigned.task;
+        afterAssignees = assigned.assignees;
+        assignmentChanged = assigned.changed;
+      }
+    } else {
+      task = updateTask(
+        db,
+        id,
+        { ...(assigneeAgentId !== undefined ? { assigneeAgentId } : {}) },
+        body.expected_version,
+      );
+    }
+
+    if (humanSelectionProvided || assigneeAgentId !== undefined) {
+      appendTaskEvent(db, {
+        taskId: id,
+        kind: "assigned",
+        actor: personActor(req),
+        payload: {
+          agentSlug: body.agent_slug ?? null,
+          beforePersonIds: beforeAssignees.map((row) => row.personId),
+          afterPersonIds: afterAssignees.map((row) => row.personId),
+          primaryPersonId: afterAssignees.find((row) => row.isPrimary)?.personId ?? null,
+        },
+      });
+      appendAudit(db, {
+        actor: personActor(req),
+        source: "ui",
+        action: "task.assign",
+        entityType: "task",
+        entityId: id,
+        before: {
+          assigneeAgentId: before.assigneeAgentId,
+          assigneePersonIds: beforeAssignees.map((row) => row.personId),
+          primaryAssigneePersonId: beforeAssignees.find((row) => row.isPrimary)?.personId ?? null,
+        },
+        after: {
+          assigneeAgentId: task.assigneeAgentId,
+          assigneePersonIds: afterAssignees.map((row) => row.personId),
+          primaryAssigneePersonId: afterAssignees.find((row) => row.isPrimary)?.personId ?? null,
+        },
+      });
+      sink.publish(`board:${task.projectId}`, {
+        type: "task.assigned",
+        payload: { taskId: id, actor: personActor(req) },
+      });
+    }
+    if (assignmentChanged) {
+      await ctx.notifications.notifyAssignment({
+        task,
+        beforePersonIds: beforeAssignees.map((row) => row.personId),
+        afterAssignees,
+        actor: personActor(req),
+        beforePrimaryPersonId: beforeAssignees.find((row) => row.isPrimary)?.personId ?? null,
+      });
+    }
+    return { task: taskWithAssignees(db, task), assignees: afterAssignees };
   });
 
   app.post("/api/tasks/:id/artifacts", async (req, reply) => {

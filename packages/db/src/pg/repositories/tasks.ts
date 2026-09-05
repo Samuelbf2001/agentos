@@ -3,17 +3,34 @@ import { and, asc, eq, isNotNull, isNull, lt, notInArray, or, sql } from "drizzl
 import { errors, newId, nowMs, type TaskStatus } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
 import { artifacts, taskEvents, tasks } from "../schema-pg.js";
-import type { Artifact, NewArtifact, NewTask, NewTaskEvent, Task, TaskEvent } from "../types-pg.js";
+import {
+  insertTaskAssigneeRows,
+  normalizeNewTaskAssignees,
+  synchronizeTaskAssignees,
+  validateTaskAssigneeOrganization,
+} from "./task-assignees.js";
+import type { Artifact, NewArtifact, NewTask, NewTaskEvent, Task, TaskCreateInput, TaskEvent } from "../types-pg.js";
 
 // ── CRUD ────────────────────────────────────────────────────────────────────
 
 export async function createTask(
   db: AgentosPgDb,
-  input: Omit<NewTask, "id" | "createdAt" | "updatedAt" | "version"> & { id?: string },
+  input: TaskCreateInput,
 ): Promise<Task> {
   const now = nowMs();
-  const row: NewTask = { ...input, id: input.id ?? newId(), createdAt: now, updatedAt: now };
-  await db.insert(tasks).values(row);
+  const { normalized, taskInput } = normalizeNewTaskAssignees(input);
+  const row: NewTask = {
+    ...taskInput,
+    assigneePersonId: normalized.primaryPersonId,
+    id: input.id ?? newId(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.transaction(async (tx) => {
+    await validateTaskAssigneeOrganization(tx as unknown as AgentosPgDb, row.projectId, normalized.personIds);
+    await tx.insert(tasks).values(row);
+    await insertTaskAssigneeRows(tx as unknown as AgentosPgDb, row.id!, normalized, now);
+  });
   return (await getTask(db, row.id!))!;
 }
 
@@ -24,12 +41,24 @@ export async function getTask(db: AgentosPgDb, id: string): Promise<Task | undef
 
 export async function listTasks(
   db: AgentosPgDb,
-  filter: { projectId?: string; status?: TaskStatus; assigneeAgentId?: string } = {},
+  filter: {
+    projectId?: string;
+    status?: TaskStatus;
+    assigneeAgentId?: string;
+    personId?: string;
+    assigneePersonId?: string;
+  } = {},
 ): Promise<Task[]> {
   const conds = [];
   if (filter.projectId) conds.push(eq(tasks.projectId, filter.projectId));
   if (filter.status) conds.push(eq(tasks.status, filter.status));
   if (filter.assigneeAgentId) conds.push(eq(tasks.assigneeAgentId, filter.assigneeAgentId));
+  const personId = filter.personId ?? filter.assigneePersonId;
+  if (personId) {
+    conds.push(
+      sql`EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = ${tasks.id} AND ta.person_id = ${personId})`,
+    );
+  }
   const base = db.select().from(tasks);
   const q = conds.length > 0 ? base.where(and(...conds)) : base;
   return await q.orderBy(asc(tasks.status), asc(tasks.orderKey));
@@ -54,14 +83,55 @@ export async function updateTask(
   patch: Partial<Omit<Task, "id" | "createdAt" | "version">>,
   expectedVersion: number,
 ): Promise<Task> {
-  const updated = await db
-    .update(tasks)
-    .set({ ...patch, updatedAt: nowMs(), version: sql`${tasks.version} + 1` })
-    .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
-    .returning({ id: tasks.id });
-  if (updated.length === 0) {
-    if (!(await getTask(db, id))) throw errors.notFound("task", id);
-    throw errors.versionConflict("task", id, expectedVersion);
+  const hasLegacyAssignee = patch.assigneePersonId !== undefined;
+  const legacyAssignee = patch.assigneePersonId ?? null;
+  const taskPatch = hasLegacyAssignee
+    ? (() => {
+        const { assigneePersonId: _ignored, ...rest } = patch;
+        return rest;
+      })()
+    : patch;
+
+  if (hasLegacyAssignee) {
+    await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+      if (!current) throw errors.notFound("task", id);
+      // Validate before the conditional UPDATE so a rejected person cannot
+      // alter either the projection or the bridge. The helper validates again
+      // after the update using the resulting project, covering a simultaneous
+      // project move as well.
+      await validateTaskAssigneeOrganization(
+        tx as unknown as AgentosPgDb,
+        current.projectId,
+        legacyAssignee ? [legacyAssignee] : [],
+      );
+      const updated = await tx
+        .update(tasks)
+        .set({
+          ...taskPatch,
+          assigneePersonId: legacyAssignee,
+          updatedAt: nowMs(),
+          version: sql`${tasks.version} + 1`,
+        })
+        .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
+        .returning({ id: tasks.id });
+      if (updated.length === 0) {
+        const [stillThere] = await tx.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+        if (!stillThere) throw errors.notFound("task", id);
+        throw errors.versionConflict("task", id, expectedVersion);
+      }
+      await synchronizeTaskAssignees(tx as unknown as AgentosPgDb, id, legacyAssignee);
+    });
+  } else {
+    const updated = await db
+      .update(tasks)
+      .set({ ...taskPatch, updatedAt: nowMs(), version: sql`${tasks.version} + 1` })
+      .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
+      .returning({ id: tasks.id });
+    if (updated.length === 0) {
+      if (!(await getTask(db, id))) throw errors.notFound("task", id);
+      throw errors.versionConflict("task", id, expectedVersion);
+    }
   }
   return (await getTask(db, id))!;
 }

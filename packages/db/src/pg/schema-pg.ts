@@ -1,6 +1,6 @@
 /**
  * Esquema AgentOS para **Postgres/Supabase** — espejo 1:1 de `src/schema.ts`
- * (las mismas 23 tablas, los mismos nombres de columna, índice e índice único).
+ * (las mismas 25 tablas, los mismos nombres de columna, índice e índice único).
  *
  * Reglas de traducción (ARCHITECTURE §5 — las convenciones se escribieron para
  * que esta tabla de equivalencias fuera mecánica):
@@ -28,6 +28,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   uniqueIndex,
   type AnyPgColumn,
@@ -209,6 +210,62 @@ export const tasks = pgTable(
   (t) => [
     index("idx_tasks_board").on(t.projectId, t.status, t.orderKey),
     index("idx_tasks_lease").on(t.status, t.leaseUntil),
+  ],
+);
+
+// ── Responsables humanos y avisos ──────────────────────────────────────────
+
+/** Fuente de verdad de responsables humanos; tasks.assignee_person_id es una proyección. */
+export const taskAssignees = pgTable(
+  "task_assignees",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    assignedBy: text("assigned_by").notNull(),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.personId], name: "pk_task_assignees" }),
+    uniqueIndex("uq_task_assignees_task_person").on(t.taskId, t.personId),
+    uniqueIndex("uq_task_assignees_task_primary")
+      .on(t.taskId)
+      .where(sql`is_primary = true`),
+    index("idx_task_assignees_task").on(t.taskId),
+    index("idx_task_assignees_person").on(t.personId),
+  ],
+);
+
+/** Log durable e idempotente de avisos assignment/due_24h. */
+export const taskNotificationLog = pgTable(
+  "task_notification_log",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    kind: text("kind").$type<"assignment" | "due_24h">().notNull(),
+    scheduledAt: epochMs("scheduled_at").notNull(),
+    deliveredAt: epochMs("delivered_at"),
+    status: text("status")
+      .$type<"pending" | "processing" | "delivered" | "failed" | "suppressed">()
+      .notNull()
+      .default("pending"),
+    dedupeKey: text("dedupe_key").notNull(),
+    lastError: text("last_error"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_task_notification_log_dedupe").on(t.dedupeKey),
+    index("idx_task_notification_log_pending").on(t.status, t.scheduledAt),
+    index("idx_task_notification_log_task").on(t.taskId, t.personId),
   ],
 );
 
@@ -580,6 +637,8 @@ export const PG_TABLE_ORDER = [
   "methodologies",
   "phase_modules",
   "tasks",
+  "task_assignees",
+  "task_notification_log",
   "runs",
   "spans",
   "events",

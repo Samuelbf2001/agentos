@@ -1,6 +1,7 @@
 /**
- * Esquema AgentOS — 21 tablas: las 20 de ARCHITECTURE.md §5 y §8b
- * + `project_sources` (Fuentes del proyecto, Fase 2).
+ * Esquema AgentOS — 25 tablas: las tablas de ARCHITECTURE.md §5 y §8b
+ * + `project_sources` (Fuentes del proyecto, Fase 2), responsables humanos
+ * y el log durable de avisos del módulo de Proyectos y Tareas.
  *
  * Convenciones no opcionales (portabilidad a Postgres):
  * - id TEXT uuidv7 (generado en los repositorios, nunca en SQL)
@@ -13,6 +14,7 @@ import { sql } from "drizzle-orm";
 import {
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -208,6 +210,71 @@ export const tasks = sqliteTable(
   (t) => [
     index("idx_tasks_board").on(t.projectId, t.status, t.orderKey),
     index("idx_tasks_lease").on(t.status, t.leaseUntil),
+  ],
+);
+
+// ── Responsables humanos y avisos ──────────────────────────────────────────
+
+/**
+ * Responsables humanos de una tarea. Esta tabla es la fuente de verdad de la
+ * asignación humana; `tasks.assignee_person_id` se conserva como proyección
+ * singular para los consumidores históricos.
+ */
+export const taskAssignees = sqliteTable(
+  "task_assignees",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+    /** ActorRef que realizó la asignación; el backfill usa un actor de migración. */
+    assignedBy: text("assigned_by").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.personId], name: "pk_task_assignees" }),
+    uniqueIndex("uq_task_assignees_task_person").on(t.taskId, t.personId),
+    /** Como máximo una persona principal por tarea. */
+    uniqueIndex("uq_task_assignees_task_primary")
+      .on(t.taskId)
+      .where(sql`is_primary = 1`),
+    index("idx_task_assignees_task").on(t.taskId),
+    index("idx_task_assignees_person").on(t.personId),
+  ],
+);
+
+/**
+ * Registro durable de avisos de responsables. `dedupe_key` es la identidad
+ * idempotente que sobrevive a reintentos y reinicios del worker.
+ */
+export const taskNotificationLog = sqliteTable(
+  "task_notification_log",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    kind: text("kind").$type<"assignment" | "due_24h">().notNull(),
+    scheduledAt: integer("scheduled_at").notNull(),
+    deliveredAt: integer("delivered_at"),
+    status: text("status")
+      .$type<"pending" | "processing" | "delivered" | "failed" | "suppressed">()
+      .notNull()
+      .default("pending"),
+    dedupeKey: text("dedupe_key").notNull(),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_task_notification_log_dedupe").on(t.dedupeKey),
+    index("idx_task_notification_log_pending").on(t.status, t.scheduledAt),
+    index("idx_task_notification_log_task").on(t.taskId, t.personId),
   ],
 );
 

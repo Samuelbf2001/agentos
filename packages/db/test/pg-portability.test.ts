@@ -34,6 +34,10 @@ type _DocPgToLite = AssertAssignable<liteTypes.KnowledgeDoc, pgTypes.KnowledgeDo
 type _RunLiteToPg = AssertAssignable<pgTypes.Run, liteTypes.Run>;
 type _LaunchLiteToPg = AssertAssignable<pgTypes.ModuleLaunch, liteTypes.ModuleLaunch>;
 type _EventLiteToPg = AssertAssignable<pgTypes.PersistedEvent, liteTypes.PersistedEvent>;
+type _TaskAssigneeLiteToPg = AssertAssignable<pgTypes.TaskAssignee, liteTypes.TaskAssignee>;
+type _TaskAssigneePgToLite = AssertAssignable<liteTypes.TaskAssignee, pgTypes.TaskAssignee>;
+type _NotificationLiteToPg = AssertAssignable<pgTypes.TaskNotificationLog, liteTypes.TaskNotificationLog>;
+type _NotificationPgToLite = AssertAssignable<liteTypes.TaskNotificationLog, pgTypes.TaskNotificationLog>;
 
 function tableNames(mod: Record<string, unknown>): string[] {
   return Object.values(mod)
@@ -43,15 +47,15 @@ function tableNames(mod: Record<string, unknown>): string[] {
 }
 
 describe("esquema Postgres = esquema SQLite", () => {
-  it("las 23 tablas existen en los dos motores, con los mismos nombres", () => {
+  it("las 25 tablas existen en los dos motores, con los mismos nombres", () => {
     const lite = tableNames(liteSchema);
     const pg = tableNames(pgSchema);
-    expect(lite).toHaveLength(23);
+    expect(lite).toHaveLength(25);
     expect(pg).toEqual(lite);
   });
 
-  it("PG_TABLE_ORDER cubre las 23 tablas sin repetir", () => {
-    expect(new Set(PG_TABLE_ORDER).size).toBe(23);
+  it("PG_TABLE_ORDER cubre las 25 tablas sin repetir", () => {
+    expect(new Set(PG_TABLE_ORDER).size).toBe(25);
     expect([...PG_TABLE_ORDER].sort()).toEqual(tableNames(liteSchema));
   });
 
@@ -64,6 +68,8 @@ describe("esquema Postgres = esquema SQLite", () => {
       agents: ["provider_profiles"],
       prompt_versions: ["agents"],
       tasks: ["projects", "agents", "people"],
+      task_assignees: ["tasks", "people"],
+      task_notification_log: ["tasks", "people"],
       runs: ["agents", "tasks", "projects", "provider_profiles"],
       spans: ["runs"],
       task_events: ["tasks", "runs"],
@@ -87,13 +93,38 @@ describe("esquema Postgres = esquema SQLite", () => {
     }
   });
 
-  it("TABLE_PAIRS empareja las 23 tablas en el mismo orden topológico", () => {
-    expect(TABLE_PAIRS).toHaveLength(23);
+  it("TABLE_PAIRS empareja las 25 tablas en el mismo orden topológico", () => {
+    expect(TABLE_PAIRS).toHaveLength(25);
     expect(TABLE_PAIRS.map((p) => p.name)).toEqual([...PG_TABLE_ORDER]);
     for (const pair of TABLE_PAIRS) {
       expect(getTableName(pair.from)).toBe(pair.name);
       expect(getTableName(pair.to)).toBe(pair.name);
     }
+  });
+
+  it("responsables y avisos conservan columnas/c tipos portables", () => {
+    const pgColumns = (table: object) => Object.keys(table).filter((key) => key !== "enableRLS");
+    expect(Object.keys(liteSchema.taskAssignees)).toEqual(pgColumns(pgSchema.taskAssignees));
+    expect(Object.keys(liteSchema.taskNotificationLog)).toEqual(pgColumns(pgSchema.taskNotificationLog));
+    expect(Object.keys(liteSchema.taskAssignees)).toEqual([
+      "taskId",
+      "personId",
+      "isPrimary",
+      "assignedBy",
+      "createdAt",
+    ]);
+    expect(Object.keys(liteSchema.taskNotificationLog)).toEqual([
+      "id",
+      "taskId",
+      "personId",
+      "kind",
+      "scheduledAt",
+      "deliveredAt",
+      "status",
+      "dedupeKey",
+      "lastError",
+      "createdAt",
+    ]);
   });
 });
 

@@ -9,8 +9,8 @@ export type TaskStatus =
   | "BACKLOG"
   | "READY"
   | "IN_PROGRESS"
-  | "BLOCKED"
   | "REVIEW"
+  | "BLOCKED"
   | "DONE"
   | "CANCELLED";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
@@ -33,8 +33,8 @@ export const TASK_STATUSES: TaskStatus[] = [
   "BACKLOG",
   "READY",
   "IN_PROGRESS",
-  "BLOCKED",
   "REVIEW",
+  "BLOCKED",
   "DONE",
   "CANCELLED",
 ];
@@ -43,7 +43,36 @@ export const STAGES: Stage[] = ["ENTENDER", "CONSTRUIR", "OPERAR"];
 export interface Person {
   id: string;
   full_name: string;
+  /** Alias camelCase usado por algunas respuestas enriquecidas del API. */
+  fullName?: string;
   role: string | null;
+  /** Campos opcionales que pueden venir en el roster administrativo. */
+  org_id?: string | null;
+  email?: string | null;
+}
+
+/** Responsable humano de una tarea (tabla canónica task_assignees). */
+export interface TaskAssigneePerson {
+  id: string;
+  full_name?: string;
+  fullName?: string;
+  role?: string | null;
+  email?: string | null;
+}
+
+export interface TaskAssignee {
+  /** Forma normalizada usada por la UI. */
+  personId?: string;
+  isPrimary?: boolean;
+  assignedBy?: string | null;
+  createdAt?: number;
+  /** Alias del wire REST si el proveedor devuelve snake_case. */
+  person_id?: string;
+  is_primary?: boolean;
+  assigned_by?: string | null;
+  created_at?: number;
+  /** Algunas respuestas incluyen el roster embebido para evitar otra consulta. */
+  person?: TaskAssigneePerson | null;
 }
 
 export interface Project {
@@ -72,6 +101,12 @@ export interface Task {
   priority: TaskPriority;
   assigneeAgentId: string | null;
   assigneePersonId: string | null;
+  /** Lista autoritativa de personas; el campo singular es solo proyección. */
+  assignees?: TaskAssignee[];
+  /** Fecha epoch-ms; null significa sin vencimiento. */
+  dueAt?: number | null;
+  /** Alias de entrada/compatibilidad para respuestas snake_case. */
+  due_at?: number | null;
   requiresApproval: boolean;
   externalEffect: boolean;
   leaseUntil: number | null;
@@ -81,6 +116,72 @@ export interface Task {
   version: number;
   createdAt: number;
   updatedAt: number;
+}
+
+export type BoardFilter = "all" | "mine" | "unassigned" | "due";
+
+export type TaskDueState = "none" | "overdue" | "today" | "upcoming" | "later" | "complete";
+
+/** Devuelve la lista canónica y conserva compatibilidad con la proyección antigua. */
+export function getTaskAssignees(task: Pick<Task, "assignees" | "assigneePersonId">): TaskAssignee[] {
+  if (task.assignees && task.assignees.length > 0) return task.assignees;
+  return task.assigneePersonId
+    ? [{ personId: task.assigneePersonId, isPrimary: true }]
+    : [];
+}
+
+export function taskAssigneePersonId(assignee: TaskAssignee): string | null {
+  return assignee.personId ?? assignee.person_id ?? assignee.person?.id ?? null;
+}
+
+export function taskAssigneeIsPrimary(assignee: TaskAssignee): boolean {
+  return assignee.isPrimary ?? assignee.is_primary ?? false;
+}
+
+export function taskDueTimestamp(task: Pick<Task, "dueAt" | "due_at">): number | null {
+  return task.dueAt ?? task.due_at ?? null;
+}
+
+/** Clasificación visual estable; tareas terminales no generan alerta de vencimiento. */
+export function taskDueState(
+  task: Pick<Task, "status" | "dueAt" | "due_at">,
+  now = Date.now(),
+): TaskDueState {
+  const dueAt = taskDueTimestamp(task);
+  if (task.status === "DONE" || task.status === "CANCELLED") return dueAt === null ? "none" : "complete";
+  if (dueAt === null) return "none";
+  if (dueAt < now) return "overdue";
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const sevenDays = now + 7 * 86_400_000;
+  if (dueAt < startOfToday.getTime() + 86_400_000) return "today";
+  if (dueAt <= sevenDays) return "upcoming";
+  return "later";
+}
+
+export interface TaskProjectContext {
+  project?: Project | null;
+  sources?: ProjectSource[];
+  documents?: KnowledgeDoc[];
+  /** Aliases que pueden aparecer mientras se despliega la Oleada 2. */
+  project_sources?: ProjectSource[];
+  knowledge_docs?: KnowledgeDoc[];
+}
+
+export interface TaskDetailResponse {
+  task: Task;
+  assignees?: TaskAssignee[];
+  events: TaskEvent[];
+  artifacts: Artifact[];
+  runs: Run[];
+  project?: Project | null;
+  projectContext?: TaskProjectContext | null;
+  project_context?: TaskProjectContext | null;
+  /** Forma compacta aceptada para el contrato REST durante la transición. */
+  context?: TaskProjectContext | null;
+  sources?: ProjectSource[];
+  documents?: KnowledgeDoc[];
+  knowledge_docs?: KnowledgeDoc[];
 }
 
 export interface TaskEvent {
@@ -123,6 +224,84 @@ export interface Agent {
   autonomy: "manual" | "supervised" | "auto";
   status: AgentStatus;
   version: number;
+  /** Relación opcional expuesta por el inventario del cerebro. */
+  reports_to?: string | null;
+  reportsTo?: string | null;
+}
+
+// ── Cerebro / inventario unificado de integraciones ────────────────────────
+
+export type BrainSourceStatus = "connected" | "degraded" | "not_configured" | "offline";
+export type BrainModuleStatus = "available" | "partial" | "offline";
+
+export interface BrainCounts {
+  [key: string]: number;
+}
+
+export interface BrainPerson {
+  id: string;
+  full_name: string;
+  role: string | null;
+  is_internal: boolean;
+}
+
+export interface BrainAgentHealth {
+  id: string;
+  slug: string;
+  status: string;
+  reports_to: string | null;
+  chain: unknown;
+}
+
+export interface BrainAgent {
+  id: string;
+  slug: string;
+  name: string;
+  layer: AgentLayer;
+  runtime: Agent["runtime"];
+  model: string | null;
+  autonomy: Agent["autonomy"];
+  status: AgentStatus;
+  reports_to?: string | null;
+  reportsTo?: string | null;
+}
+
+export interface BrainSource {
+  id: "agentos" | "whatsapphub" | "llm_wiki" | "notion";
+  label: string;
+  status: BrainSourceStatus;
+  mode: string;
+  last_checked_at: string | null;
+  last_snapshot_at?: string | null;
+  counts: BrainCounts;
+  detail: string;
+  stages?: {
+    tasks?: string[];
+    projects?: string[];
+  };
+}
+
+export interface BrainModule {
+  id: string;
+  label: string;
+  description: string;
+  source_id: BrainSource["id"];
+  status: BrainModuleStatus;
+}
+
+export interface BrainOverview {
+  generated_at: string;
+  core: {
+    counts: BrainCounts;
+    people: BrainPerson[];
+  };
+  agents: {
+    items: BrainAgent[];
+    tree: unknown;
+    health: BrainAgentHealth[];
+  };
+  sources: BrainSource[];
+  modules: BrainModule[];
 }
 
 export interface Run {
@@ -248,6 +427,47 @@ export interface SourceBrowseItem {
   subtitle: string | null;
   url: string | null;
   is_internal: boolean | null;
+}
+
+// ── Procesamiento de reuniones (espejo read-only de WhatsAppHub) ───────────
+
+export type MeetingProcessingFilter = "all" | "pending" | "error" | "ok";
+
+export interface MeetingProcessingItem {
+  id: string;
+  title: string;
+  source: string | null;
+  meeting_date: string | null;
+  created_at: string | null;
+  extracted_at: string | null;
+  extract_attempts: number | null;
+  association_status: string;
+  task_status: string;
+  notion_synced_at: string | null;
+  wiki_exported: boolean;
+  wiki_synced_at: string | null;
+  processing_error: string | null;
+}
+
+export interface MeetingProcessingOverview {
+  source: "2brain / WhatsAppHub";
+  mode: "remote_read_only";
+  page: number;
+  page_size: number;
+  status: MeetingProcessingFilter;
+  total: number | null;
+  has_more: boolean;
+  queue: {
+    pending: number | null;
+    errors: number | null;
+    complete: number | null;
+  };
+  agentos_context: {
+    linked: number;
+    ingested: number;
+    errors: number;
+  };
+  meetings: MeetingProcessingItem[];
 }
 
 export interface ProcessStep {

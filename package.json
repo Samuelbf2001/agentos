@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "pnpm --filter @agentos/api dev",
     "test": "vitest run",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "notion:snapshot": "pnpm --filter @agentos/notion-migration snapshot"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
