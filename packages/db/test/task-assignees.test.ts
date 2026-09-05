@@ -89,6 +89,77 @@ describe("task_assignees", () => {
     expect(listTasksWithAssignees(db, { personId: ana.id })[0]?.assignees).toHaveLength(2);
   });
 
+  it("un solo responsable sin primario explícito queda como principal (defecto de usabilidad)", () => {
+    const db = freshDb();
+    const { project, ana } = fixture(db);
+    const task = createTask(db, {
+      projectId: project.id,
+      title: "Un responsable",
+      stage: "ENTENDER",
+      orderKey: "a0",
+      assigneePersonIds: [ana.id],
+    });
+    expect(listTaskAssignees(db, task.id)).toMatchObject([{ personId: ana.id, isPrimary: true }]);
+    expect(getTaskWithAssignees(db, task.id)?.assigneePersonId).toBe(ana.id);
+
+    // También al reemplazar (no sólo al crear): el mismo defecto se reprodujo
+    // vía PATCH de responsables sobre una tarea ya existente.
+    const another = createTask(db, {
+      projectId: project.id,
+      title: "Reemplazo sin primario",
+      stage: "ENTENDER",
+      orderKey: "a1",
+    });
+    const replaced = replaceTaskAssignees(db, another.id, { personIds: [ana.id] }, another.version);
+    expect(replaced.assignees).toMatchObject([{ personId: ana.id, isPrimary: true }]);
+    expect(replaced.assigneePersonId).toBe(ana.id);
+  });
+
+  it("varios responsables sin primario explícito: el primero de la lista es el principal", () => {
+    const db = freshDb();
+    const { project, ana, luis } = fixture(db);
+    const task = createTask(db, {
+      projectId: project.id,
+      title: "Varios sin primario",
+      stage: "ENTENDER",
+      orderKey: "a0",
+      assigneePersonIds: [luis.id, ana.id],
+    });
+    expect(getTaskWithAssignees(db, task.id)?.assignees.find((row) => row.isPrimary)?.personId).toBe(luis.id);
+    expect(task.assigneePersonId).toBe(luis.id);
+  });
+
+  it("respeta el primario explícito aunque no sea el primero de la lista", () => {
+    const db = freshDb();
+    const { project, ana, luis } = fixture(db);
+    const task = createTask(db, {
+      projectId: project.id,
+      title: "Explícito",
+      stage: "ENTENDER",
+      orderKey: "a0",
+      assigneePersonIds: [luis.id, ana.id],
+      primaryAssigneePersonId: ana.id,
+    });
+    expect(getTaskWithAssignees(db, task.id)?.assignees.find((row) => row.isPrimary)?.personId).toBe(ana.id);
+    expect(task.assigneePersonId).toBe(ana.id);
+  });
+
+  it("quitar todos los responsables limpia la proyección legacy", () => {
+    const db = freshDb();
+    const { project, ana } = fixture(db);
+    const task = createTask(db, {
+      projectId: project.id,
+      title: "Vaciar",
+      stage: "ENTENDER",
+      orderKey: "a0",
+      assigneePersonIds: [ana.id],
+    });
+    expect(task.assigneePersonId).toBe(ana.id);
+    const cleared = replaceTaskAssignees(db, task.id, { personIds: [] }, task.version);
+    expect(cleared.assignees).toHaveLength(0);
+    expect(cleared.assigneePersonId).toBeNull();
+  });
+
   it("rechaza persona de otra organización sin crear tarea", () => {
     const db = freshDb();
     const { project, outsider } = fixture(db);

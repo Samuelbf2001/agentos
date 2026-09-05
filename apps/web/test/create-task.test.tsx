@@ -175,6 +175,10 @@ describe("CreateTaskDialog (render)", () => {
         priority: "normal",
         definition_of_done: "Propuesta firmada por el cliente",
         assignee_person_ids: ["p-ernesto"],
+        // El único responsable marcado queda como principal sin que el
+        // humano tenga que elegirlo: si no, la tarea nace bloqueada para
+        // BACKLOG→READY (defecto de usabilidad detectado en verificación).
+        primary_assignee_person_id: "p-ernesto",
         labels: ["cliente"],
       });
     });
@@ -183,6 +187,61 @@ describe("CreateTaskDialog (render)", () => {
       expect(calls.some((call) => call.method === "GET" && call.url.endsWith("/api/tasks/t-new"))).toBe(
         true,
       );
+    });
+  });
+
+  it("con un único responsable no hay selector de principal, pero se marca solo (y se puede cambiar al añadir otro)", async () => {
+    const otherPerson = { id: "p-otro", full_name: "Sofía", role: "Consultora" };
+    useStore.setState({ people: [person, otherPerson] });
+    const created = makeTask({
+      id: "t-new-2",
+      title: "Preparar propuesta comercial",
+      definitionOfDone: "Propuesta firmada por el cliente",
+      assigneePersonId: otherPerson.id,
+      assignees: [
+        { personId: person.id, isPrimary: false },
+        { personId: otherPerson.id, isPrimary: true },
+      ],
+    });
+    const { calls } = mockFetch([
+      { method: "POST", path: "/api/tasks", body: { task: created } },
+      { path: "/api/tasks/t-new-2", body: { task: created, events: [], artifacts: [], runs: [] } },
+      {
+        path: "/api/board/proj-1",
+        body: { project, board_seq: 1, total: 0, columns: {}, cells: {} },
+      },
+      { path: "/api/labels", body: { labels: [] } },
+      { path: "/api/auth/people", body: { people: [person, otherPerson] } },
+    ]);
+    render(
+      <CreateTaskDialog open onOpenChange={vi.fn()} projectId={project.id} defaultStage="ENTENDER" />,
+    );
+
+    fireEvent.change(screen.getByTestId("new-task-title"), {
+      target: { value: "Preparar propuesta comercial" },
+    });
+    fireEvent.change(screen.getByTestId("new-task-dod"), {
+      target: { value: "Propuesta firmada por el cliente" },
+    });
+
+    // Con un solo responsable marcado, no se pide elegir principal.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Ernesto/ }));
+    expect(screen.queryByLabelText("Persona principal")).toBeNull();
+
+    // Al añadir un segundo, el selector aparece y permite cambiar al recién añadido.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Sofía/ }));
+    const primarySelect = screen.getByLabelText("Persona principal") as HTMLSelectElement;
+    expect(primarySelect.value).toBe("p-ernesto");
+    fireEvent.change(primarySelect, { target: { value: "p-otro" } });
+
+    fireEvent.click(screen.getByTestId("new-task-submit"));
+
+    await waitFor(() => {
+      const createCall = calls.find((call) => call.method === "POST" && call.url.endsWith("/api/tasks"));
+      expect(createCall?.body).toMatchObject({
+        assignee_person_ids: ["p-ernesto", "p-otro"],
+        primary_assignee_person_id: "p-otro",
+      });
     });
   });
 });

@@ -173,9 +173,16 @@ function normalizeAssignees(
       flaggedPrimary: flagged[0].personId,
     });
   }
+  // Sin primario explícito: con un solo responsable, esa persona es la
+  // principal (no tiene sentido pedirle al usuario que marque lo obvio). Con
+  // varios y ninguno marcado, el primero de la lista gana por convención —
+  // preserva el orden de selección de la interfaz y evita dejar la tarea sin
+  // primario, lo que bloquearía BACKLOG→READY (I: el motor exige
+  // assigneePersonId para esa transición).
+  const primaryPersonId = explicitPrimary ?? personIds[0] ?? null;
   return {
     personIds,
-    primaryPersonId: explicitPrimary ?? null,
+    primaryPersonId,
     assignedBy: input.assignedBy ?? input.actor ?? "system:task-assignment",
   };
 }

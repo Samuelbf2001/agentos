@@ -1063,7 +1063,7 @@ export function TaskDrawer() {
                         const checked = assigneeIds.includes(person.id);
                         return (
                           <label key={person.id} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-slate-50 focus-within:bg-slate-50">
-                            <input type="checkbox" checked={checked} onChange={(event) => { const next = event.target.checked ? [...assigneeIds, person.id] : assigneeIds.filter((id) => id !== person.id); setAssigneeIds(next); if (!event.target.checked && primaryAssigneeId === person.id) setPrimaryAssigneeId(next[0] ?? ""); setAssignmentDirty(true); }} className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-sky-500" />
+                            <input type="checkbox" checked={checked} onChange={(event) => { const next = event.target.checked ? [...assigneeIds, person.id] : assigneeIds.filter((id) => id !== person.id); setAssigneeIds(next); setPrimaryAssigneeId((current) => (next.includes(current) ? current : next[0] ?? "")); setAssignmentDirty(true); }} className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-sky-500" />
                             <PersonAvatar name={displayPersonName(person)} size={5} />
                             <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{displayPersonName(person)}</span>
                             {primaryAssigneeId === person.id ? <span className="text-[10px] font-semibold text-sky-700">principal</span> : null}
