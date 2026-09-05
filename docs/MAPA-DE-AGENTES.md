@@ -66,6 +66,14 @@ solo tenemos el nombre y la intención.
 | Expertos por herramienta | Decidido que no son agentes | Su conocimiento vive como contexto por herramienta en dos capas, más micro-agentes por capacidad | Qué micro-agentes concretos hacen falta por herramienta |
 | Micro-agentes generados por plan | Estructura definida | Se generan por cliente, pasan por aprobación humana, expiran, y sus permisos son un subconjunto de quien los propone | Qué dispara la generación y quién revisa la propuesta |
 
+## De dónde van a salir la mayoría de los agentes
+
+No de un formulario en blanco. Ernesto definió la función **Convertir en agente**: cualquier rol,
+función o proceso del mapa se convierte en un agente con un clic, heredando del segundo cerebro su
+trabajo, lo que produce, a quién reporta, quién lo valida y qué herramientas necesita. El humano decide
+solo tamaño y potencia, modo de activación y accesos. La ficha de doce campos de este documento es lo
+que esa función rellena. Detalle en `PRD-Parte-IV-Convertir-en-agente.md`.
+
 ## Lo que ya está decidido para todos
 
 Aunque falte el detalle de cada uno, estas reglas aplican al conjunto y no se renegocian por agente.

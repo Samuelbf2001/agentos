@@ -61,6 +61,7 @@ export const TABLE_PAIRS: TablePair[] = [
   { name: "phase_modules", from: lite.phaseModules, to: pg.phaseModules, pk: "id", orderBy: "created_at" },
   { name: "tasks", from: lite.tasks, to: pg.tasks, pk: "id", orderBy: "created_at" },
   { name: "task_assignees", from: lite.taskAssignees, to: pg.taskAssignees, pk: ["task_id", "person_id"], orderBy: "created_at" },
+  { name: "task_labels", from: lite.taskLabels, to: pg.taskLabels, pk: ["task_id", "label"], orderBy: "created_at" },
   { name: "task_notification_log", from: lite.taskNotificationLog, to: pg.taskNotificationLog, pk: "id", orderBy: "created_at" },
   { name: "runs", from: lite.runs, to: pg.runs, pk: "id", orderBy: "created_at" },
   { name: "spans", from: lite.spans, to: pg.spans, pk: "id", orderBy: "started_at" },
@@ -73,6 +74,11 @@ export const TABLE_PAIRS: TablePair[] = [
   { name: "audit_log", from: lite.auditLog, to: pg.auditLog, pk: "id", orderBy: "created_at" },
   { name: "app_config", from: lite.appConfig, to: pg.appConfig, pk: "key", orderBy: "updated_at" },
   { name: "module_launches", from: lite.moduleLaunches, to: pg.moduleLaunches, pk: "id", orderBy: "created_at" },
+  { name: "notion_migration_runs", from: lite.notionMigrationRuns, to: pg.notionMigrationRuns, pk: "id", orderBy: "created_at" },
+  { name: "notion_page_archives", from: lite.notionPageArchives, to: pg.notionPageArchives, pk: "id", orderBy: "created_at" },
+  { name: "notion_import_links", from: lite.notionImportLinks, to: pg.notionImportLinks, pk: "id", orderBy: "created_at" },
+  { name: "notion_identity_mappings", from: lite.notionIdentityMappings, to: pg.notionIdentityMappings, pk: "id", orderBy: "created_at" },
+  { name: "notion_import_quarantine", from: lite.notionImportQuarantine, to: pg.notionImportQuarantine, pk: "id", orderBy: "created_at" },
 ];
 
 export interface TableReport {

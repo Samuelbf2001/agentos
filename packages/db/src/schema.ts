@@ -247,6 +247,29 @@ export const taskAssignees = sqliteTable(
 );
 
 /**
+ * Etiquetas de una tarea. Tabla de unión (no un JSON en `tasks`) porque el
+ * tablero filtra por etiqueta y ambos motores necesitan poder indexar esa
+ * consulta; `label` se guarda ya normalizada (minúsculas, sin espacios extra).
+ */
+export const taskLabels = sqliteTable(
+  "task_labels",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    label: text("label").notNull(),
+    /** ActorRef que la puso; auditable igual que el resto de mutaciones. */
+    createdBy: text("created_by"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.label], name: "pk_task_labels" }),
+    index("idx_task_labels_label").on(t.label),
+    index("idx_task_labels_task").on(t.taskId),
+  ],
+);
+
+/**
  * Registro durable de avisos de responsables. `dedupe_key` es la identidad
  * idempotente que sobrevive a reintentos y reinicios del worker.
  */
@@ -672,5 +695,172 @@ export const moduleLaunches = sqliteTable(
     /** Una fase solo se dispara una vez por proyecto ([SÍNTESIS] Codex). */
     uniqueIndex("uq_module_launches_project_phase").on(t.projectId, t.phase),
     index("idx_module_launches_module").on(t.moduleId),
+  ],
+);
+
+// ── Linaje de la migración de Notion (docs/MIGRACION-NOTION-TASKS-PROJECTS.md §4) ──
+//
+// Cinco tablas de SOLO ANEXADO: conservan de dónde vino cada objeto nativo, el
+// payload íntegro del origen (propiedades, bloques, comentarios y adjuntos), el
+// enlace idempotente `(source_kind, notion_page_id)` y las excepciones. Nada de
+// lo que Notion tenía y AgentOS no modela se pierde ni se inventa: o tiene
+// columna nativa, o queda en el archivo, o queda en cuarentena con motivo.
+
+/** Una corrida del importador. `manifest_hash` ata el destino al snapshot exacto. */
+export const notionMigrationRuns = sqliteTable(
+  "notion_migration_runs",
+  {
+    id: text("id").primaryKey(),
+    /** Versión del esquema de Notion capturado (hash de las dos schema.json). */
+    sourceSchemaVersion: text("source_schema_version").notNull(),
+    capturedAt: integer("captured_at").notNull(),
+    /** sha256 del manifiesto del snapshot importado. */
+    manifestHash: text("manifest_hash").notNull(),
+    /** Identificador de la carpeta del snapshot (no una ruta absoluta). */
+    snapshotRunId: text("snapshot_run_id").notNull(),
+    mode: text("mode").$type<"dry_run" | "pilot" | "full">().notNull(),
+    status: text("status")
+      .$type<"running" | "completed" | "completed_with_exceptions" | "failed">()
+      .notNull()
+      .default("running"),
+    /** Informe de conciliación: conteos origen/destino y cuarentena por motivo. */
+    report: text("report", { mode: "json" }).$type<Record<string, unknown>>(),
+    /** Las corridas nunca se editan para corregir: se abre otra. */
+    immutable: integer("immutable", { mode: "boolean" }).notNull().default(true),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_notion_migration_runs_snapshot").on(t.snapshotRunId)],
+);
+
+/**
+ * Archivo histórico inmutable de una página de Notion. `payload` guarda el
+ * origen íntegro para que la ficha "Historial de Notion" no dependa del volumen
+ * del snapshot; los `raw_*_uri` conservan la ruta relativa dentro del snapshot.
+ */
+export const notionPageArchives = sqliteTable(
+  "notion_page_archives",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    sourceKind: text("source_kind").$type<"task" | "project">().notNull(),
+    notionPageId: text("notion_page_id").notNull(),
+    originalUrl: text("original_url"),
+    rawPageUri: text("raw_page_uri"),
+    rawBlocksUri: text("raw_blocks_uri"),
+    rawCommentsUri: text("raw_comments_uri"),
+    rawFilesUri: text("raw_files_uri"),
+    /** {page, properties, blocks, comments, files} tal como los devolvió Notion. */
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    capturedAt: integer("captured_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_notion_page_archives_run_page").on(t.migrationRunId, t.sourceKind, t.notionPageId),
+    index("idx_notion_page_archives_page").on(t.sourceKind, t.notionPageId),
+  ],
+);
+
+/**
+ * Enlace idempotente origen→destino. El índice único `(source_kind,
+ * notion_page_id)` es LA clave de idempotencia: reintentar el importador
+ * encuentra el enlace y actualiza, nunca crea un segundo objeto.
+ */
+export const notionImportLinks = sqliteTable(
+  "notion_import_links",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    /** `inbox` marca el proyecto contenedor "Bandeja de Notion" de una organización. */
+    sourceKind: text("source_kind").$type<"task" | "project" | "inbox">().notNull(),
+    notionPageId: text("notion_page_id").notNull(),
+    agentosObjectKind: text("agentos_object_kind").$type<"task" | "project">().notNull(),
+    agentosObjectId: text("agentos_object_id").notNull(),
+    archiveId: text("archive_id").references(() => notionPageArchives.id),
+    importStatus: text("import_status")
+      .$type<"imported" | "updated" | "inbox_container" | "skipped">()
+      .notNull(),
+    sourceLastEditedAt: integer("source_last_edited_at"),
+    importedAt: integer("imported_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_notion_import_links_source").on(t.sourceKind, t.notionPageId),
+    index("idx_notion_import_links_object").on(t.agentosObjectKind, t.agentosObjectId),
+    index("idx_notion_import_links_run").on(t.migrationRunId),
+  ],
+);
+
+/**
+ * Mapa `notion_person_id → people.id`. `match_method` NUNCA vale "name":
+ * solo correo confirmado (`confirmed_email`) o decisión explícita del
+ * administrador (`admin_decision`). Lo demás va a cuarentena.
+ */
+export const notionIdentityMappings = sqliteTable(
+  "notion_identity_mappings",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    notionPersonId: text("notion_person_id").notNull(),
+    notionEmail: text("notion_email"),
+    agentosPersonId: text("agentos_person_id").references(() => people.id),
+    matchMethod: text("match_method")
+      .$type<"confirmed_email" | "admin_decision" | "unresolved">()
+      .notNull(),
+    validationState: text("validation_state")
+      .$type<"confirmed" | "pending_review">()
+      .notNull()
+      .default("pending_review"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: integer("reviewed_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("uq_notion_identity_mappings_person").on(t.notionPersonId)],
+);
+
+/** Excepción explícita: nada se silencia ni se adivina. */
+export const notionImportQuarantine = sqliteTable(
+  "notion_import_quarantine",
+  {
+    id: text("id").primaryKey(),
+    migrationRunId: text("migration_run_id")
+      .notNull()
+      .references(() => notionMigrationRuns.id),
+    sourceKind: text("source_kind").$type<"task" | "project" | "identity">().notNull(),
+    notionPageId: text("notion_page_id").notNull(),
+    fieldName: text("field_name").notNull(),
+    reason: text("reason").notNull(),
+    /** Referencia técnica (id de Notion, valor crudo); nunca contenido sensible. */
+    rawReference: text("raw_reference"),
+    resolutionState: text("resolution_state")
+      .$type<"open" | "resolved" | "accepted">()
+      .notNull()
+      .default("open"),
+    resolvedBy: text("resolved_by"),
+    resolvedAt: integer("resolved_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    /**
+     * `raw_reference` entra en la clave: dos responsables sin resolver en la
+     * MISMA tarea son dos excepciones distintas, no una fila que se traga la
+     * segunda. Nada se colapsa en silencio.
+     */
+    uniqueIndex("uq_notion_import_quarantine_entry").on(
+      t.migrationRunId,
+      t.sourceKind,
+      t.notionPageId,
+      t.fieldName,
+      t.rawReference,
+    ),
+    index("idx_notion_import_quarantine_state").on(t.resolutionState, t.reason),
   ],
 );

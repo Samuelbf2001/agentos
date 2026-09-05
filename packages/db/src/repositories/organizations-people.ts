@@ -65,6 +65,15 @@ export function listPeople(db: AgentosSqliteDb, orgId?: string): Person[] {
   return db.select().from(people).all();
 }
 
+/**
+ * Personas asignables a un proyecto de `orgId`: las de su propia organización
+ * más el personal interno (`is_internal`), que puede asignarse a cualquier
+ * proyecto (I3).
+ */
+export function listAssignablePeople(db: AgentosSqliteDb, orgId: string): Person[] {
+  return listPeople(db).filter((person) => person.isInternal || person.orgId === orgId);
+}
+
 export function updatePerson(
   db: AgentosSqliteDb,
   id: string,

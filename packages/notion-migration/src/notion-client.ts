@@ -5,13 +5,33 @@ export interface PaginatedJson {
   pages: JsonObject[];
 }
 
+/** Contenido binario descargado de un adjunto, con su tipo declarado. */
+export interface DownloadedFile {
+  bytes: Uint8Array;
+  contentType: string | null;
+}
+
+export interface QueryDatabaseOptions {
+  /**
+   * Pide también las páginas archivadas / en papelera. La API pública de Notion
+   * no lo garantiza: si la rechaza, el capturador registra la excepción y sigue.
+   */
+  archived?: boolean;
+}
+
 export interface NotionReader {
   getComments(blockId: string): Promise<PaginatedJson>;
   getDatabase(databaseId: string): Promise<JsonObject>;
   getPage(pageId: string): Promise<JsonObject>;
   getPageProperty(pageId: string, propertyId: string): Promise<PaginatedJson>;
   getBlockChildren(blockId: string): Promise<PaginatedJson>;
-  queryDatabase(databaseId: string): AsyncIterable<JsonObject>;
+  queryDatabase(databaseId: string, options?: QueryDatabaseOptions): AsyncIterable<JsonObject>;
+  /**
+   * Descarga un adjunto por su URL firmada. Opcional: un lector sin esta
+   * capacidad hace que el capturador conserve metadatos y motivo, nunca que
+   * descarte el adjunto en silencio.
+   */
+  downloadFile?(url: string): Promise<DownloadedFile>;
 }
 
 export class NotionReadError extends Error {
@@ -25,6 +45,20 @@ export class NotionReadError extends Error {
   }
 }
 
+/** Un adjunto superó el tope de tamaño: nunca se carga entero en memoria. */
+export class AttachmentTooLargeError extends Error {
+  override name = "AttachmentTooLargeError";
+
+  constructor(
+    readonly limitBytes: number,
+    readonly url: string,
+  ) {
+    super(`El adjunto supera el tope de ${limitBytes} bytes`);
+  }
+}
+
+export const DEFAULT_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
 export interface NotionReaderOptions {
   apiVersion: string;
   fetchFn?: typeof fetch;
@@ -32,6 +66,12 @@ export interface NotionReaderOptions {
   maxAttempts?: number;
   /** Espaciado mínimo entre llamadas: Notion admite del orden de 3 por segundo. */
   minIntervalMs?: number;
+  /**
+   * Tope de tamaño de un adjunto descargado (bytes). Por defecto 50 MB
+   * (`DEFAULT_MAX_ATTACHMENT_BYTES`); superarlo aborta la descarga ANTES de
+   * cargar el binario entero en memoria (`AttachmentTooLargeError`).
+   */
+  maxAttachmentBytes?: number;
   token: string;
 }
 
@@ -69,6 +109,7 @@ export class NotionApiReader implements NotionReader {
   private readonly fetchFn: typeof fetch;
   private readonly maxAttempts: number;
   private readonly minIntervalMs: number;
+  private readonly maxAttachmentBytes: number;
   /** Momento más temprano permitido para la siguiente llamada. */
   private nextSlot = 0;
 
@@ -76,6 +117,7 @@ export class NotionApiReader implements NotionReader {
     this.fetchFn = options.fetchFn ?? fetch;
     this.maxAttempts = options.maxAttempts ?? 5;
     this.minIntervalMs = options.minIntervalMs ?? 340;
+    this.maxAttachmentBytes = options.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
   }
 
   /** Serializa las llamadas para no superar el límite de tasa de Notion. */
@@ -117,10 +159,19 @@ export class NotionApiReader implements NotionReader {
     return this.request(`/pages/${encodeURIComponent(pageId)}`);
   }
 
-  async *queryDatabase(databaseId: string): AsyncIterable<JsonObject> {
+  async *queryDatabase(
+    databaseId: string,
+    options: QueryDatabaseOptions = {},
+  ): AsyncIterable<JsonObject> {
     let cursor: string | undefined;
     do {
       const body: JsonObject = { page_size: 100 };
+      // `archived`/`in_trash` no están documentados para todas las versiones de
+      // la API. Se envían solo cuando se piden; un 400 lo maneja el capturador.
+      if (options.archived) {
+        body.archived = true;
+        body.in_trash = true;
+      }
       if (cursor) body.start_cursor = cursor;
       const page = await this.request(`/databases/${encodeURIComponent(databaseId)}/query`, {
         method: "POST",
@@ -129,6 +180,57 @@ export class NotionApiReader implements NotionReader {
       for (const item of asResults(page.results)) yield item;
       cursor = nextCursor(page);
     } while (cursor);
+  }
+
+  /**
+   * Descarga de adjunto. La URL firmada de Notion NO lleva la cabecera de
+   * autorización de la API (es de S3) y caduca: por eso el snapshot guarda el
+   * binario con su SHA-256 y no confía en la URL.
+   */
+  async downloadFile(url: string): Promise<DownloadedFile> {
+    await this.throttle();
+    const response = await this.fetchFn(url);
+    if (!response.ok) throw new NotionReadError(response.status);
+    const contentType = response.headers?.get?.("content-type") ?? null;
+
+    // El tamaño declarado (si Notion lo manda) evita siquiera empezar a leer
+    // el cuerpo cuando ya se sabe que excede el tope.
+    const declared = Number.parseInt(response.headers?.get?.("content-length") ?? "", 10);
+    if (Number.isFinite(declared) && declared > this.maxAttachmentBytes) {
+      await response.body?.cancel?.().catch(() => undefined);
+      throw new AttachmentTooLargeError(this.maxAttachmentBytes, url);
+    }
+
+    const reader = response.body?.getReader?.();
+    if (!reader) {
+      // Lector sin streaming real (p. ej. un fetch de pruebas): se limita
+      // igual, aunque ya haya cargado el buffer completo.
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > this.maxAttachmentBytes) {
+        throw new AttachmentTooLargeError(this.maxAttachmentBytes, url);
+      }
+      return { bytes: new Uint8Array(buffer), contentType };
+    }
+
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > this.maxAttachmentBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new AttachmentTooLargeError(this.maxAttachmentBytes, url);
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { bytes, contentType };
   }
 
   private async getPaginated(pathname: string): Promise<PaginatedJson> {

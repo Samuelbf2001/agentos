@@ -343,6 +343,11 @@ export async function attachArtifact(
   return saved!;
 }
 
+export async function getArtifact(db: AgentosPgDb, id: string): Promise<Artifact | undefined> {
+  const [row] = await db.select().from(artifacts).where(eq(artifacts.id, id)).limit(1);
+  return row;
+}
+
 export async function listArtifacts(db: AgentosPgDb, taskId: string): Promise<Artifact[]> {
   return await db
     .select()

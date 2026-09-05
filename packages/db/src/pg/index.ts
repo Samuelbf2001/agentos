@@ -37,6 +37,7 @@ export * from "./repositories/providers.js";
 export * from "./repositories/agents.js";
 export * from "./repositories/tasks.js";
 export * from "./repositories/task-assignees.js";
+export * from "./repositories/task-labels.js";
 export * from "./repositories/task-notifications.js";
 export * from "./repositories/runs.js";
 export * from "./repositories/events.js";
@@ -50,6 +51,7 @@ export * from "./repositories/methodologies.js";
 export * from "./repositories/modules.js";
 export * from "./repositories/config.js";
 export * from "./repositories/stats.js";
+export * from "./repositories/notion-migration.js";
 
 // Registro en la fachada: importar `@agentos/db/pg` es lo que habilita el
 // despacho a Postgres desde `@agentos/db` (ver src/facade.ts). Va al final para

@@ -47,7 +47,7 @@ function defaultDedupeKey(input: CreateTaskNotificationInput, scheduledAt: numbe
 
 function validateNotificationTarget(db: AgentosSqliteDb, taskId: string, personId: string): void {
   const row = db
-    .select({ projectOrgId: projects.orgId, personOrgId: people.orgId })
+    .select({ projectOrgId: projects.orgId, personOrgId: people.orgId, personIsInternal: people.isInternal })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .innerJoin(people, eq(people.id, personId))
@@ -59,9 +59,10 @@ function validateNotificationTarget(db: AgentosSqliteDb, taskId: string, personI
     }
     throw errors.notFound("person", personId);
   }
+  if (row.personIsInternal) return;
   if (row.projectOrgId !== row.personOrgId) {
     throw errors.validation(
-      `La persona ${personId} no pertenece a la organización del proyecto de la tarea ${taskId}`,
+      `La persona ${personId} no pertenece a la organización del proyecto de la tarea ${taskId} ni es personal interno`,
       { taskId, personId, projectOrgId: row.projectOrgId, personOrgId: row.personOrgId },
     );
   }

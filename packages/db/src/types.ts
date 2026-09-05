@@ -25,6 +25,8 @@ export type TaskCreateInput = Omit<NewTask, "id" | "createdAt" | "updatedAt" | "
   TaskAssigneeSelectionInput & { id?: string };
 export type TaskAssignee = typeof s.taskAssignees.$inferSelect;
 export type NewTaskAssignee = typeof s.taskAssignees.$inferInsert;
+export type TaskLabel = typeof s.taskLabels.$inferSelect;
+export type NewTaskLabel = typeof s.taskLabels.$inferInsert;
 export type TaskNotificationKind = "assignment" | "due_24h";
 export type TaskNotificationStatus = "pending" | "processing" | "delivered" | "failed" | "suppressed";
 export type TaskNotificationLog = typeof s.taskNotificationLog.$inferSelect;
@@ -60,3 +62,17 @@ export type PhaseModule = typeof s.phaseModules.$inferSelect;
 export type NewPhaseModule = typeof s.phaseModules.$inferInsert;
 export type ModuleLaunch = typeof s.moduleLaunches.$inferSelect;
 export type NewModuleLaunch = typeof s.moduleLaunches.$inferInsert;
+
+// ── Linaje de la migración de Notion ────────────────────────────────────────
+/** `task` y `project` son las dos fuentes canónicas capturadas de Notion. */
+export type NotionSourceKind = "task" | "project";
+export type NotionMigrationRun = typeof s.notionMigrationRuns.$inferSelect;
+export type NewNotionMigrationRun = typeof s.notionMigrationRuns.$inferInsert;
+export type NotionPageArchive = typeof s.notionPageArchives.$inferSelect;
+export type NewNotionPageArchive = typeof s.notionPageArchives.$inferInsert;
+export type NotionImportLink = typeof s.notionImportLinks.$inferSelect;
+export type NewNotionImportLink = typeof s.notionImportLinks.$inferInsert;
+export type NotionIdentityMapping = typeof s.notionIdentityMappings.$inferSelect;
+export type NewNotionIdentityMapping = typeof s.notionIdentityMappings.$inferInsert;
+export type NotionImportQuarantine = typeof s.notionImportQuarantine.$inferSelect;
+export type NewNotionImportQuarantine = typeof s.notionImportQuarantine.$inferInsert;

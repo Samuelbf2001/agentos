@@ -43,6 +43,12 @@ El proyecto demo ACME nace como un **launch real del módulo Consultoría** (no 
 - `AGENTOS_WHATSAPPHUB_URL` / `AGENTOS_WHATSAPPHUB_KEY`: conector de Fuentes del proyecto al pipeline de reuniones/WhatsApp de 2brain (WhatsAppHub).
 - `AGENTOS_DB_DRIVER=sqlite|postgres`: elige el backend de datos (por defecto `sqlite`).
 - `AGENTOS_PG_URL`: cadena de conexión Postgres cuando `AGENTOS_DB_DRIVER=postgres`.
+- `AGENTOS_ARTIFACTS_DIR`: dónde se guardan los archivos subidos como artefacto. Por defecto, el
+  `artifacts/` del workspace del proyecto o `data/artifacts` (ambos fuera del árbol versionado).
+  `AGENTOS_ARTIFACT_MAX_BYTES` ajusta el límite de subida (25 MB por defecto).
+- `AGENTOS_NOTIFICATIONS_INTERVAL_MS`: cadencia del reloj de recordatorios de vencimiento (15 min por
+  defecto); `0` u `off` lo desactiva.
+- `AGENTOS_WEB_ORIGIN`: origen(es) permitidos por CORS, separados por comas (por defecto `http://localhost:4301`).
 - `OPENAI_API_KEY`: habilita embeddings reales para búsqueda semántica en Postgres (sin ella, cae a un `EmbeddingProvider` mock).
 
 ## Conectar el MCP de administración a tu Claude Code

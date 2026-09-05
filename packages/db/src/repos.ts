@@ -39,6 +39,8 @@ import * as liteProviders from "./repositories/providers.js";
 import * as liteRuns from "./repositories/runs.js";
 import * as liteStats from "./repositories/stats.js";
 import * as liteAssignees from "./repositories/task-assignees.js";
+import * as liteLabels from "./repositories/task-labels.js";
+import * as liteNotion from "./repositories/notion-migration.js";
 import * as liteNotifications from "./repositories/task-notifications.js";
 import * as liteTasks from "./repositories/tasks.js";
 import * as liteThreads from "./repositories/threads.js";
@@ -61,6 +63,8 @@ export type * from "./repositories/providers.js";
 export type * from "./repositories/runs.js";
 export type * from "./repositories/stats.js";
 export type * from "./repositories/task-assignees.js";
+export type * from "./repositories/task-labels.js";
+export type * from "./repositories/notion-migration.js";
 export type * from "./repositories/task-notifications.js";
 export type * from "./repositories/tasks.js";
 export type * from "./repositories/threads.js";
@@ -71,6 +75,12 @@ export { digestPayload, verifyApprovalDigest } from "./repositories/approvals.js
 export { ConfigKeys } from "./repositories/config.js";
 export { isProviderConfigured } from "./repositories/providers.js";
 export { normalizeNewTaskAssignees } from "./repositories/task-assignees.js";
+export {
+  normalizeLabel,
+  normalizeLabels,
+  MAX_LABEL_LENGTH,
+  MAX_LABELS_PER_TASK,
+} from "./repositories/task-labels.js";
 export { buildSessionKey } from "./repositories/threads.js";
 
 // ── Agentes y prompts ───────────────────────────────────────────────────────
@@ -227,6 +237,8 @@ export const getPersonByFullName = dual(liteOrgs.getPersonByFullName, "getPerson
 export const listPeople = dual(liteOrgs.listPeople, "listPeople");
 export const updatePerson = dual(liteOrgs.updatePerson, "updatePerson");
 export const listInternalPeople = dual(liteOrgs.listInternalPeople, "listInternalPeople");
+/** Asignables a un proyecto: la org del proyecto MÁS el equipo interno (I3). */
+export const listAssignablePeople = dual(liteOrgs.listAssignablePeople, "listAssignablePeople");
 
 // ── Procesos ────────────────────────────────────────────────────────────────
 
@@ -442,6 +454,7 @@ export const countOpenTasksByAgent = dual(liteTasks.countOpenTasksByAgent, "coun
 export const appendTaskEvent = dual(liteTasks.appendTaskEvent, "appendTaskEvent");
 export const listTaskEvents = dual(liteTasks.listTaskEvents, "listTaskEvents");
 export const attachArtifact = dual(liteTasks.attachArtifact, "attachArtifact");
+export const getArtifact = dual(liteTasks.getArtifact, "getArtifact");
 export const listArtifacts = dual(liteTasks.listArtifacts, "listArtifacts");
 export const countArtifacts = dual(liteTasks.countArtifacts, "countArtifacts");
 export const maxOrderKey = dual(liteTasks.maxOrderKey, "maxOrderKey");
@@ -477,3 +490,81 @@ export const listMessages = dual(liteThreads.listMessages, "listMessages");
 export const searchMessages = dual(liteSearch.searchMessages, "searchMessagesPg");
 export const searchKnowledge = dual(liteSearch.searchKnowledge, "searchKnowledgePg");
 
+// ── Etiquetas de tarea (tabla puente `task_labels`) ─────────────────────────
+
+export const listTaskLabels = dual(liteLabels.listTaskLabels, "listTaskLabels");
+export const listLabelsForTasks = dual(liteLabels.listLabelsForTasks, "listLabelsForTasks");
+export const replaceTaskLabels = dual(liteLabels.replaceTaskLabels, "replaceTaskLabels");
+export const addTaskLabels = dual(liteLabels.addTaskLabels, "addTaskLabels");
+export const removeTaskLabel = dual(liteLabels.removeTaskLabel, "removeTaskLabel");
+export const listLabelCatalog = dual(liteLabels.listLabelCatalog, "listLabelCatalog");
+export const listTaskLabelRows = dual(liteLabels.listTaskLabelRows, "listTaskLabelRows");
+
+// ── Linaje de la migración de Notion (5 tablas) ─────────────────────────────
+
+export const createNotionMigrationRun = dual(
+  liteNotion.createNotionMigrationRun,
+  "createNotionMigrationRun",
+);
+export const getNotionMigrationRun = dual(liteNotion.getNotionMigrationRun, "getNotionMigrationRun");
+export const listNotionMigrationRuns = dual(
+  liteNotion.listNotionMigrationRuns,
+  "listNotionMigrationRuns",
+);
+export const finishNotionMigrationRun = dual(
+  liteNotion.finishNotionMigrationRun,
+  "finishNotionMigrationRun",
+);
+export const createNotionPageArchive = dual(
+  liteNotion.createNotionPageArchive,
+  "createNotionPageArchive",
+);
+export const getNotionPageArchive = dual(liteNotion.getNotionPageArchive, "getNotionPageArchive");
+export const getLatestNotionPageArchive = dual(
+  liteNotion.getLatestNotionPageArchive,
+  "getLatestNotionPageArchive",
+);
+export const findNotionImportLink = dual(liteNotion.findNotionImportLink, "findNotionImportLink");
+export const findNotionImportLinkByObject = dual(
+  liteNotion.findNotionImportLinkByObject,
+  "findNotionImportLinkByObject",
+);
+export const upsertNotionImportLink = dual(
+  liteNotion.upsertNotionImportLink,
+  "upsertNotionImportLink",
+);
+export const listNotionImportLinks = dual(liteNotion.listNotionImportLinks, "listNotionImportLinks");
+export const listNotionImportLinksByPages = dual(
+  liteNotion.listNotionImportLinksByPages,
+  "listNotionImportLinksByPages",
+);
+export const findNotionIdentityMapping = dual(
+  liteNotion.findNotionIdentityMapping,
+  "findNotionIdentityMapping",
+);
+export const upsertNotionIdentityMapping = dual(
+  liteNotion.upsertNotionIdentityMapping,
+  "upsertNotionIdentityMapping",
+);
+export const listNotionIdentityMappings = dual(
+  liteNotion.listNotionIdentityMappings,
+  "listNotionIdentityMappings",
+);
+export const recordNotionQuarantine = dual(
+  liteNotion.recordNotionQuarantine,
+  "recordNotionQuarantine",
+);
+export const listNotionQuarantine = dual(liteNotion.listNotionQuarantine, "listNotionQuarantine");
+export const getNotionOrigin = dual(liteNotion.getNotionOrigin, "getNotionOrigin");
+
+// ── Búsqueda de tareas ──────────────────────────────────────────────────────
+
+/**
+ * Tarjetas y comentarios: FTS5 en SQLite, columnas `tsvector` generadas en
+ * Postgres (`ensurePgSearch`, que corre en cada `applyMigrations`). Misma
+ * forma de `TaskSearchHit` y mismo criterio de rank (menor = mejor); si en PG
+ * las columnas todavía no existen, `searchTasksPg` degrada a ILIKE en vez de
+ * dejar el motor sin búsqueda.
+ */
+export const searchTasks = dual(liteSearch.searchTasks, "searchTasksPg");
+export type { TaskSearchHit, TaskSearchOptions } from "./search.js";

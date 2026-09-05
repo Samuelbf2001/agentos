@@ -73,6 +73,16 @@ export async function listPeople(db: AgentosPgDb, orgId?: string): Promise<Perso
   return await db.select().from(people);
 }
 
+/**
+ * Personas asignables a un proyecto de `orgId`: las de su propia organización
+ * más el personal interno (`is_internal`), que puede asignarse a cualquier
+ * proyecto (I3). Espejo de src/repositories/organizations-people.ts.
+ */
+export async function listAssignablePeople(db: AgentosPgDb, orgId: string): Promise<Person[]> {
+  const all = await listPeople(db);
+  return all.filter((person) => person.isInternal || person.orgId === orgId);
+}
+
 export async function updatePerson(
   db: AgentosPgDb,
   id: string,

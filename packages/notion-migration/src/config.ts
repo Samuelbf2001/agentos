@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DEFAULT_MAX_ATTACHMENT_BYTES } from "./notion-client.js";
 
 export interface SnapshotSettings {
   apiVersion: string;
@@ -6,6 +7,8 @@ export interface SnapshotSettings {
   projectsDatabaseId: string;
   tasksDatabaseId: string;
   token: string;
+  /** Tope de tamaño de un adjunto descargado (bytes); ver `DEFAULT_MAX_ATTACHMENT_BYTES`. */
+  maxAttachmentBytes: number;
 }
 
 export class SnapshotConfigError extends Error {
@@ -60,11 +63,17 @@ export function resolveSnapshotSettings(
     throw new SnapshotConfigError(`Faltan secretos o identificadores: ${missing.join(", ")}`);
   }
 
+  const maxAttachmentMb = Number.parseFloat(nonEmpty(values.NOTION_SNAPSHOT_MAX_ATTACHMENT_MB) ?? "");
+
   return {
     token,
     tasksDatabaseId,
     projectsDatabaseId,
     apiVersion: nonEmpty(values.NOTION_SNAPSHOT_API_VERSION) ?? "2022-06-28",
     outputDirectory: path.resolve(options.outputDirectory ?? "data/notion-snapshots"),
+    maxAttachmentBytes:
+      Number.isFinite(maxAttachmentMb) && maxAttachmentMb > 0
+        ? Math.round(maxAttachmentMb * 1024 * 1024)
+        : DEFAULT_MAX_ATTACHMENT_BYTES,
   };
 }

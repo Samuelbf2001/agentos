@@ -16,10 +16,14 @@ export { bindDomainTools, claudeCodeAllowlist } from "./domain-tools.js";
 export { createAuthService, extractToken, type Session } from "./auth.js";
 export {
   createNotificationProcessor,
+  createNotificationScheduler,
+  resolveNotificationIntervalMs,
+  DEFAULT_NOTIFICATION_INTERVAL_MS,
   createEmailDeliveryFromEnv,
   type EmailMessage,
   type NotificationDelivery,
   type NotificationProcessor,
+  type NotificationScheduler,
   type NotificationDispatchResult,
 } from "./notifications.js";
 

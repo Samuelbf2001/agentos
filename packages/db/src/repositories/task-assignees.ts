@@ -110,9 +110,11 @@ export function boardTasksWithAssignees(db: AgentosSqliteDb, projectId: string):
 }
 
 /**
- * Verifica la regla de aislamiento humano: cada persona debe existir y
- * pertenecer a la organización dueña del proyecto. Se exporta para que
- * `createTask` y la reposición compartan exactamente la misma validación.
+ * Verifica la regla de aislamiento humano: cada persona debe existir y, o
+ * bien pertenecer a la organización dueña del proyecto, o bien ser personal
+ * interno (`is_internal`) asignable a cualquier proyecto (I3). Se exporta
+ * para que `createTask` y la reposición compartan exactamente la misma
+ * validación.
  */
 export function validateTaskAssigneeOrganization(
   db: AgentosSqliteDb,
@@ -124,9 +126,10 @@ export function validateTaskAssigneeOrganization(
   for (const personId of personIds) {
     const person = db.select().from(people).where(eq(people.id, personId)).get();
     if (!person) throw errors.notFound("person", personId);
+    if (person.isInternal) continue;
     if (person.orgId !== project.orgId) {
       throw errors.validation(
-        `La persona ${personId} no pertenece a la organización del proyecto ${projectId}`,
+        `La persona ${personId} no pertenece a la organización del proyecto ${projectId} ni es personal interno`,
         { projectId, projectOrgId: project.orgId, personId, personOrgId: person.orgId },
       );
     }
@@ -170,9 +173,16 @@ function normalizeAssignees(
       flaggedPrimary: flagged[0].personId,
     });
   }
+  // Sin primario explícito: con un solo responsable, esa persona es la
+  // principal (no tiene sentido pedirle al usuario que marque lo obvio). Con
+  // varios y ninguno marcado, el primero de la lista gana por convención —
+  // preserva el orden de selección de la interfaz y evita dejar la tarea sin
+  // primario, lo que bloquearía BACKLOG→READY (I: el motor exige
+  // assigneePersonId para esa transición).
+  const primaryPersonId = explicitPrimary ?? personIds[0] ?? null;
   return {
     personIds,
-    primaryPersonId: explicitPrimary ?? null,
+    primaryPersonId,
     assignedBy: input.assignedBy ?? input.actor ?? "system:task-assignment",
   };
 }

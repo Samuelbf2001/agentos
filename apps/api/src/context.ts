@@ -30,8 +30,10 @@ import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { recoverOnBoot, type RecoveryReport } from "./recovery.js";
 import {
   createNotificationProcessor,
+  createNotificationScheduler,
   type NotificationDelivery,
   type NotificationProcessor,
+  type NotificationScheduler,
 } from "./notifications.js";
 
 export const API_VERSION = "0.1.0";
@@ -63,6 +65,11 @@ export interface ApiOptions {
   /** Reloj inyectable para tests de ventana 24h y deduplicación. */
   notificationNow?: () => number;
   dispatchIntervalMs?: number;
+  /**
+   * Cadencia del reloj de recordatorios (`processDue`). Por defecto sale de
+   * `AGENTOS_NOTIFICATIONS_INTERVAL_MS`; 0 lo deja apagado.
+   */
+  notificationIntervalMs?: number;
   reaperIntervalMs?: number;
   leaseMs?: number;
   defaultRunTimeoutMs?: number;
@@ -80,6 +87,8 @@ export interface ApiContext {
   whatsappHub: WhatsAppHubConnector;
   /** Procesador de los únicos avisos permitidos por el MVP. */
   notifications: NotificationProcessor;
+  /** Reloj que dispara `processDue`; apagado si el intervalo es 0. */
+  notificationScheduler: NotificationScheduler;
   pool: RunnerPool;
   dispatcher: Dispatcher;
   auth: AuthService;
@@ -88,6 +97,22 @@ export interface ApiContext {
   channelSecret?: string | undefined;
   corsOrigin: string | string[];
   close(): Promise<void>;
+}
+
+/**
+ * Origen(es) permitidos por CORS. Sin variable sigue siendo `:4301` (el default
+ * de cero fricción); `AGENTOS_WEB_ORIGIN` admite una lista separada por comas
+ * para levantar una segunda copia de la app en otro puerto sin tocar código.
+ */
+export function resolveCorsOrigin(
+  raw: string | undefined = process.env.AGENTOS_WEB_ORIGIN,
+): string | string[] {
+  const origins = (raw ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (origins.length === 0) return DEFAULT_WEB_ORIGIN;
+  return origins.length === 1 ? origins[0]! : origins;
 }
 
 export async function createApiContext(options: ApiOptions = {}): Promise<ApiContext> {
@@ -170,8 +195,19 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     ...(options.reaperIntervalMs !== undefined ? { reaperIntervalMs: options.reaperIntervalMs } : {}),
     ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
   });
+  // 6b. Reloj de recordatorios: `processDue` ya existía pero nadie lo llamaba.
+  const notificationScheduler = createNotificationScheduler({
+    processor: notifications,
+    ...(options.notificationIntervalMs !== undefined
+      ? { intervalMs: options.notificationIntervalMs }
+      : {}),
+    onError: (err) => {
+      console.warn("[agentos-api] ciclo de recordatorios falló:", err);
+    },
+  });
   if (options.autoStartLoops !== false) {
     dispatcher.start();
+    notificationScheduler.start();
   }
 
   const auth = createAuthService({
@@ -188,17 +224,19 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     toolRuntime,
     whatsappHub,
     notifications,
+    notificationScheduler,
     pool,
     dispatcher,
     auth,
     recovery,
     startedAt: nowMs(),
     channelSecret: options.channelSecret ?? process.env.AGENTOS_CHANNEL_WEB_SECRET,
-    corsOrigin: options.corsOrigin ?? DEFAULT_WEB_ORIGIN,
+    corsOrigin: options.corsOrigin ?? resolveCorsOrigin(),
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
       dispatcher.stop();
+      notificationScheduler.stop();
       await closeAnyDb(db);
     },
   };
