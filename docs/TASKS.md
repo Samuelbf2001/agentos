@@ -131,3 +131,12 @@ La suite web queda en 24 archivos / 201 tests tras integrar la ficha estilo Noti
 - H12 / `projects.create` con approval — diferido.
 - Fase 2 sin construir: WhatsApp (adaptador, el contrato de gateway ya existe), entrevistas IA masivas, auto-mejora de prompts, portal del cliente, MCPs externos reales, catálogo completo de ~50 actividades.
 - Postgres: ~~portar la app (repos async, motor de launch)~~ ✅ hecho en `feat/postgres-async`. Queda: RLS por cliente (disparador 4 de `POSTGRES.md` §1) y `FOR UPDATE SKIP LOCKED` como mejora opcional de rendimiento del claim en lote.
+
+## Entorno de pruebas (rama `feat/sandbox`, 2026-09-05)
+
+Modo pruebas reutilizable ✅ hecho: `AGENTOS_SANDBOX=1` habilita `POST
+/api/auth/sandbox-login` (fail-closed en producción, `resolveSandbox` en
+`apps/api/src/context.ts`); LoginView y el chip "Pruebas" del shell reaccionan
+a `sandbox` en `GET /api/health`; `scripts/sandbox.mjs` (+ `pnpm sandbox:*` y
+`.claude/launch.json`) copia `data/agentos.db` a `data/sandbox.db` y arranca
+api/web en `:4310`/`:4311`. Detalle de uso en `docs/SANDBOX.md`.

@@ -7,6 +7,8 @@ import { Spinner } from "../components/ui";
 
 export default function LoginView() {
   const login = useStore((s) => s.login);
+  const loginSandbox = useStore((s) => s.loginSandbox);
+  const sandbox = useStore((s) => s.sandbox);
   const [people, setPeople] = useState<Person[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [personId, setPersonId] = useState("");
@@ -51,6 +53,18 @@ export default function LoginView() {
     }
   }
 
+  async function onSandboxLogin() {
+    setError(null);
+    setBusy(true);
+    try {
+      await loginSandbox(personId);
+    } catch (err) {
+      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Error de red");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex h-full items-center justify-center bg-line-soft">
       <form
@@ -61,6 +75,12 @@ export default function LoginView() {
         <p className="mt-1 text-small text-muted">
           Contraseña compartida + persona del equipo (auth simple del MVP).
         </p>
+
+        {sandbox ? (
+          <p className="mt-3 rounded-tight border border-line bg-canvas-deep px-2.5 py-1.5 text-small text-muted">
+            Entorno de pruebas: los datos son una copia y los cambios no llegan al sistema real.
+          </p>
+        ) : null}
 
         {people === null ? (
           <Spinner label="Cargando personas…" />
@@ -89,6 +109,17 @@ export default function LoginView() {
                   reintentar
                 </button>
               </p>
+            ) : null}
+
+            {sandbox ? (
+              <button
+                type="button"
+                onClick={() => void onSandboxLogin()}
+                disabled={busy || !personId}
+                className="mt-3 w-full rounded-tight border border-line bg-surface py-2 text-body font-medium text-ink hover:bg-ink-2 hover:text-surface disabled:opacity-40"
+              >
+                Entrar sin contraseña
+              </button>
             ) : null}
 
             <label className="mt-3 block text-small font-medium text-muted" htmlFor="password">
