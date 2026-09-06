@@ -16,6 +16,7 @@ import SystemTeamView from "../src/views/SystemTeamView";
 import AssetView from "../src/views/AssetView";
 import ContextView from "../src/views/ContextView";
 import AdminView from "../src/views/AdminView";
+import { AgentsSection } from "../src/views/AgentsSection";
 import LoginView from "../src/views/LoginView";
 import {
   agents,
@@ -260,9 +261,14 @@ describe("smoke de vistas", () => {
     expect(await screen.findByText("Sin documentos")).toBeTruthy();
   });
 
-  it("AdminView pinta la tabla de agentes con pausa", async () => {
-    ui(<AdminView />);
+  it("AgentsSection pinta la tabla de agentes con pausa", async () => {
+    ui(<AgentsSection />);
     expect(await screen.findByText("Alex")).toBeTruthy();
     expect(screen.getAllByText("⏸ Pausar").length).toBeGreaterThan(0);
+  });
+
+  it("AdminView pinta la configuración", async () => {
+    ui(<AdminView />);
+    expect(await screen.findByText("app_config (semáforos y presupuestos)")).toBeTruthy();
   });
 });

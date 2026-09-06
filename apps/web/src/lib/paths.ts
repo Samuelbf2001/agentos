@@ -20,7 +20,7 @@ export const PROJECT_TAB_LABELS: Record<ProjectTab, string> = {
 export const CONTEXT_SUBTABS = ["documentos", "procesos"] as const;
 export type ContextSubtab = (typeof CONTEXT_SUBTABS)[number];
 
-export const SYSTEM_TABS = ["ahora", "actividad", "fuentes", "equipo", "ajustes"] as const;
+export const SYSTEM_TABS = ["ahora", "actividad", "fuentes", "equipo", "configuracion"] as const;
 export type SystemTab = (typeof SYSTEM_TABS)[number];
 
 export const SYSTEM_TAB_LABELS: Record<SystemTab, string> = {
@@ -28,7 +28,7 @@ export const SYSTEM_TAB_LABELS: Record<SystemTab, string> = {
   actividad: "Actividad",
   fuentes: "Fuentes",
   equipo: "Equipo",
-  ajustes: "Ajustes",
+  configuracion: "Configuración",
 };
 
 /** Filtros que se pueden fijar desde un enlace a la vista Tareas. */
