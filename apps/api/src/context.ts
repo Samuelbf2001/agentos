@@ -63,6 +63,25 @@ export function isProductionEnv(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
+ * Modo pruebas ("sandbox"): entrada sin contraseña sobre una COPIA local de la
+ * base de datos. `AGENTOS_SANDBOX=1/true` lo activa. Fail-closed: jamás
+ * convive con `NODE_ENV=production` — se lanza el mismo tipo de error de
+ * configuración que las demás guardas en vez de arrancar con un agujero de
+ * autenticación en un despliegue real.
+ */
+const SANDBOX_IN_PRODUCTION_MESSAGE =
+  "AGENTOS_SANDBOX no puede activarse con NODE_ENV=production: el modo pruebas permite entrar sin contraseña y solo existe para copias locales de la base de datos.";
+
+export function resolveSandbox(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.AGENTOS_SANDBOX ?? "").trim().toLowerCase();
+  const sandbox = raw === "1" || raw === "true";
+  if (sandbox && isProductionEnv(env)) {
+    throw errors.configuration(SANDBOX_IN_PRODUCTION_MESSAGE, { variable: "AGENTOS_SANDBOX" });
+  }
+  return sandbox;
+}
+
+/**
  * ¿El arranque debe sembrar la demo (org ACME + launch del módulo Consultoría)?
  * El catálogo (org Sixteam, agentes, metodologías, módulos, proveedores,
  * config) se siembra SIEMPRE — es idempotente y no expone datos de cliente.
@@ -146,6 +165,12 @@ export interface ApiOptions {
   rateLimit?: { login?: Partial<RateLimitRule>; people?: Partial<RateLimitRule> };
   /** Secreto opcional del gateway de canales (header x-channel-secret). */
   channelSecret?: string;
+  /**
+   * Modo pruebas: entrada sin contraseña (tests). Por defecto sale de
+   * `AGENTOS_SANDBOX`; la guarda de producción se aplica siempre sobre el
+   * valor final, override incluido.
+   */
+  sandbox?: boolean;
   /** Runners inyectables (tests: SIEMPRE fakes; jamás LLM real en tests). */
   runners?: Partial<Record<AgentRuntime, AgentRunner>>;
   /** Arranca los bucles (despachador + reaper) automáticamente (default true). */
@@ -189,6 +214,8 @@ export interface ApiContext {
   channelSecret?: string | undefined;
   corsOrigin: string | string[];
   rateLimits: RateLimitConfig;
+  /** Modo pruebas activo: entrada sin contraseña habilitada (ver `resolveSandbox`). */
+  sandbox: boolean;
   close(): Promise<void>;
 }
 
@@ -245,6 +272,17 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
   const corsOrigin = options.corsOrigin ?? resolveCorsOrigin();
   const rateLimits = resolveRateLimits(options.rateLimit);
   const cookieSecure = options.cookieSecure ?? resolveCookieSecure();
+  // El override de tests también pasa por la guarda de producción: nadie
+  // fuerza `sandbox: true` con NODE_ENV=production, ni siquiera un test.
+  const sandbox = options.sandbox ?? resolveSandbox();
+  if (options.sandbox !== undefined && sandbox && isProductionEnv()) {
+    throw errors.configuration(SANDBOX_IN_PRODUCTION_MESSAGE, { variable: "AGENTOS_SANDBOX" });
+  }
+  if (sandbox) {
+    console.log(
+      "[agentos-api] MODO PRUEBAS activo: entrada sin contraseña habilitada. Nunca uses este proceso contra la base de datos real.",
+    );
+  }
 
   // 1) DB: abrir y migrar según el driver configurado (idempotente).
   const db = await openConfiguredDb({
@@ -361,6 +399,7 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     channelSecret: options.channelSecret ?? process.env.AGENTOS_CHANNEL_WEB_SECRET,
     corsOrigin,
     rateLimits,
+    sandbox,
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
