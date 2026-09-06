@@ -39,7 +39,7 @@ import {
   StatusPill,
   timeAgo,
 } from "../components/ui";
-import { STAGE_LABELS } from "../components/system";
+import { ActionButton, STAGE_LABELS } from "../components/system";
 
 /** La etiqueta de etapa vive en un solo sitio; se reexporta por compatibilidad. */
 export const STAGE_LABEL: Record<Stage, string> = STAGE_LABELS;
@@ -236,9 +236,9 @@ function Cell({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-16 space-y-2 rounded-tight p-1.5 transition-colors ${
-        isOver ? "bg-link-bg ring-1 ring-link" : ""
-      } ${compact ? "bg-surface-2/70" : ""}`}
+      className={`min-h-16 space-y-2 rounded-soft p-1.5 transition-colors ${
+        isOver ? "bg-link-bg ring-1 ring-link" : compact ? "bg-surface-2/70" : "bg-canvas-deep/50"
+      }`}
       data-testid={`cell-${stage}-${status}`}
     >
       {tasks.map((task) => (
@@ -249,38 +249,134 @@ function Cell({
   );
 }
 
-function DesktopBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>; people: Person[]; agents: ReturnType<typeof useStore.getState>["agents"] }) {
+/**
+ * Un carril por etapa (Entender/Construir/Operar). El de la etapa actual del
+ * proyecto se pinta abierto; los otros dos nacen plegados en una sola fila
+ * (estado local: no es una preferencia que valga la pena recordar entre
+ * sesiones) con el nombre, el número de tarjetas y "Mostrar"/"Ocultar".
+ */
+function StageLane({
+  stage,
+  isActive,
+  byCell,
+  cardCount,
+  people,
+  agents,
+}: {
+  stage: Stage;
+  isActive: boolean;
+  byCell: Map<string, Task[]>;
+  cardCount: number;
+  people: Person[];
+  agents: ReturnType<typeof useStore.getState>["agents"];
+}) {
+  const [open, setOpen] = useState(false);
+  const expanded = isActive || open;
+
+  if (!expanded) {
+    return (
+      <div
+        className="flex items-center gap-3 rounded-soft bg-canvas-deep/40 px-4 py-2"
+        data-testid={`lane-${stage}-plegado`}
+      >
+        <span className="text-small font-semibold text-ink-2">{STAGE_LABEL[stage]}</span>
+        {cardCount === 0 ? (
+          <span className="text-small text-faint">Sin tarjetas todavía</span>
+        ) : (
+          <>
+            <span className="text-small text-faint">
+              {cardCount} {cardCount === 1 ? "tarjeta" : "tarjetas"}
+            </span>
+            <button
+              type="button"
+              data-testid={`lane-${stage}-mostrar`}
+              onClick={() => setOpen(true)}
+              className="press ml-auto text-small font-semibold text-link hover:underline"
+            >
+              Mostrar
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="min-w-[1120px] pb-3">
-      <div className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 px-2">
-        <div />
+    <section
+      className="rounded-panel border border-line-soft bg-surface/70 p-2 shadow-rest"
+      data-testid={`lane-${stage}`}
+    >
+      <div className="flex items-center justify-between px-1 pb-1.5">
+        <span className="rounded-tight border border-line bg-canvas-deep px-2 py-1 text-label text-ink-2">
+          {STAGE_LABEL[stage]}
+        </span>
+        {!isActive ? (
+          <button
+            type="button"
+            data-testid={`lane-${stage}-ocultar`}
+            onClick={() => setOpen(false)}
+            className="press text-small font-semibold text-muted hover:text-ink-2"
+          >
+            Ocultar
+          </button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-[repeat(7,minmax(120px,1fr))] gap-2 px-1">
         {TASK_STATUSES.map((status) => (
-          <p key={status} className="px-1 text-label text-muted">
-            {STATUS_LABELS[status]}
+          <p key={status} className="flex items-baseline gap-1.5 px-1">
+            <span className="text-small font-semibold text-ink-2">{STATUS_LABELS[status]}</span>
+            <span className="text-label tabular-nums text-faint">
+              {(byCell.get(`${stage}|${status}`) ?? []).length}
+            </span>
           </p>
         ))}
       </div>
-      <div className="space-y-2">
-        {STAGES.map((stage) => (
-          <section key={stage} className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 rounded-panel border border-line-soft bg-surface/70 p-2 shadow-rest">
-            <div className="flex items-start pt-1">
-              <span className="rounded-tight border border-line bg-canvas-deep px-2 py-1 text-label text-ink-2">
-                {STAGE_LABEL[stage]}
-              </span>
-            </div>
-            {TASK_STATUSES.map((status) => (
-              <Cell
-                key={status}
-                stage={stage}
-                status={status}
-                tasks={byCell.get(`${stage}|${status}`) ?? []}
-                people={people}
-                agents={agents}
-              />
-            ))}
-          </section>
+      <div className="grid grid-cols-[repeat(7,minmax(120px,1fr))] gap-2 px-1 pt-1">
+        {TASK_STATUSES.map((status) => (
+          <Cell
+            key={status}
+            stage={stage}
+            status={status}
+            tasks={byCell.get(`${stage}|${status}`) ?? []}
+            people={people}
+            agents={agents}
+          />
         ))}
       </div>
+    </section>
+  );
+}
+
+function DesktopBoard({
+  byCell,
+  people,
+  agents,
+  projectStage,
+}: {
+  byCell: Map<string, Task[]>;
+  people: Person[];
+  agents: ReturnType<typeof useStore.getState>["agents"];
+  projectStage: Stage;
+}) {
+  return (
+    <div className="min-w-[1120px] space-y-2 pb-3">
+      {STAGES.map((stage) => {
+        const cardCount = TASK_STATUSES.reduce(
+          (total, status) => total + (byCell.get(`${stage}|${status}`)?.length ?? 0),
+          0,
+        );
+        return (
+          <StageLane
+            key={stage}
+            stage={stage}
+            isActive={stage === projectStage}
+            byCell={byCell}
+            cardCount={cardCount}
+            people={people}
+            agents={agents}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -408,14 +504,9 @@ export default function BoardView({ projectId }: { projectId: string }) {
             {/* Sin cabecera duplicada: el nombre del cliente y la fase viven
                 arriba, en la barra del proyecto. Aquí sólo lo operativo. */}
             <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                data-testid="board-new-task"
-                onClick={() => setCreating(true)}
-                className="press inline-flex min-h-9 items-center justify-center gap-1.5 rounded-tight bg-ink px-3 py-1.5 text-small font-semibold text-surface"
-              >
+              <ActionButton variant="primary" data-testid="board-new-task" onClick={() => setCreating(true)}>
                 Nueva tarea
-              </button>
+              </ActionButton>
               <button
                 type="button"
                 data-testid="board-copilot-toggle"
@@ -431,18 +522,13 @@ export default function BoardView({ projectId }: { projectId: string }) {
               >
                 Copiloto
               </button>
-              <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-small">
-                <span className="text-muted">
-                  <span className="font-semibold tabular-nums text-ink-2">{counts.visible}</span> de{" "}
-                  {counts.total} visibles
-                </span>
-                <span className={counts.due > 0 ? "text-broken" : "text-muted"}>
-                  <span className="font-semibold tabular-nums">{counts.due}</span> vencidas o próximas
-                </span>
-                <span className={counts.unassigned > 0 ? "text-work" : "text-muted"}>
-                  <span className="font-semibold tabular-nums">{counts.unassigned}</span> sin responsable
-                </span>
-              </div>
+              <span className="ml-auto text-small text-muted">
+                <span className="font-semibold tabular-nums text-ink-2">{counts.visible}</span> de{" "}
+                {counts.total} visibles ·{" "}
+                <span className="font-semibold tabular-nums text-ink-2">{counts.due}</span> vencidas ·{" "}
+                <span className="font-semibold tabular-nums text-ink-2">{counts.unassigned}</span> sin
+                responsable
+              </span>
             </div>
             <fieldset className="mt-4">
               <legend className="sr-only">Filtros de tareas</legend>
@@ -533,7 +619,12 @@ export default function BoardView({ projectId }: { projectId: string }) {
                   <MobileBoard byCell={byCell} people={people.length > 0 ? people : currentPerson ? [currentPerson] : []} agents={agents} />
                 ) : (
                   <div className="overflow-x-auto">
-                    <DesktopBoard byCell={byCell} people={people.length > 0 ? people : currentPerson ? [currentPerson] : []} agents={agents} />
+                    <DesktopBoard
+                      byCell={byCell}
+                      people={people.length > 0 ? people : currentPerson ? [currentPerson] : []}
+                      agents={agents}
+                      projectStage={project?.stage ?? "ENTENDER"}
+                    />
                   </div>
                 )}
               </DndContext>
