@@ -39,42 +39,57 @@ function fmtInputValue(v: unknown): string {
   return String(v);
 }
 
-/** Recibo del lanzamiento, expandido: qué módulo creó este proyecto y con qué. */
+/** Fecha corta ("28/8") para el resumen plegado del recibo: sin hora, sin año. */
+function fmtDateShort(ts: number): string {
+  return new Date(ts).toLocaleDateString("es", { day: "numeric", month: "numeric" });
+}
+
+/**
+ * Recibo del lanzamiento: qué módulo creó este proyecto y con qué. Plegado
+ * por defecto, un `<summary>` de una línea basta para el 99% de las visitas;
+ * el detalle completo (entradas, opciones, presupuesto) se abre a un clic.
+ */
 function LaunchReceiptPanel({ launch }: { launch: LaunchReceipt }) {
   const toggles = Object.entries(launch.toggles ?? {});
   return (
     <Card className="mt-4 p-4" data-testid="launch-receipt">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-small text-muted">
-        <span className="text-body font-semibold text-ink">
-          {launch.module_name} v{launch.module_version}
-        </span>
-        <span>
-          Lanzado por <span className="font-semibold text-ink-2">{launch.actor_name ?? launch.actor}</span>
-        </span>
-        <span>{fmtDate(launch.created_at)}</span>
-        <span>
-          <span className="font-semibold text-ink-2">{launch.task_count}</span> tareas creadas
-        </span>
-        <span>
-          Presupuesto ${launch.budget_phase_usd} por fase · ${launch.budget_per_run_usd} por ejecución
-        </span>
-      </div>
-      <div className="mt-3 border-t border-line-soft pt-3">
-        <p className="mb-1.5 text-label text-muted">Con qué se disparó</p>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-small">
-          {Object.entries(launch.inputs).map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt className="text-muted">{humanizeKind(k)}</dt>
-              <dd className="min-w-0 break-words text-ink-2">{fmtInputValue(v)}</dd>
-            </div>
-          ))}
-        </dl>
-        {toggles.length > 0 ? (
-          <p className="mt-2 text-small text-muted">
-            Opciones: {toggles.map(([k, v]) => `${humanizeKind(k)}: ${v ? "sí" : "no"}`).join(" · ")}
-          </p>
-        ) : null}
-      </div>
+      <details>
+        <summary className="cursor-pointer text-small text-muted">
+          Con qué se disparó: {launch.module_name} v{launch.module_version} · lanzado por{" "}
+          {launch.actor_name ?? launch.actor} el {fmtDateShort(launch.created_at)}
+        </summary>
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-small text-muted">
+          <span className="text-body font-semibold text-ink">
+            {launch.module_name} v{launch.module_version}
+          </span>
+          <span>
+            Lanzado por <span className="font-semibold text-ink-2">{launch.actor_name ?? launch.actor}</span>
+          </span>
+          <span>{fmtDate(launch.created_at)}</span>
+          <span>
+            <span className="font-semibold text-ink-2">{launch.task_count}</span> tareas creadas
+          </span>
+          <span>
+            Presupuesto ${launch.budget_phase_usd} por fase · ${launch.budget_per_run_usd} por ejecución
+          </span>
+        </div>
+        <div className="mt-3 border-t border-line-soft pt-3">
+          <p className="mb-1.5 text-label text-muted">Con qué se disparó</p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-small">
+            {Object.entries(launch.inputs).map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted">{humanizeKind(k)}</dt>
+                <dd className="min-w-0 break-words text-ink-2">{fmtInputValue(v)}</dd>
+              </div>
+            ))}
+          </dl>
+          {toggles.length > 0 ? (
+            <p className="mt-2 text-small text-muted">
+              Opciones: {toggles.map(([k, v]) => `${humanizeKind(k)}: ${v ? "sí" : "no"}`).join(" · ")}
+            </p>
+          ) : null}
+        </div>
+      </details>
     </Card>
   );
 }
@@ -246,18 +261,18 @@ export default function RutaView({ project }: { project: Project }) {
           return (
             <div key={column.stage} className="flex flex-col gap-3">
               <Card
-                className={`p-3.5 ${isCurrent ? "border-work-line bg-work-bg" : column.status === "closed" ? "opacity-80" : ""}`}
+                className={`p-4 ${isCurrent ? "ring-2 ring-link/30" : column.status === "blocked" ? "opacity-70" : ""}`}
                 data-testid={`cycle-column-${column.stage}`}
               >
                 <div className="flex items-center gap-2">
-                  <h3 className={`text-label ${isCurrent ? "text-work" : "text-muted"}`}>
+                  <h3 className={`text-label ${isCurrent ? "text-link" : "text-muted"}`}>
                     {STAGE_LABELS[column.stage]}
                   </h3>
                   <span className="ml-auto">
                     {column.status === "closed" ? (
                       <Chip tone="done">Cerrada</Chip>
                     ) : isCurrent ? (
-                      <Chip tone="work">Aquí</Chip>
+                      <Chip tone="link">Aquí</Chip>
                     ) : (
                       <Chip tone="quiet">Sin abrir</Chip>
                     )}

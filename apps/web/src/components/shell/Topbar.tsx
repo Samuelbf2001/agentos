@@ -43,12 +43,16 @@ export function Topbar({
         <Menu size={16} strokeWidth={1.75} aria-hidden="true" />
       </button>
 
-      <div className="flex min-w-0 items-center gap-1.5 text-small text-muted">
-        <span className={project ? "shrink-0" : "truncate font-semibold text-ink"}>Sixteam</span>
+      {/* min-w-0 + flex-1: la miga se encoge antes de empujar los botones de
+          la derecha; cada tramo trunca por su cuenta. Bajo `lg` el cliente se
+          oculta (queda "Sixteam › <proyecto>"): con el proyecto ya en foco,
+          el cliente es lo primero que sobra en un ancho estrecho. */}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-small text-muted">
+        <span className={`truncate ${project ? "shrink-0" : "font-semibold text-ink"}`}>Sixteam</span>
         {project ? (
           <>
-            <span aria-hidden="true" className="text-faint">›</span>
-            <span className="truncate">{clientName}</span>
+            <span aria-hidden="true" className="hidden text-faint lg:inline">›</span>
+            <span className="hidden truncate lg:inline">{clientName}</span>
             <span aria-hidden="true" className="text-faint">›</span>
             <span className="truncate font-semibold text-ink">{project.name}</span>
             <PhaseChip stage={project.stage} />
