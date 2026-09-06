@@ -96,6 +96,6 @@ describe("shell por capacidades", () => {
     expect(await screen.findByRole("heading", { name: project.name })).toBeTruthy();
     expect(within(nav).queryByText("Conversación")).toBeNull();
     const rutaLink = within(nav).getByRole("link", { name: "Resumen" });
-    expect(rutaLink.className).toContain("bg-link-bg");
+    expect(rutaLink.className).toContain("bg-link");
   });
 });

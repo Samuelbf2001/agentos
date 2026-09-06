@@ -105,7 +105,7 @@ export default function ProjectLayout() {
   return (
     <div className="density-operar flex min-h-full flex-col">
       <div className="mx-auto flex w-full max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-4 pb-2 sm:px-5">
-        <h1 className="text-title text-ink">{project.name}</h1>
+        <h1 className="mt-2 text-display text-ink">{project.name}</h1>
         <PhaseChip stage={project.stage} />
         <GateChip state={project.gateState} />
       </div>

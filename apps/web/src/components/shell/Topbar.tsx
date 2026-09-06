@@ -33,7 +33,7 @@ export function Topbar({
   const clientName = project ? (project.orgName ?? clienteLabel(project.orgId, { projects })) : null;
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-surface px-3 sm:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 bg-canvas px-4 sm:px-6">
       <button
         type="button"
         onClick={onOpenMenu}
@@ -44,13 +44,13 @@ export function Topbar({
       </button>
 
       <div className="flex min-w-0 items-center gap-1.5 text-small text-muted">
-        <span className={project ? "shrink-0" : "truncate font-medium text-ink"}>Sixteam</span>
+        <span className={project ? "shrink-0" : "truncate font-semibold text-ink"}>Sixteam</span>
         {project ? (
           <>
-            <span aria-hidden="true">›</span>
+            <span aria-hidden="true" className="text-faint">›</span>
             <span className="truncate">{clientName}</span>
-            <span aria-hidden="true">›</span>
-            <span className="truncate font-medium text-ink">{project.name}</span>
+            <span aria-hidden="true" className="text-faint">›</span>
+            <span className="truncate font-semibold text-ink">{project.name}</span>
             <PhaseChip stage={project.stage} />
           </>
         ) : null}
@@ -60,18 +60,18 @@ export function Topbar({
         {caps.has("buscar") ? (
           <button
             onClick={onSearch}
-            className="press hidden min-h-8 items-center gap-2 rounded-tight border border-line bg-surface px-2.5 py-1 text-small text-muted sm:inline-flex"
+            className="press hidden min-h-8 items-center gap-2 rounded-full bg-surface shadow-rest px-3 py-1.5 text-small text-muted sm:inline-flex"
           >
             <Search size={16} strokeWidth={1.75} aria-hidden="true" />
             Buscar tareas
-            <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">/</kbd>
+            <kbd className="rounded-md bg-canvas-deep px-1.5 font-sans text-label text-muted">/</kbd>
           </button>
         ) : null}
         {caps.has("agentes:pausar") ? (
           killSwitch ? (
             <button
               onClick={() => onToggleKillSwitch(false)}
-              className="press inline-flex min-h-8 items-center gap-1.5 rounded-tight border border-done-line bg-done-bg px-2.5 py-1 text-small font-semibold text-done"
+              className="press inline-flex min-h-8 items-center gap-1.5 rounded-full bg-surface shadow-rest px-3 py-1.5 text-small font-semibold text-done"
             >
               <Play size={16} strokeWidth={1.75} aria-hidden="true" />
               Reanudar agentes
@@ -79,7 +79,7 @@ export function Topbar({
           ) : (
             <button
               onClick={() => onToggleKillSwitch(true)}
-              className="press inline-flex min-h-8 items-center gap-1.5 rounded-tight border border-line bg-surface px-2.5 py-1 text-small font-semibold text-muted"
+              className="press inline-flex min-h-8 items-center gap-1.5 rounded-full bg-surface shadow-rest px-3 py-1.5 text-small font-semibold text-muted"
             >
               <Pause size={16} strokeWidth={1.75} aria-hidden="true" />
               Pausar agentes

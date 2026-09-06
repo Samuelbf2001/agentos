@@ -66,10 +66,10 @@ export default function LoginView() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-line-soft">
+    <div className="flex h-full items-center justify-center bg-canvas">
       <form
         onSubmit={onSubmit}
-        className="w-96 rounded-panel border border-line bg-surface p-6 shadow-rest"
+        className="w-full max-w-sm rounded-panel bg-surface shadow-raise p-7"
       >
         <h1 className="text-title font-bold">AgentOS — Sixteam</h1>
         <p className="mt-1 text-small text-muted">
@@ -116,7 +116,7 @@ export default function LoginView() {
                 type="button"
                 onClick={() => void onSandboxLogin()}
                 disabled={busy || !personId}
-                className="mt-3 w-full rounded-tight border border-line bg-surface py-2 text-body font-medium text-ink hover:bg-ink-2 hover:text-surface disabled:opacity-40"
+                className="mt-3 w-full rounded-full bg-canvas-deep py-2 text-body font-medium text-ink hover:bg-line disabled:opacity-40"
               >
                 Entrar sin contraseña
               </button>
@@ -139,7 +139,7 @@ export default function LoginView() {
             <button
               type="submit"
               disabled={busy || !personId || !password}
-              className="mt-4 w-full rounded-tight bg-ink py-2 text-body font-medium text-surface hover:bg-ink-2 disabled:opacity-40"
+              className="mt-4 w-full rounded-full bg-link py-2 text-body font-medium text-surface hover:brightness-95 disabled:opacity-40"
             >
               {busy ? "Entrando…" : "Entrar"}
             </button>

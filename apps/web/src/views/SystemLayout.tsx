@@ -41,8 +41,8 @@ export default function SystemLayout() {
   return (
     <div className="flex min-h-full flex-col">
       <div className="mx-auto w-full max-w-[1180px] px-4 pt-4 sm:px-5">
-        <h1 className="text-title text-ink">{SYSTEM_TAB_LABELS[current]}</h1>
-        <p className="mt-0.5 text-small text-muted">{TAB_SUBTITLES[current]}</p>
+        <h1 className="mt-2 text-display text-ink">{SYSTEM_TAB_LABELS[current]}</h1>
+        <p className="mt-1 text-body text-muted max-w-[60ch]">{TAB_SUBTITLES[current]}</p>
       </div>
 
       {current === "ahora" ? (

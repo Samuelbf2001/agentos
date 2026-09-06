@@ -87,7 +87,7 @@ export function PerspectiveSwitch({
     <button
       type="button"
       data-testid="perspective-switch"
-      className="press flex w-full items-center gap-2 rounded-soft border border-line bg-surface-2 px-3 py-2 text-left"
+      className="press flex w-full items-center gap-2 rounded-soft bg-surface shadow-rest px-3 py-2 text-left"
     >
       <span className="min-w-0 flex-1">
         {current ? (

@@ -11,13 +11,24 @@ import { useStore } from "../../state/store";
 import { PersonAvatar } from "../ui";
 import { PerspectiveSwitch } from "./PerspectiveSwitch";
 
-function NavBadge({ count, tone }: { count: number; tone: "decide" | "broken" }) {
+function NavBadge({
+  count,
+  tone,
+  active,
+}: {
+  count: number;
+  tone: "decide" | "broken";
+  active?: boolean;
+}) {
   if (count <= 0) return null;
+  const toneClass = active
+    ? "bg-surface/25 text-surface"
+    : tone === "decide"
+      ? "bg-decide text-surface"
+      : "bg-broken text-surface";
   return (
     <span
-      className={`ml-auto inline-flex min-w-4 items-center justify-center rounded-full px-1 text-label font-bold tabular-nums ${
-        tone === "decide" ? "bg-decide text-surface" : "bg-broken text-surface"
-      }`}
+      className={`ml-auto inline-flex min-w-4 items-center justify-center rounded-full px-1 text-label font-bold tabular-nums ${toneClass}`}
     >
       {count}
     </span>
@@ -45,16 +56,16 @@ function NavRow({
   indent?: boolean;
   onNavigate?: () => void;
 }) {
-  const classes = `flex items-center gap-2.5 rounded-tight py-1.5 text-small font-medium ${
-    indent ? "pl-9 pr-2.5" : "px-2.5"
-  } ${active ? "bg-link-bg text-link" : "text-ink-2 hover:bg-canvas-deep"}`;
+  const classes = `flex items-center gap-2.5 rounded-soft py-[7px] text-small font-medium ${
+    indent ? "pl-10 pr-3" : "px-3"
+  } ${active ? "bg-link text-surface" : "text-ink hover:bg-canvas-deep"}`;
 
   const content = (
     <>
       <ItemIcon icon={item.icon} />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
       {item.badge ? (
-        <NavBadge count={badges[item.badge]} tone={item.badge === "decisions" ? "decide" : "broken"} />
+        <NavBadge count={badges[item.badge]} tone={item.badge === "decisions" ? "decide" : "broken"} active={active} />
       ) : null}
       {item.external ? (
         <ExternalLink size={12} className="shrink-0 text-faint" aria-hidden="true" />
@@ -96,7 +107,7 @@ function NavGroupBlock({
   return (
     <div className="mt-1 first:mt-0">
       {group.label ? (
-        <div className="mt-3 px-2 text-label text-faint">{group.label}</div>
+        <div className="mt-5 mb-1 px-3 text-label text-faint">{group.label}</div>
       ) : null}
       <div className="flex flex-col gap-0.5">
         {group.items.map((item) => {
@@ -144,13 +155,10 @@ export function Sidebar({
   const logout = useStore((s) => s.logout);
 
   return (
-    <aside className="flex h-full w-[248px] flex-col border-r border-line bg-surface">
-      <div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-line-soft px-3 font-semibold tracking-tight">
-        <span
-          aria-hidden="true"
-          className="block h-[22px] w-[22px] shrink-0 rounded-[7px] bg-gradient-to-br from-ink to-muted"
-        />
-        AgentOS
+    <aside className="flex h-full w-[248px] flex-col bg-canvas">
+      <div className="flex h-14 shrink-0 items-center gap-2.5 px-3">
+        <span aria-hidden="true" className="block h-6 w-6 shrink-0 rounded-[8px] bg-ink" />
+        <span className="text-body font-semibold text-ink">AgentOS</span>
         {sandbox ? (
           <kbd
             title="Entorno de pruebas: copia de datos, sin efectos reales"
@@ -175,7 +183,7 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="border-t border-line-soft px-3 py-2.5">
+      <div className="px-3 py-3">
         <div className="flex items-center gap-2">
           <span
             title={

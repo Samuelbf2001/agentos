@@ -134,7 +134,7 @@ describe("shell y navegación", () => {
     renderApp(`/proyectos/${project.id}/contexto/procesos`);
     const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
     const contextoLink = within(nav).getByRole("link", { name: "Contexto" });
-    expect(contextoLink.className).toContain("bg-link-bg");
+    expect(contextoLink.className).toContain("bg-link");
     // El hijo del lateral sólo se pinta con el padre activo.
     expect(within(nav).getByRole("link", { name: "Procesos" })).toBeTruthy();
     expect(await screen.findByText("Sin procesos mapeados")).toBeTruthy();
