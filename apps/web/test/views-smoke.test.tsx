@@ -255,7 +255,7 @@ describe("smoke de vistas", () => {
   });
 
   it("ContextView pinta pestañas y estado vacío", async () => {
-    ui(<ContextView />);
+    ui(<ContextView sub="documentos" />);
     expect(screen.getByText("Documentos")).toBeTruthy();
     expect(await screen.findByText("Sin documentos")).toBeTruthy();
   });

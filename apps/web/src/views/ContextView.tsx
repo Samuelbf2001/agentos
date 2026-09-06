@@ -7,6 +7,7 @@
  * de WhatsApp de 2brain (WhatsAppHub) e ingerirlas como docs tipados del Hub.
  */
 import { useEffect, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import type {
   KnowledgeDoc,
@@ -19,6 +20,7 @@ import type {
 import { useStore } from "../state/store";
 import { Markdown } from "../components/Markdown";
 import { EmptyState, ErrorBox, fmtDate, Spinner } from "../components/ui";
+import { paths, type ContextSubtab } from "../lib/paths";
 
 const KIND_LABELS: Record<string, string> = {
   org_profile: "Perfil de organización",
@@ -537,29 +539,29 @@ function ProcessesTab() {
  * son de Sixteam y no del cliente; el panel de reuniones vive en Sistema ›
  * Fuentes, porque es transversal a todos los proyectos.
  */
-export default function ContextView() {
-  const [tab, setTab] = useState<"docs" | "processes">("docs");
+export default function ContextView({ sub }: { sub: ContextSubtab }) {
+  const activeProjectId = useStore((s) => s.activeProjectId);
   const tabs = [
-    { id: "docs" as const, label: "Documentos" },
-    { id: "processes" as const, label: "Procesos" },
+    { id: "documentos" as const, label: "Documentos" },
+    { id: "procesos" as const, label: "Procesos" },
   ];
   return (
     <div className="density-explorar mx-auto max-w-[1180px] px-4 pb-20 pt-5 sm:px-5">
       <div className="mb-4 flex gap-0.5">
         {tabs.map((t) => (
-          <button
+          <NavLink
             key={t.id}
-            onClick={() => setTab(t.id)}
-            aria-pressed={tab === t.id}
+            to={activeProjectId ? paths.contexto(activeProjectId, t.id) : "#"}
+            aria-pressed={sub === t.id}
             className={`press inline-flex min-h-9 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
-              tab === t.id ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
+              sub === t.id ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
             }`}
           >
             {t.label}
-          </button>
+          </NavLink>
         ))}
       </div>
-      {tab === "docs" ? <DocsTab /> : <ProcessesTab />}
+      {sub === "documentos" ? <DocsTab /> : <ProcessesTab />}
     </div>
   );
 }

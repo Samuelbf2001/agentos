@@ -10,7 +10,14 @@ import { Link, NavLink, Navigate, useParams } from "react-router-dom";
 import { useStore } from "../state/store";
 import { EmptyState, Spinner } from "../components/ui";
 import { Chip, PhaseChip } from "../components/system";
-import { PROJECT_TAB_LABELS, PROJECT_TABS, paths, type ProjectTab } from "../lib/paths";
+import {
+  CONTEXT_SUBTABS,
+  PROJECT_TAB_LABELS,
+  PROJECT_TABS,
+  paths,
+  type ContextSubtab,
+  type ProjectTab,
+} from "../lib/paths";
 import BoardView from "./BoardView";
 import ChatView from "./ChatView";
 import ContextView from "./ContextView";
@@ -24,7 +31,7 @@ function GateChip({ state }: { state: "pending" | "approved" | "rejected" }) {
 }
 
 export default function ProjectLayout() {
-  const { projectId, tab } = useParams<{ projectId: string; tab?: string }>();
+  const { projectId, tab, sub } = useParams<{ projectId: string; tab?: string; sub?: string }>();
   const projects = useStore((s) => s.projects);
   const activeProjectId = useStore((s) => s.activeProjectId);
   const setActiveProject = useStore((s) => s.setActiveProject);
@@ -41,8 +48,20 @@ export default function ProjectLayout() {
     return <Navigate to={paths.proyecto(projectId, "ruta")} replace />;
   }
 
-  const project = projects.find((p) => p.id === projectId);
   const current = tab as ProjectTab;
+
+  if (current !== "contexto" && sub) {
+    return <Navigate to={paths.proyecto(projectId, current)} replace />;
+  }
+  if (current === "contexto" && sub && !CONTEXT_SUBTABS.includes(sub as ContextSubtab)) {
+    return <Navigate to={paths.contexto(projectId)} replace />;
+  }
+  const contextSub: ContextSubtab =
+    current === "contexto" && sub && CONTEXT_SUBTABS.includes(sub as ContextSubtab)
+      ? (sub as ContextSubtab)
+      : "documentos";
+
+  const project = projects.find((p) => p.id === projectId);
 
   if (!project) {
     return projects.length === 0 && bootstrapped ? (
@@ -107,7 +126,7 @@ export default function ProjectLayout() {
       <div className="min-h-0 flex-1">
         {current === "ruta" ? <RutaView project={project} /> : null}
         {current === "tablero" ? <BoardView /> : null}
-        {current === "contexto" ? <ContextView /> : null}
+        {current === "contexto" ? <ContextView sub={contextSub} /> : null}
         {current === "conversacion" ? <ChatView /> : null}
         {current === "actividad" ? <RunsView projectId={project.id} /> : null}
       </div>

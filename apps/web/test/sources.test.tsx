@@ -5,10 +5,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { useStore } from "../src/state/store";
 import ContextView from "../src/views/ContextView";
 import { mockFetch, person, project } from "./helpers";
 import type { ProjectSource } from "../src/lib/types";
+
+function ui() {
+  return render(
+    <MemoryRouter>
+      <ContextView sub="documentos" />
+    </MemoryRouter>,
+  );
+}
 
 const ingestedSource: ProjectSource = {
   id: "s-1",
@@ -58,7 +67,7 @@ describe("Fuentes del proyecto (vista Contexto)", () => {
         body: { sources: [ingestedSource, errorSource] },
       },
     ]);
-    render(<ContextView />);
+    ui();
     expect(await screen.findByText("Kickoff ACME")).toBeTruthy();
     expect(screen.getByText("ingerida")).toBeTruthy();
     expect(screen.getByText("error")).toBeTruthy();
@@ -80,7 +89,7 @@ describe("Fuentes del proyecto (vista Contexto)", () => {
         },
       },
     ]);
-    render(<ContextView />);
+    ui();
     fireEvent.click(await screen.findByText("Re-ingerir"));
     await waitFor(() => {
       expect(calls.some((c) => c.method === "POST" && c.url.includes("/api/sources/s-2/ingest"))).toBe(
@@ -131,7 +140,7 @@ describe("Fuentes del proyecto (vista Contexto)", () => {
         body: { source: { ...ingestedSource, id: "s-new" }, doc: { id: "kd-9", kind: "interview" } },
       },
     ]);
-    render(<ContextView />);
+    ui();
 
     fireEvent.click(await screen.findByText("+ Asociar fuente"));
     // Modal con tabs Reuniones / WhatsApp y buscador.
@@ -167,7 +176,7 @@ describe("Fuentes del proyecto (vista Contexto)", () => {
   it("sin proyecto activo no muestra la sección de fuentes ni llama a su API", async () => {
     useStore.setState({ activeProjectId: null });
     const { calls } = mockFetch([{ path: "/api/knowledge", body: { docs: [] } }]);
-    render(<ContextView />);
+    ui();
     await screen.findByText("Sin documentos");
     expect(screen.queryByText("Fuentes del proyecto (2brain)")).toBeNull();
     expect(calls.some((c) => c.url.includes("/sources"))).toBe(false);

@@ -23,6 +23,9 @@ const routes = [
   { path: "/api/tasks", body: { tasks: [] } },
   { path: "/api/auth/people", body: { people: [person] } },
   { path: "/api/brain/overview", body: { generated_at: null, core: { counts: {}, people: [] }, agents: { items: [], tree: null, health: [] }, sources: [], modules: [] } },
+  { path: "/api/knowledge", body: { docs: [] } },
+  { path: /^\/api\/projects\/[^/]+\/sources$/, body: { sources: [] } },
+  { path: "/api/processes", body: { processes: [] } },
 ];
 
 function renderApp(entry: string) {
@@ -114,6 +117,19 @@ describe("shell y navegación", () => {
     await screen.findByRole("navigation", { name: "Navegación principal" });
     expect(container.querySelector("header.chrome")).toBeTruthy();
     expect(container.querySelector(".scroll-edge")).toBeTruthy();
+  });
+
+  it("la sub-pestaña de Contexto vive en la URL", async () => {
+    renderApp(`/proyectos/${project.id}/contexto/procesos`);
+    const tabs = await screen.findByRole("navigation", { name: "Secciones del proyecto" });
+    const contextoLink = within(tabs).getByText("Contexto").closest("a");
+    expect(contextoLink?.className).toContain("bg-canvas-deep");
+    expect(await screen.findByText("Procesos")).toBeTruthy();
+  });
+
+  it("una sub-pestaña de Contexto inválida redirige a documentos", async () => {
+    renderApp(`/proyectos/${project.id}/contexto/otra`);
+    expect(await screen.findByText("Sin documentos")).toBeTruthy();
   });
 
   it("«/» abre el buscador de tareas desde cualquier pantalla y Esc lo cierra", async () => {

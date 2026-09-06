@@ -17,6 +17,9 @@ export const PROJECT_TAB_LABELS: Record<ProjectTab, string> = {
   actividad: "Actividad",
 };
 
+export const CONTEXT_SUBTABS = ["documentos", "procesos"] as const;
+export type ContextSubtab = (typeof CONTEXT_SUBTABS)[number];
+
 export const SYSTEM_TABS = ["ahora", "actividad", "fuentes", "equipo", "ajustes"] as const;
 export type SystemTab = (typeof SYSTEM_TABS)[number];
 
@@ -59,6 +62,8 @@ export const paths = {
   misTareas: () => "/tareas?responsable=yo",
   proyectos: () => "/proyectos",
   proyecto: (projectId: string, tab: ProjectTab = "ruta") => `/proyectos/${projectId}/${tab}`,
+  contexto: (projectId: string, sub: ContextSubtab = "documentos") =>
+    `/proyectos/${projectId}/contexto/${sub}`,
   nuevoProyecto: (params?: { projectId?: string; phase?: string; modulo?: string }) => {
     const search = new URLSearchParams();
     if (params?.projectId) search.set("proyecto", params.projectId);

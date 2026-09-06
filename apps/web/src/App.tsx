@@ -212,6 +212,7 @@ function Shell() {
           <Route path="/proyectos" element={<ProjectsView />} />
           <Route path="/proyectos/:projectId" element={<ProjectLayout />} />
           <Route path="/proyectos/:projectId/:tab" element={<ProjectLayout />} />
+          <Route path="/proyectos/:projectId/:tab/:sub" element={<ProjectLayout />} />
           <Route path="/nuevo-proyecto" element={<NewProjectWizard />} />
           <Route path="/sistema" element={<Navigate to={paths.sistema("ahora")} replace />} />
           <Route path="/sistema/actividad/:runId" element={<RunDetailView />} />
