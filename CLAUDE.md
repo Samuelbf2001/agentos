@@ -16,6 +16,8 @@ pnpm -r typecheck && pnpm -r test  # la suite debe quedar verde antes de cualqui
 
 Un seed nuevo arranca **pausado** (kill switch activo) para no gastar suscripción: se activa con "Reanudar agentes" en la UI o `agentos.system.resume_all` por MCP. Presupuesto por defecto $2/run y $10/día.
 
+Modo pruebas (copia de datos, puertos propios, entrada sin contraseña): `docs/SANDBOX.md`.
+
 ## Reglas duras (no negociables)
 
 1. **`data/agentos.db` es la demo viva. Nunca la toques desde tests ni scripts.** Los tests usan DB temporal (`:memory:` o archivo en tmp). Si necesitas migrar la DB viva, para la API primero, haz backup (`cp data/agentos.db data/agentos.db.bak-<motivo>`), migra, re-seed (idempotente), reinicia.
