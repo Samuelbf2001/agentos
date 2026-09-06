@@ -7,38 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { Markdown } from "../components/Markdown";
 import { EmptyState, Spinner, timeAgo } from "../components/ui";
+import { renderToolCall, tasksShownByRegistry } from "../components/generative/registry";
 import type { ToolCallChip } from "../state/reducer";
-
-function ToolChip({ chip }: { chip: ToolCallChip }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="my-1 rounded-tight border border-line bg-surface-2 text-small">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
-      >
-        <span
-          className={`inline-block h-2 w-2 rounded-full ${
-            !chip.done ? "animate-pulse bg-work" : chip.isError ? "bg-broken" : "bg-done"
-          }`}
-        />
-        <span className="font-mono font-medium">{chip.name}</span>
-        <span className="text-faint">{chip.done ? (chip.isError ? "error" : "ok") : "ejecutando…"}</span>
-        <span className="ml-auto text-faint">{open ? "▾" : "▸"}</span>
-      </button>
-      {open ? (
-        <div className="space-y-1 border-t border-line p-2">
-          <p className="font-semibold text-muted">Argumentos</p>
-          <pre className="max-h-40 overflow-auto rounded bg-surface p-2">{chip.args || "(vacío)"}</pre>
-          <p className="font-semibold text-muted">Resultado{chip.synthetic ? " (sintético)" : ""}</p>
-          <pre className="max-h-40 overflow-auto rounded bg-surface p-2">
-            {chip.result ?? "(pendiente)"}
-          </pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export default function ChatView() {
   const threads = useStore((s) => s.threads);
@@ -68,9 +38,11 @@ export default function ChatView() {
     return toolCalls[runId] ?? [];
   }
 
+  /** Tarjetas creadas por el run que el registro generativo NO muestra ya. */
   function tasksForRun(runId: string | null) {
     if (!runId) return [];
-    return createdTasks.filter((t) => t.runId === runId);
+    const shown = tasksShownByRegistry(chipsForRun(runId));
+    return createdTasks.filter((t) => t.runId === runId && !shown.has(t.taskId));
   }
 
   async function onSend(e: React.FormEvent) {
@@ -138,16 +110,14 @@ export default function ChatView() {
                 {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
                 {m.role === "assistant" ? (
                   <>
-                    {chipsForRun(m.runId).map((c) => (
-                      <ToolChip key={c.id} chip={c} />
-                    ))}
+                    {chipsForRun(m.runId).map((c) => renderToolCall(c, m.runId ?? ""))}
                     {tasksForRun(m.runId).map((t) => {
                       const task = boardTasks[t.taskId];
                       return (
                         <button
                           key={t.taskId}
                           onClick={() => void openTask(t.taskId)}
-                          className="mt-1 mr-1 inline-flex items-center gap-1 rounded-tight border border-link bg-link-bg px-2 py-1 text-small text-link hover:bg-link-bg"
+                          className="mt-1 mr-1 inline-flex min-h-10 items-center gap-1 rounded-tight border border-link bg-link-bg px-2 py-1 text-small text-link hover:bg-link-bg focus:outline-none focus:ring-2 focus:ring-link"
                         >
                           {task ? task.title : `Tarjeta ${t.taskId.slice(0, 8)}`}
                         </button>
@@ -167,9 +137,7 @@ export default function ChatView() {
                 {!s.done ? (
                   <span className="mt-1 inline-block h-3 w-1.5 animate-pulse bg-faint align-middle" />
                 ) : null}
-                {chipsForRun(s.runId).map((c) => (
-                  <ToolChip key={c.id} chip={c} />
-                ))}
+                {chipsForRun(s.runId).map((c) => renderToolCall(c, s.runId ?? ""))}
               </div>
             </div>
           ))}

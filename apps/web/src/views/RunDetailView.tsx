@@ -10,6 +10,8 @@ import { api, ApiError } from "../lib/api";
 import type { Run, Span, TopicEvent } from "../lib/types";
 import { useStore } from "../state/store";
 import { Markdown } from "../components/Markdown";
+import { renderToolCall } from "../components/generative/registry";
+import type { ToolCallChip } from "../state/reducer";
 import { paths } from "../lib/paths";
 import {
   AgentAvatar,
@@ -90,9 +92,11 @@ function Replay({ runId }: { runId: string }) {
   }, [playing, events]);
 
   const painted = useMemo(() => {
-    if (!events) return { text: "", tools: [] as { name: string; done: boolean; isError: boolean }[], lines: [] as string[] };
+    if (!events) return { text: "", tools: [] as ToolCallChip[], lines: [] as string[] };
     let text = "";
-    const tools: { id: string; name: string; done: boolean; isError: boolean }[] = [];
+    // Mismo contrato que el reductor del stream: args por deltas, resultado
+    // como texto. Así el registro generativo pinta igual aquí que en el chat.
+    const tools: ToolCallChip[] = [];
     const lines: string[] = [];
     for (const ev of events.slice(0, cursor)) {
       const p = ev.payload;
@@ -104,13 +108,33 @@ function Replay({ runId }: { runId: string }) {
           text += String(p.delta ?? "");
           break;
         case "TOOL_CALL_START":
-          tools.push({ id: String(p.toolCallId), name: String(p.toolCallName ?? "tool"), done: false, isError: false });
+          tools.push({
+            id: String(p.toolCallId),
+            name: String(p.toolCallName ?? "tool"),
+            args: "",
+            result: null,
+            done: false,
+            isError: false,
+            synthetic: false,
+          });
           break;
+        case "TOOL_CALL_ARGS": {
+          const t = tools.find((x) => x.id === String(p.toolCallId));
+          if (t) t.args += String(p.delta ?? "");
+          break;
+        }
+        case "TOOL_CALL_END": {
+          const t = tools.find((x) => x.id === String(p.toolCallId));
+          if (t) t.done = true;
+          break;
+        }
         case "TOOL_CALL_RESULT": {
           const t = tools.find((x) => x.id === String(p.toolCallId));
           if (t) {
             t.done = true;
             t.isError = p.isError === true;
+            t.synthetic = p.synthetic === true;
+            t.result = typeof p.content === "string" ? p.content : JSON.stringify(p.content ?? null);
           }
           break;
         }
@@ -169,20 +193,9 @@ function Replay({ runId }: { runId: string }) {
             {l}
           </p>
         ))}
-        {painted.tools.map((t, i) => (
-          <span
-            key={i}
-            className={`mr-1 inline-block rounded border px-1.5 py-0.5 font-mono text-label ${
-              !t.done
-                ? "border-work bg-work-bg"
-                : t.isError
-                  ? "border-broken bg-broken-bg"
-                  : "border-done bg-done-bg"
-            }`}
-          >
-            🔧 {t.name}
-          </span>
-        ))}
+        {painted.tools.length > 0 ? (
+          <div className="space-y-1">{painted.tools.map((t) => renderToolCall(t, runId))}</div>
+        ) : null}
         {painted.text ? (
           <div className="rounded-tight border border-line-soft bg-surface-2 p-2">
             <Markdown>{painted.text}</Markdown>
