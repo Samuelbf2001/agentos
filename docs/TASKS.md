@@ -95,6 +95,33 @@ al equipo interno. No se tocó la regla sin visto bueno.
 | N-F | Piloto y conciliación | Piloto e importación completa ejecutados sobre COPIAS de la DB viva. La importación a producción está **pendiente de la aprobación de Ernesto** | ⏳ ver §11 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` |
 | N-G | Corte de escrituras de WhatsAppHub | Inventario verificado y documentado (§12 del mismo documento). **No implementado**: es la fase N5 | ⏳ pendiente |
 
+## Oleada "Amputación de estructura" — rama `feat/amputacion-ux` (2026-09-05)
+
+Revisión de estructura y UX de `apps/web` tras la sensación de desorden: las mismas cosas en varios
+sitios, jerarquía escondida en sub-pestañas sin URL, restos de la navegación anterior y un solo rol real.
+Mapa completo (módulos, pantallas, conexiones, duplicaciones, matriz de roles) en el artifact
+"AgentOS, mapa y amputación". Solo cliente: ninguna ruta de la API ni invariante del tablero cambió.
+
+| # | Corte | Piezas clave |
+|---|-------|--------------|
+| C1 | Hoy sin la tabla de proyectos | `HoyView` queda en decisiones + pulso; la tabla vive solo en `/proyectos` |
+| C2 | Tareas solo en modo tabla | Fuera el kanban por estado de `TareasView` y `leerVista/guardarVista`; el único tablero es el del proyecto |
+| C3 | Una sola búsqueda | Fuera el `TaskSearchBox` embebido del Tablero; queda la global (`/` y botón de cabecera) |
+| C4 | Kill switch en un solo control | Banner solo informativo; el botón de cabecera pausa y reanuda; Configuración muestra el estado |
+| C5 | Equipo absorbe Agentes | `AgentsSection.tsx` (tabla editable, columna "Reporta a") dentro de `SystemTeamView`; `ajustes` → `configuracion` con redirección |
+| C6 | Reuniones sale del proyecto | `MeetingProcessingView` se monta en Sistema › Fuentes; Contexto conserva las fuentes asociadas |
+| C7 | Salud pasa a Fuentes | Sin los seis contadores; `salud` → `fuentes` con redirección |
+| C8 | Activo sin Capacidades | "Lanzar este módulo" pasa `?modulo=<slug>` y el wizard arranca en el paso 2 |
+| C9 | Sub-pestañas de Contexto en la URL | `/proyectos/:id/contexto/documentos\|procesos`, `paths.contexto()`, `CONTEXT_SUBTABS` |
+| C10 | Proyecto solo desde la URL | Sin `agentos_project` en localStorage; los enlaces de la ficha usan `task.projectId`; `/board`, `/chat`, `/context` → `/proyectos` |
+| C11 | El wizard aterriza en Ruta | Única entrada al proyecto que caía en otra pestaña |
+| C14 | Estados vacíos obsoletos fuera | "Entra por un proyecto" y "Elige un proyecto (en el tablero)" |
+| C15 | Código huérfano fuera | `store.myTasks`, `GateMissing.to`, wrappers de `api.ts` sin uso, `patchTask` duplicado |
+| C16 | Shell por capacidades | `lib/capabilities.ts`: nav, pestañas de proyecto y sistema, buscar y pausar se filtran por un conjunto de capacidades; hoy todo el mundo las tiene todas |
+
+Descartados por ahora: C12 (filtros del Tablero en la URL) y C13 (pulso sin el contador de decisiones).
+La suite web queda en 24 archivos / 201 tests tras integrar la ficha estilo Notion de master.
+
 ## Pendientes
 
 - **Decisiones de la migración de Notion que Ernesto debe confirmar**: §13 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (stage/type uniformes, organización destino, `description` vacía, tabla de prioridad, correos de `people`).
