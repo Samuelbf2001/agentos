@@ -23,11 +23,9 @@ import {
   summarizePayload,
   type Decision,
 } from "../lib/decisions";
-import { useProjectSummaries } from "../state/useProjectSummaries";
 import { ActionButton, Card, Chip, LateChip, SectionHead, Stat } from "../components/system";
-import { EmptyState, fmtCost, Spinner, timeAgo } from "../components/ui";
+import { EmptyState, fmtCost, timeAgo } from "../components/ui";
 import { ArtifactBlock } from "./TaskDrawer";
-import ProjectsTable from "./ProjectsTable";
 
 const LATE_AFTER_DAYS = 2;
 
@@ -274,7 +272,6 @@ export default function HoyView() {
   const [selected, setSelected] = useState<string[]>([]);
   const [batching, setBatching] = useState(false);
   const pulse = usePulse();
-  const { summaries, loading: summariesLoading } = useProjectSummaries(projects);
 
   useEffect(() => {
     void loadApprovals();
@@ -294,7 +291,6 @@ export default function HoyView() {
   const batchCandidates = useMemo(() => batchable(decisions), [decisions]);
   const projectNames = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const filteredProject = projectFilter ? projects.find((p) => p.id === projectFilter) : undefined;
-  const visibleSummaries = projectFilter ? summaries.filter((s) => s.project.id === projectFilter) : summaries;
 
   function nameOf(decision: Decision): string {
     return decision.projectId ? (projectNames.get(decision.projectId) ?? "Proyecto") : "Sin proyecto";
@@ -458,13 +454,6 @@ export default function HoyView() {
         </>
       )}
 
-      <SectionHead label="Tus proyectos" count={visibleSummaries.length} />
-      {summariesLoading && visibleSummaries.length === 0 ? (
-        <Spinner label="Leyendo el estado de cada proyecto…" />
-      ) : (
-        <ProjectsTable summaries={visibleSummaries} />
-      )}
-
       <SectionHead label="Pulso" />
       <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
@@ -494,6 +483,12 @@ export default function HoyView() {
           Ver mis tareas
         </Link>
         .
+      </p>
+
+      <p className="mt-2 text-small text-muted">
+        <Link to={paths.proyectos()} className="press font-semibold text-link hover:underline">
+          Ver los proyectos
+        </Link>
       </p>
     </div>
   );
