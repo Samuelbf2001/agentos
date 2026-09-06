@@ -3,7 +3,7 @@
  * de eventos, del despachador, del RunnerPool y del WebSocket (ARCHITECTURE §1).
  * Todo se construye aquí, una vez, y las rutas lo reciben inyectado.
  */
-import { nowMs, type AgentRuntime, type WhatsAppHubConnector } from "@agentos/shared";
+import { errors, nowMs, type AgentRuntime, type WhatsAppHubConnector } from "@agentos/shared";
 import {
   applyMigrations,
   closeAnyDb,
@@ -25,7 +25,7 @@ import {
 } from "@agentos/runners";
 import { createWhatsAppHubConnector } from "./connectors/whatsapphub.js";
 import { busSink, createBus } from "./bus-bridge.js";
-import { createAuthService, type AuthService } from "./auth.js";
+import { createAuthService, resolveCookieSecure, type AuthService } from "./auth.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { recoverOnBoot, type RecoveryReport } from "./recovery.js";
 import {
@@ -39,6 +39,70 @@ import {
 export const API_VERSION = "0.1.0";
 export const DEFAULT_PORT = 4300;
 export const DEFAULT_WEB_ORIGIN = "http://localhost:4301";
+/** Contraseña de conveniencia SOLO para desarrollo; en producción se exige env. */
+export const DEV_SHARED_PASSWORD = "agentos-dev";
+
+/** Límites de tasa de las rutas públicas (peticiones por ventana, por IP). */
+export interface RateLimitRule {
+  max: number;
+  timeWindowMs: number;
+}
+export interface RateLimitConfig {
+  login: RateLimitRule;
+  people: RateLimitRule;
+}
+export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
+  login: { max: 10, timeWindowMs: 60_000 },
+  people: { max: 30, timeWindowMs: 60_000 },
+};
+
+/** ¿Estamos en producción? Único punto de verdad para las guardas fail-closed. */
+export function isProductionEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+}
+
+/**
+ * Contraseña compartida. En producción es OBLIGATORIA: sin ella se lanza en el
+ * arranque (antes había un fail-open a `agentos-dev` con un simple console.warn,
+ * que dejaba cualquier despliegue abierto con una contraseña pública).
+ */
+export function resolveSharedPassword(
+  explicit?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const value = explicit?.trim() || env.AGENTOS_SHARED_PASSWORD?.trim();
+  if (value) return value;
+  if (isProductionEnv(env)) {
+    throw errors.configuration(
+      "AGENTOS_SHARED_PASSWORD es obligatoria con NODE_ENV=production: define una contraseña compartida propia antes de arrancar (jamás se usa la de desarrollo en producción).",
+      { variable: "AGENTOS_SHARED_PASSWORD" },
+    );
+  }
+  console.warn(
+    `[agentos-api] AGENTOS_SHARED_PASSWORD no está definida: usando la contraseña de desarrollo '${DEV_SHARED_PASSWORD}'.`,
+  );
+  return DEV_SHARED_PASSWORD;
+}
+
+/**
+ * Secreto de firma de sesiones. En producción es OBLIGATORIO y explícito; en
+ * desarrollo se devuelve `undefined` y `createAuthService` lo deriva de la
+ * contraseña (comportamiento histórico). Rotarlo invalida las sesiones vivas.
+ */
+export function resolveSessionSecret(
+  explicit?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const value = explicit?.trim() || env.AGENTOS_SESSION_SECRET?.trim();
+  if (value) return value;
+  if (isProductionEnv(env)) {
+    throw errors.configuration(
+      "AGENTOS_SESSION_SECRET es obligatoria con NODE_ENV=production: define un secreto largo y aleatorio (rotarlo invalida todas las sesiones).",
+      { variable: "AGENTOS_SESSION_SECRET" },
+    );
+  }
+  return undefined;
+}
 
 export interface ApiOptions {
   /** Ruta de la DB (default: env AGENTOS_DB_PATH o ./data/agentos.db). */
@@ -49,9 +113,14 @@ export interface ApiOptions {
   pgUrl?: string;
   /** Aplica seeds al arrancar (default true; los seeds son idempotentes). */
   seedOnBoot?: boolean;
-  /** Contraseña compartida (default: env AGENTOS_SHARED_PASSWORD). */
+  /** Contraseña compartida (default: env AGENTOS_SHARED_PASSWORD; obligatoria en producción). */
   sharedPassword?: string;
+  /** Secreto de firma de sesiones (default: env AGENTOS_SESSION_SECRET; obligatorio en producción). */
   sessionSecret?: string;
+  /** Fuerza el atributo `Secure` de la cookie (default: AGENTOS_COOKIE_SECURE / producción). */
+  cookieSecure?: boolean;
+  /** Límites de tasa de las rutas públicas (tests los bajan para provocar el 429). */
+  rateLimit?: { login?: Partial<RateLimitRule>; people?: Partial<RateLimitRule> };
   /** Secreto opcional del gateway de canales (header x-channel-secret). */
   channelSecret?: string;
   /** Runners inyectables (tests: SIEMPRE fakes; jamás LLM real en tests). */
@@ -96,33 +165,63 @@ export interface ApiContext {
   startedAt: number;
   channelSecret?: string | undefined;
   corsOrigin: string | string[];
+  rateLimits: RateLimitConfig;
   close(): Promise<void>;
 }
 
 /**
- * Origen(es) permitidos por CORS. Sin variable sigue siendo `:4301` (el default
- * de cero fricción); `AGENTOS_WEB_ORIGIN` admite una lista separada por comas
- * para levantar una segunda copia de la app en otro puerto sin tocar código.
+ * Origen(es) permitidos por CORS. `AGENTOS_WEB_ORIGIN` admite una lista separada
+ * por comas (varias copias de la app o varios dominios). Reglas fail-closed:
+ * `*` NUNCA se acepta (la API va con `credentials: true`) y en producción la
+ * variable es obligatoria — sin lista explícita no se sirve nada. En desarrollo
+ * se conserva el default de cero fricción (`http://localhost:4301`). Los
+ * orígenes fuera de la lista no reciben `access-control-allow-origin`.
  */
 export function resolveCorsOrigin(
   raw: string | undefined = process.env.AGENTOS_WEB_ORIGIN,
+  env: NodeJS.ProcessEnv = process.env,
 ): string | string[] {
   const origins = (raw ?? "")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-  if (origins.length === 0) return DEFAULT_WEB_ORIGIN;
+  if (origins.includes("*")) {
+    throw errors.configuration(
+      "AGENTOS_WEB_ORIGIN no admite '*': la API viaja con credenciales (cookie de sesión). Enumera los orígenes exactos separados por comas.",
+      { variable: "AGENTOS_WEB_ORIGIN" },
+    );
+  }
+  if (origins.length === 0) {
+    if (isProductionEnv(env)) {
+      throw errors.configuration(
+        "AGENTOS_WEB_ORIGIN es obligatoria con NODE_ENV=production: enumera los orígenes exactos de la web (lista separada por comas, sin '*').",
+        { variable: "AGENTOS_WEB_ORIGIN" },
+      );
+    }
+    return DEFAULT_WEB_ORIGIN;
+  }
   return origins.length === 1 ? origins[0]! : origins;
 }
 
+/** Límites de tasa efectivos (los defaults se pueden bajar en tests). */
+export function resolveRateLimits(
+  overrides: ApiOptions["rateLimit"] = undefined,
+): RateLimitConfig {
+  return {
+    login: { ...DEFAULT_RATE_LIMITS.login, ...(overrides?.login ?? {}) },
+    people: { ...DEFAULT_RATE_LIMITS.people, ...(overrides?.people ?? {}) },
+  };
+}
+
 export async function createApiContext(options: ApiOptions = {}): Promise<ApiContext> {
-  const sharedPassword =
-    options.sharedPassword ?? process.env.AGENTOS_SHARED_PASSWORD ?? "agentos-dev";
-  if (!options.sharedPassword && !process.env.AGENTOS_SHARED_PASSWORD) {
-    console.warn(
-      "[agentos-api] AGENTOS_SHARED_PASSWORD no está definida: usando la contraseña de desarrollo 'agentos-dev'.",
-    );
-  }
+  // 0) Guardas de configuración ANTES de tocar disco/red: en producción, una
+  // instalación sin contraseña, sin secreto de sesión o sin orígenes CORS no
+  // arranca (fail-closed) en vez de servir con valores de desarrollo.
+  const sharedPassword = resolveSharedPassword(options.sharedPassword);
+  const sessionSecret = resolveSessionSecret(options.sessionSecret);
+  const corsOrigin = options.corsOrigin ?? resolveCorsOrigin();
+  const rateLimits = resolveRateLimits(options.rateLimit);
+  const cookieSecure = options.cookieSecure ?? resolveCookieSecure();
 
   // 1) DB: abrir y migrar según el driver configurado (idempotente).
   const db = await openConfiguredDb({
@@ -212,7 +311,8 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
 
   const auth = createAuthService({
     sharedPassword,
-    ...(options.sessionSecret ? { sessionSecret: options.sessionSecret } : {}),
+    ...(sessionSecret ? { sessionSecret } : {}),
+    cookieSecure,
   });
 
   let closed = false;
@@ -231,7 +331,8 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     recovery,
     startedAt: nowMs(),
     channelSecret: options.channelSecret ?? process.env.AGENTOS_CHANNEL_WEB_SECRET,
-    corsOrigin: options.corsOrigin ?? resolveCorsOrigin(),
+    corsOrigin,
+    rateLimits,
     async close(): Promise<void> {
       if (closed) return;
       closed = true;

@@ -5,8 +5,10 @@
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
+import { errors } from "@agentos/shared";
 import { getPerson } from "@agentos/db";
 import { createApiContext, type ApiContext, type ApiOptions } from "./context.js";
 import { extractToken, type Session } from "./auth.js";
@@ -44,6 +46,18 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   await app.register(cors, {
     origin: ctx.corsOrigin,
     credentials: true,
+  });
+  // Límite de tasa SOLO donde hace falta (`global: false`): las dos rutas
+  // públicas sin sesión (/api/auth/login y /api/auth/people) declaran el suyo
+  // en `config.rateLimit`. El 429 sale con el mismo sobre de error que el resto
+  // de la API ({ error: { code, message } }) vía AgentosError.
+  await app.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: (_req, ctx) =>
+      errors.rateLimited(
+        `Demasiadas peticiones: máximo ${ctx.max} por ${ctx.after}. Reintenta más tarde.`,
+        { max: ctx.max, retry_after: ctx.after },
+      ),
   });
   await app.register(websocket);
   // Subida de artefactos (US: cerrar una tarea desde la interfaz). El limite

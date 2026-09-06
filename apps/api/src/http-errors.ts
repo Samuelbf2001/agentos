@@ -20,6 +20,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   [ErrorCodes.HUMAN_APPROVAL_REQUIRED]: 422,
   [ErrorCodes.PENDING_APPROVAL]: 422,
   [ErrorCodes.APPROVAL_INVALIDATED]: 422,
+  [ErrorCodes.RATE_LIMITED]: 429,
+  // Mal configurado al arrancar: nunca debería llegar a HTTP (se lanza en boot).
+  [ErrorCodes.CONFIGURATION_ERROR]: 500,
   [ErrorCodes.POLICY_DENIED]: 403,
   [ErrorCodes.KILL_SWITCH_ACTIVE]: 409,
   [ErrorCodes.BUDGET_EXCEEDED]: 429,
