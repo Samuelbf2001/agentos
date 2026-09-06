@@ -178,7 +178,7 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   /* Movimiento: respuesta 0.4 s, amortiguación 1.0 (sin rebote). */
   --motion-press: 100ms;
   --motion-fast: 140ms;
