@@ -2,7 +2,7 @@
  * Wizard "Nuevo proyecto" (CA-M2.1): formulario GENERADO desde la definición
  * del módulo, validación en vivo por preview (missing ⇒ botón deshabilitado y
  * lista de faltantes), resumen desde el plan del preview y Disparar con
- * idempotency_key estable que navega al tablero del proyecto creado.
+ * idempotency_key estable que navega a la Ruta del proyecto creado.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -220,8 +220,8 @@ function ui(entry = "/new-project") {
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/new-project" element={<NewProjectWizard />} />
-        {/* Tras disparar, el wizard entra al tablero DEL proyecto creado. */}
-        <Route path="/proyectos/:projectId/tablero" element={<div>BOARD_MARKER</div>} />
+        {/* Tras disparar, el wizard entra a la Ruta DEL proyecto creado. */}
+        <Route path="/proyectos/:projectId/ruta" element={<div>ROUTE_MARKER</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -433,7 +433,7 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     expect(screen.queryByText("Cadencia (se confirmará al disparar)")).toBeNull();
   });
 
-  it("Disparar hace POST con idempotency_key estable (doble click no duplica) y navega al tablero", async () => {
+  it("Disparar hace POST con idempotency_key estable (doble click no duplica) y navega a la Ruta", async () => {
     const { calls } = mockFetch(wizardRoutes());
     ui();
     await openForm();
@@ -451,8 +451,8 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     fireEvent.click(fireBtn);
     fireEvent.click(fireBtn);
 
-    // Navegación al tablero del proyecto creado.
-    expect(await screen.findByText("BOARD_MARKER")).toBeTruthy();
+    // Navegación a la Ruta del proyecto creado.
+    expect(await screen.findByText("ROUTE_MARKER")).toBeTruthy();
 
     const launches: FetchCall[] = calls.filter(
       (c) => c.method === "POST" && c.url.includes("/api/modules/consultoria/launch"),
@@ -505,7 +505,7 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     );
 
     fireEvent.click(await screen.findByText("🚀 Disparar"));
-    expect(await screen.findByText("BOARD_MARKER")).toBeTruthy();
+    expect(await screen.findByText("ROUTE_MARKER")).toBeTruthy();
 
     const launches: FetchCall[] = calls.filter(
       (c) => c.method === "POST" && c.url.includes("/api/modules/consultoria/launch"),
@@ -546,6 +546,6 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
       await screen.findByText(/Esta fase ya se disparó sobre ese proyecto/),
     ).toBeTruthy();
     // Sin navegación: seguimos en el resumen.
-    expect(screen.queryByText("BOARD_MARKER")).toBeNull();
+    expect(screen.queryByText("ROUTE_MARKER")).toBeNull();
   });
 });

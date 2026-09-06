@@ -520,7 +520,7 @@ export default function NewProjectWizard() {
       );
       await loadProjects();
       await setActiveProject(res.project.id);
-      navigate(paths.proyecto(res.project.id, "tablero"));
+      navigate(paths.proyecto(res.project.id, "ruta"));
     } catch (err) {
       setLaunchError(launchErrorMessage(err));
     } finally {
