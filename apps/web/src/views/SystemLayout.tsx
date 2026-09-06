@@ -15,7 +15,7 @@ import SystemTeamView from "./SystemTeamView";
 
 const TAB_SUBTITLES: Record<SystemTab, string> = {
   ahora: "Quién está trabajando en este segundo y con qué herramienta.",
-  actividad: "Todas las ejecuciones, con su tarea y su proyecto.",
+  actividad: "Todas las ejecuciones, con su tarea y su cliente.",
   fuentes: "Estado de las fuentes externas de las que dependen los agentes.",
   equipo: "Personas y agentes: quién puede recibir trabajo y cómo está configurado cada agente.",
   configuracion: "Configuración de la aplicación y estado de los agentes.",

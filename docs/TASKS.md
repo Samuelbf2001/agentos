@@ -122,6 +122,22 @@ Mapa completo (módulos, pantallas, conexiones, duplicaciones, matriz de roles) 
 Descartados por ahora: C12 (filtros del Tablero en la URL) y C13 (pulso sin el contador de decisiones).
 La suite web queda en 24 archivos / 201 tests tras integrar la ficha estilo Notion de master.
 
+## Oleada Rediseño UI (rama `feat/amputacion-ux`, 2026-09-05)
+
+Segunda pasada sobre la misma rama, ya con la estructura amputada: lenguaje visual propio, el shell lateral
+con cambio de perspectiva Sixteam/cliente, Hoy y Clientes como tableros, 2brain integrado como módulo y
+Tareas/Tablero/Ruta con lo secundario plegado por defecto.
+
+| # | Área | Piezas clave |
+|---|------|--------------|
+| 1 | Lenguaje visual | Tokens propios, primitivas de `components/system.tsx`/`ui.tsx` sin borde, pastillas de estado en vez de texto plano |
+| 2 | Shell lateral con perspectiva | `Sidebar`/`Topbar`/`PerspectiveSwitch`: cambio Sixteam ↔ cliente por URL, selector de cliente con buscador |
+| 3 | Hoy y Clientes como tableros | `HoyView` y `ProjectsView` pintan tarjetas, no listas planas |
+| 4 | 2brain como módulo | Panorama y reuniones (`BrainView`/`BrainMeetingsView`) viven dentro de AgentOS; lo que no migró queda como enlace externo a WhatsAppHub |
+| 5 | Tareas/Tablero/Ruta más limpios y previsualización de cliente | Filtros plegados en Tareas, carriles fuera de la fase activa plegados en el Tablero, recibo de lanzamiento plegado en Ruta; botón "Ver como cliente" (`PreviewRole`, previsualización local, no un permiso real) que reduce el shell a Resumen/Contexto/Decisiones |
+
+Estado de la suite tras esta oleada: 29 archivos / 229 tests verdes, typecheck limpio.
+
 ## Pendientes
 
 - **Decisiones de la migración de Notion que Ernesto debe confirmar**: §13 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (stage/type uniformes, organización destino, `description` vacía, tabla de prioridad, correos de `people`).

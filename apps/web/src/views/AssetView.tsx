@@ -1,7 +1,7 @@
 /**
- * Activo Sixteam (PLAN-v1.5 §Navegación nueva): el método, que es de Sixteam y
- * no de ningún cliente. Hasta ahora vivía escondido en una pestaña dentro del
- * Contexto y en el Cerebro; es una de las cuatro entradas globales.
+ * Método (PLAN-v1.5 §Navegación nueva): lo que Sixteam sabe hacer, que es de
+ * Sixteam y no de ningún cliente. Hasta ahora vivía escondido en una pestaña
+ * dentro del Contexto y en el Cerebro; es una de las cuatro entradas globales.
  *
  * Tres cosas: los módulos de fase que se pueden lanzar, las metodologías
  * versionadas que los agentes siguen, y las capacidades del sistema con la
@@ -146,10 +146,10 @@ function Methodologies() {
 export default function AssetView() {
   return (
     <div className="density-explorar mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
-      <h1 className="text-display text-ink">Activo Sixteam</h1>
+      <h1 className="text-display text-ink">Método</h1>
       <p className="mt-1.5 max-w-[62ch] text-body text-muted">
-        El método es de Sixteam, no de un cliente: los módulos que arrancan una fase y las metodologías que
-        los agentes siguen.
+        Lo que Sixteam sabe hacer: los módulos que arrancan una fase y las metodologías que siguen los
+        agentes.
       </p>
 
       <SectionHead label="Módulos de fase" />

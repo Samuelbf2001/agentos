@@ -259,9 +259,9 @@ describe("smoke de vistas", () => {
     expect(await screen.findByText("Alex")).toBeTruthy();
   });
 
-  it("Activo Sixteam pinta módulos de fase y metodologías", async () => {
+  it("Método pinta módulos de fase y metodologías", async () => {
     ui(<AssetView />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Activo Sixteam" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Método" })).toBeTruthy();
     expect(await screen.findByTestId("asset-module-consultoria")).toBeTruthy();
   });
 
