@@ -104,7 +104,7 @@ describe("Hoy", () => {
     const gate = await screen.findByTestId("decision-approval:ap-gate");
     expect(gate.textContent).toContain("Cierra Entender");
     expect(gate.textContent).toContain("abre Construir");
-    const link = within(gate).getByRole("link", { name: "Ver la ruta y el gate" });
+    const link = within(gate).getByRole("link", { name: "Ver la ruta" });
     expect(link.getAttribute("href")).toBe(`/proyectos/${project.id}/ruta`);
   });
 
@@ -113,7 +113,7 @@ describe("Hoy", () => {
     renderHoy();
     const tool = await screen.findByTestId("decision-approval:ap-tool");
     expect(within(tool).getByText("cliente@acme.com")).toBeTruthy();
-    expect(within(tool).getByText("Ver el payload literal")).toBeTruthy();
+    expect(within(tool).getByText("Detalle técnico")).toBeTruthy();
   });
 
   it("agrupa el resto por proyecto y por gate", async () => {
@@ -202,6 +202,8 @@ describe("Hoy", () => {
     ]);
     renderHoy();
     expect(await screen.findByRole("heading", { name: "Nada espera tu decisión" })).toBeTruthy();
-    expect(screen.getByText("Bandeja limpia")).toBeTruthy();
+    expect(
+      screen.getByText("Los agentes siguen trabajando; te avisaremos aquí cuando necesiten algo de ti."),
+    ).toBeTruthy();
   });
 });
