@@ -50,6 +50,8 @@ export const processTools: ToolDefinition[] = [
       status: ProcessStatus.optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    // "none": los procesos son entidades de ORGANIZACION (org_id), no de proyecto.
+    projectScope: "none",
     async handler(ctx, args) {
       const process = await upsertProcess(ctx.db, {
         id: args.id,
@@ -82,6 +84,8 @@ export const processTools: ToolDefinition[] = [
     description: "Enlaza un knowledge_doc como fuente que sustenta el proceso (provenance).",
     schema: z.object({ process_id: z.string().min(1), doc_id: z.string().min(1) }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    // "none": vincula proceso (de organización) con doc del Hub; no hay proyecto objetivo.
+    projectScope: "none",
     handler(ctx, args) {
       return linkSource(ctx.db, args.process_id, args.doc_id);
     },

@@ -193,6 +193,8 @@ export const sourcesTools: ToolDefinition[] = [
       "Ingesta (o re-ingesta) una fuente asociada: trae el markdown de WhatsAppHub y crea/actualiza su knowledge_doc tipado en el Context Hub. Sin efecto externo: es lectura de 2brain hacia dentro.",
     schema: z.object({ source_id: z.string().min(1) }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    // La fuente pertenece a un proyecto: el objetivo es source.projectId.
+    projectScope: { by: "source", arg: "source_id" },
     async handler(ctx, args) {
       if (!ctx.whatsappHub) {
         throw new AgentosError(

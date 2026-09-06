@@ -12,12 +12,13 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { isAgentosError, ErrorCodes } from "@agentos/shared";
+import { AgentosError, isAgentosError, ErrorCodes } from "@agentos/shared";
 import {
   appendMessage,
   buildSessionKey,
   findChannelMessage,
   getOrCreateThread,
+  setThreadProject,
 } from "@agentos/db";
 import { channelTopic, threadTopic } from "@agentos/events";
 import type { ApiContext } from "../context.js";
@@ -54,11 +55,25 @@ export function registerWebChannel(app: FastifyInstance, ctx: ApiContext): void 
       });
     }
 
-    const thread = await getOrCreateThread(db, {
+    let thread = await getOrCreateThread(db, {
       channel: WEB_CHANNEL,
       sessionKey: buildSessionKey(WEB_CHANNEL, body.external_chat_id, body.thread_hint),
       projectId: body.project_id ?? null,
     });
+    // Reconciliación (DISENO-SCOPE-GATEWAY §1): getOrCreateThread solo fija el
+    // proyecto al crear. Un hilo sin proyecto adopta el que llega; un hilo vivo
+    // de OTRO proyecto no se reasigna en silencio (409 conflict).
+    if (body.project_id) {
+      if (thread.projectId == null) {
+        thread = await setThreadProject(db, thread.id, body.project_id);
+      } else if (thread.projectId !== body.project_id) {
+        throw new AgentosError(
+          ErrorCodes.CONFLICT,
+          `El hilo ${thread.id} ya pertenece al proyecto ${thread.projectId}; no se reasigna a ${body.project_id}`,
+          { thread_id: thread.id, thread_project_id: thread.projectId, project_id: body.project_id },
+        );
+      }
+    }
 
     const { message, inserted } = await appendMessage(db, {
       threadId: thread.id,

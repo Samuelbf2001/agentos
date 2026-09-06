@@ -29,6 +29,7 @@ export const projectTools: ToolDefinition[] = [
       workspace_path: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "project", arg: "project_id" },
     handler(ctx, args) {
       const patch: Record<string, unknown> = {};
       if (args.name !== undefined) patch.name = args.name;

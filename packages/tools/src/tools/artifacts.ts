@@ -36,6 +36,7 @@ export const artifactTools: ToolDefinition[] = [
       title: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       const task = await getTask(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);

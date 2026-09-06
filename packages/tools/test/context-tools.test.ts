@@ -27,9 +27,15 @@ function okResult<T>(res: unknown): T {
 describe("board.get (fix H2)", () => {
   it("project_id inexistente → not_found, no un tablero vacío OK", async () => {
     const f = await toolsFixture();
+    // Un humano (sin guarda de scope) recibe el not_found del handler.
+    expect(
+      await codeOf(() => f.runtime.execute(f.humanCtx(), "board.get", { project_id: "assessment-acme" })),
+    ).toBe(ErrorCodes.NOT_FOUND);
+    // Un agente ni llega al handler: el id ajeno lo corta la guarda de scope.
+    // En ningún caso hay un tablero vacío OK.
     expect(
       await codeOf(() => f.runtime.execute(f.ctxFor(f.alex), "board.get", { project_id: "assessment-acme" })),
-    ).toBe(ErrorCodes.NOT_FOUND);
+    ).toBe(ErrorCodes.POLICY_DENIED);
     // El proyecto real sigue funcionando.
     const board = okResult<{ project_id: string; total: number }>(
       await f.runtime.execute(f.ctxFor(f.alex), "board.get", { project_id: f.project.id }),

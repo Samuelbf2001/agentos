@@ -165,9 +165,13 @@ export async function assemblePrompt(db: AgentosDb, input: AssemblePromptInput):
     const allBoardTasks = await listTasks(db, { projectId: project.id });
     const boardIndex = allBoardTasks.slice(0, input.maxBoardTasks ?? 30);
     if (boardIndex.length > 0) {
-      const lines = boardIndex.map((t) => `- [task:${t.id}] (${t.status}) ${t.title}`);
+      // status + version frescos por ensamblado: `version` es el expected_version
+      // de tasks.move / tasks.assign_people (el humano puede haber movido la tarjeta).
+      const lines = boardIndex.map((t) => `- [task:${t.id}] (${t.status}) ${t.title} · version ${t.version}`);
       volatileParts.push(
-        `## Tareas del proyecto (ids REALES — usa EXACTAMENTE estos UUIDs en tus tools)\n${lines.join("\n")}`,
+        `## Tareas del proyecto (ids REALES — usa EXACTAMENTE estos UUIDs en tus tools)\n` +
+          `Formato: [task:id] (status) título · version N. Usa N como expected_version; ` +
+          `si recibes version_conflict, relee con board.get y reintenta una vez.\n${lines.join("\n")}`,
       );
     }
   }

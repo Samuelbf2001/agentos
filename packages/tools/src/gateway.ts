@@ -17,6 +17,8 @@ import {
   getAgent,
   getAgentBySlug,
   getApproval,
+  getProjectSource,
+  getTask,
   REPO_ROOT,
   type AgentosDb,
   type Agent,
@@ -87,9 +89,69 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
   }
 
   /** Rechaza auditando SIEMPRE la denegación (la política también deja huella). */
-  async function deny(ctx: ToolCallContext, toolName: string, code: (typeof ErrorCodes)[keyof typeof ErrorCodes], message: string): Promise<never> {
-    await audit(ctx, "tool.denied", toolName, { code, message });
-    throw new AgentosError(code, message, { tool: toolName });
+  async function deny(
+    ctx: ToolCallContext,
+    toolName: string,
+    code: (typeof ErrorCodes)[keyof typeof ErrorCodes],
+    message: string,
+    detail: Record<string, unknown> = {},
+  ): Promise<never> {
+    await audit(ctx, "tool.denied", toolName, { code, message, ...detail });
+    throw new AgentosError(code, message, { tool: toolName, ...detail });
+  }
+
+  /**
+   * Guarda de scope por proyecto (DISENO-SCOPE-GATEWAY §2, fail-closed): un
+   * agente solo toca objetos del proyecto de su run. Va DESPUÉS del parse y
+   * ANTES del Gate 2 (una llamada fuera de scope ni siquiera crea aprobación).
+   * Humanos, sistema y admin no pasan por aquí (misma frontera que la allowlist).
+   */
+  async function checkProjectScope(ctx: ToolCallContext, tool: ToolDefinition, args: unknown): Promise<void> {
+    if (actorKind(ctx.actor) !== "agent") return;
+    const scope = tool.projectScope;
+    if (!scope || scope === "none") return;
+
+    const argOf = (key: string): string | undefined => {
+      const value = (args as Record<string, unknown> | null | undefined)?.[key];
+      return typeof value === "string" && value.length > 0 ? value : undefined;
+    };
+
+    let target: string | null = null;
+    let taskId: string | null = null;
+    if (scope !== "ctx") {
+      if (scope.by === "task") {
+        const id = argOf(scope.arg) ?? (scope.fallback === "ctx.task_id" ? ctx.task_id ?? undefined : undefined);
+        if (id) {
+          const task = await getTask(db, id);
+          if (!task) throw errors.notFound("task", id);
+          target = task.projectId;
+          taskId = task.id;
+        }
+      } else if (scope.by === "project") {
+        target = argOf(scope.arg) ?? null;
+      } else {
+        const id = argOf(scope.arg);
+        if (id) {
+          const source = await getProjectSource(db, id);
+          if (!source) throw errors.notFound("project_source", id);
+          target = source.projectId;
+        }
+      }
+    }
+
+    const ctxProject = ctx.project_id ?? null;
+    if (ctxProject && (target === null || target === ctxProject)) return;
+
+    const reason = !ctxProject
+      ? "el run no tiene proyecto activo (elige uno antes de escribir en el tablero)"
+      : `apunta al proyecto ${target} y el run opera en ${ctxProject}`;
+    await deny(ctx, tool.name, ErrorCodes.POLICY_DENIED, `Fuera del scope de proyecto: ${tool.name} ${reason} (fail-closed)`, {
+      scope: "project",
+      ctx_project_id: ctxProject,
+      target_project_id: target,
+      tool: tool.name,
+      task_id: taskId,
+    });
   }
 
   async function resolveAgent(ref: string): Promise<Agent | undefined> {
@@ -153,6 +215,9 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
       throw errors.validation(`Argumentos inválidos para ${name}`, parsed.error.issues);
     }
 
+    // Scope de proyecto ANTES del Gate 2: fuera de scope no se crea ni aprobación.
+    await checkProjectScope(ctx, tool, parsed.data);
+
     // Gate 2: tool de efecto externo NO ejecuta — crea approval y cede al humano.
     if (tool.flags.external_effect || tool.flags.requires_approval) {
       const approval = await engine.requestApproval({
@@ -207,6 +272,8 @@ export function createToolRuntime(opts: ToolRuntimeOptions): ToolRuntime {
     if (!parsed.success) {
       throw errors.validation(`Argumentos aprobados inválidos para ${payload.tool}`, parsed.error.issues);
     }
+    // Una aprobación vieja tampoco ejecuta fuera del scope del ctx que reanuda.
+    await checkProjectScope(ctx, tool, parsed.data);
     await audit(ctx, "tool.execute_approved", tool.name, { approvalId, args: parsed.data });
     try {
       const result = await tool.handler(execCtx(ctx), parsed.data as never);

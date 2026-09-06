@@ -44,6 +44,8 @@ export const knowledgeTools: ToolDefinition[] = [
       tags: z.array(z.string()).optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    // project_id opcional: si falta, el doc hereda ctx.project_id (mismo criterio que el handler).
+    projectScope: { by: "project", arg: "project_id" },
     handler(ctx, args) {
       return upsertDoc(ctx.db, {
         id: args.id,

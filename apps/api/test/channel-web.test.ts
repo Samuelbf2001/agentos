@@ -3,8 +3,9 @@
  * duplicado por (channel, message_id) → deduped silencioso, sin segundo run.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getRun, getThread, listMessages, listRuns, listThreads } from "@agentos/db";
-import { makeFixture, makeReadyTask, waitFor, type TestFixture } from "./helpers.js";
+import { ErrorCodes, isAgentosError } from "@agentos/shared";
+import { createProject, getRun, getThread, listMessages, listRuns, listThreads } from "@agentos/db";
+import { callTool, makeFixture, makeReadyTask, waitFor, type TestFixture } from "./helpers.js";
 
 let fx: TestFixture;
 
@@ -120,6 +121,85 @@ describe("canal web", () => {
     expect(prompt).toContain(`thread_id: ${body.thread_id}`);
     expect(prompt).toContain(`[task:${task.id}]`); // índice del tablero con UUIDs reales
     expect(prompt).toContain("nunca inventes identificadores");
+  });
+
+  // DISENO-SCOPE-GATEWAY §1: getOrCreateThread solo fija el proyecto al crear.
+  // Un hilo sin proyecto adopta el que llega; un hilo de OTRO proyecto → 409.
+  it("el hilo del board reconcilia projectId null y rechaza el cambio de proyecto", async () => {
+    fx.aiRunner.setBehavior(() => ({ text: "OK" }));
+    const post = (message_id: string, project_id?: string) =>
+      fx.api.app.inject({
+        method: "POST",
+        url: "/v1/channels/web/events",
+        headers: fx.authHeaders,
+        payload: { external_user_id: "u-ernesto", external_chat_id: "chat-recon", message_id, text: "hola", ...(project_id ? { project_id } : {}) },
+      });
+
+    const first = await post("msg-recon-1");
+    expect(first.statusCode).toBe(200);
+    const threadId = (first.json() as { thread_id: string }).thread_id;
+    expect((await getThread(fx.db, threadId))!.projectId).toBeNull();
+
+    // Llega project_id sobre el mismo hilo (misma session_key) → se adopta.
+    const second = await post("msg-recon-2", fx.project.id);
+    expect(second.statusCode).toBe(200);
+    expect((second.json() as { thread_id: string }).thread_id).toBe(threadId);
+    expect((await getThread(fx.db, threadId))!.projectId).toBe(fx.project.id);
+
+    // Otro proyecto sobre un hilo vivo → 409 conflict, sin reasignar ni persistir el mensaje.
+    const other = await createProject(fx.db, { orgId: fx.org.id, name: "Assessment Beta", type: "assessment" });
+    const messagesBefore = (await listMessages(fx.db, threadId)).length;
+    const third = await post("msg-recon-3", other.id);
+    expect(third.statusCode).toBe(409);
+    expect((third.json() as { error: { code: string } }).error.code).toBe("conflict");
+    expect((await getThread(fx.db, threadId))!.projectId).toBe(fx.project.id);
+    expect((await listMessages(fx.db, threadId)).length).toBe(messagesBefore);
+  });
+
+  // DISENO-SCOPE-GATEWAY §1/§2: enqueueChatRun propaga thread.projectId al
+  // ToolCallContext; la guarda de scope del gateway lo ve (fail-closed sin proyecto).
+  it("enqueueChatRun propaga thread.projectId al ToolCallContext de las tools", async () => {
+    let outcome: unknown;
+    fx.aiRunner.setBehavior(async (input) => {
+      try {
+        outcome = await callTool(input, "tasks.create", {
+          project_id: fx.project.id,
+          title: "Creada desde el chat del tablero",
+          stage: "ENTENDER",
+          definition_of_done: "Existe en el tablero",
+          assignee_agent_slug: "sam",
+        });
+      } catch (err) {
+        outcome = err;
+      }
+      return { text: "OK" };
+    });
+    const post = (external_chat_id: string, message_id: string, project_id?: string) =>
+      fx.api.app.inject({
+        method: "POST",
+        url: "/v1/channels/web/events",
+        headers: fx.authHeaders,
+        payload: { external_user_id: "u-ernesto", external_chat_id, message_id, text: "crea la tarea", ...(project_id ? { project_id } : {}) },
+      });
+
+    // Hilo CON proyecto → el ctx lleva project_id y tasks.create pasa la guarda.
+    const withProject = await post("chat-scope-a", "msg-scope-1", fx.project.id);
+    expect(withProject.statusCode).toBe(200);
+    const runA = (withProject.json() as { run_id: string }).run_id;
+    await waitFor(async () => (await getRun(fx.db, runA))!.status === "succeeded", { label: "run con proyecto" });
+    expect(outcome).toMatchObject({
+      status: "ok",
+      result: { projectId: fx.project.id, title: "Creada desde el chat del tablero" },
+    });
+
+    // Hilo SIN proyecto → ctx.project_id null → fail-closed (policy_denied), aunque el project_id del arg sea real.
+    outcome = undefined;
+    const noProject = await post("chat-scope-b", "msg-scope-2");
+    expect(noProject.statusCode).toBe(200);
+    const runB = (noProject.json() as { run_id: string }).run_id;
+    await waitFor(async () => (await getRun(fx.db, runB))!.status === "succeeded", { label: "run sin proyecto" });
+    expect(isAgentosError(outcome, ErrorCodes.POLICY_DENIED)).toBe(true);
+    expect((outcome as { details: { ctx_project_id: string | null } }).details.ctx_project_id).toBeNull();
   });
 
   it("sin sesión ni secreto de canal → 401", async () => {

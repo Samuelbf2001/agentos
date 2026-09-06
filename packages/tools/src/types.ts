@@ -48,12 +48,36 @@ export interface ToolExecutionContext extends ToolCallContext {
   }) => unknown | Promise<unknown>;
 }
 
+/**
+ * Scope de proyecto de una tool (guarda fail-closed del gateway, solo para
+ * actores agente): cómo se resuelve el proyecto OBJETIVO de la llamada.
+ *
+ * - `{by:"task"}`: `args[arg]` es un task_id (o `ctx.task_id` como fallback) →
+ *   el objetivo es `task.projectId` (404 si la tarea no existe).
+ * - `{by:"project"}`: `args[arg]` es el project_id objetivo. Si el argumento
+ *   es opcional y viene vacío, no hay objetivo propio (hereda el ctx).
+ * - `{by:"source"}`: `args[arg]` es un project_source id → `source.projectId`.
+ * - `"ctx"`: sin objetivo propio; solo exige que el run tenga proyecto.
+ * - `"none"`: la tool no pertenece a un proyecto (no se guarda).
+ *
+ * Regla: se deniega si `ctx.project_id` es null o distinto del objetivo.
+ * Toda tool con `flags.read_only === false` DEBE declararlo (test de catálogo).
+ */
+export type ToolProjectScope =
+  | { by: "task"; arg: string; fallback?: "ctx.task_id" }
+  | { by: "project"; arg: string }
+  | { by: "source"; arg: string }
+  | "ctx"
+  | "none";
+
 /** Una tool del catálogo: nombre, schema Zod, handler y flags. */
 export interface ToolDefinition<S extends z.ZodObject<z.ZodRawShape> = z.ZodObject<z.ZodRawShape>> {
   name: string;
   description: string;
   schema: S;
   flags: ToolFlags;
+  /** Scope de proyecto (obligatorio en tools de escritura; opcional en lectura). */
+  projectScope?: ToolProjectScope;
   handler: (ctx: ToolExecutionContext, args: z.infer<S>) => unknown | Promise<unknown>;
 }
 

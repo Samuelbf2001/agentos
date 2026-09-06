@@ -19,6 +19,7 @@ import {
   updateTask,
   validateTaskAssigneeOrganization,
 } from "@agentos/db";
+import { actorKind } from "@agentos/core";
 import type { ToolDefinition } from "../types.js";
 import { defineTool as def } from "../catalog.js";
 
@@ -94,6 +95,7 @@ export const taskTools: ToolDefinition[] = [
       requires_approval: z.boolean().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "project", arg: "project_id" },
     async handler(ctx, args) {
       const selection = personSelection(args);
       if (selection.personIds.length > 0) {
@@ -178,6 +180,7 @@ export const taskTools: ToolDefinition[] = [
       "Reclama atómicamente una tarea READY con lease. {claimed:false} = otro la tomó primero (no es un error).",
     schema: z.object({ task_id: z.string().min(1), lease_ms: z.number().int().positive().optional() }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       return await ctx.engine.claim({
         taskId: args.task_id,
@@ -200,6 +203,7 @@ export const taskTools: ToolDefinition[] = [
       blocked_reason: BlockedReason.optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       return await ctx.engine.moveTask({
         taskId: args.task_id,
@@ -218,6 +222,7 @@ export const taskTools: ToolDefinition[] = [
     description: "Añade un comentario al timeline de la tarea (task_events, append-only).",
     schema: z.object({ task_id: z.string().min(1), body: z.string().min(1) }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       const task = await getTask(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
@@ -249,6 +254,7 @@ export const taskTools: ToolDefinition[] = [
       path: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       const task = await getTask(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
@@ -281,8 +287,12 @@ export const taskTools: ToolDefinition[] = [
     }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
     handler(ctx, args) {
+      // Scope (DISENO-SCOPE-GATEWAY §2): un agente con proyecto en el ctx lista
+      // SOLO ese proyecto; un project_id ajeno se ignora en vez de denegar.
+      const projectId =
+        actorKind(ctx.actor) === "agent" && ctx.project_id ? ctx.project_id : args.project_id;
       return listTasksWithAssignees(ctx.db, {
-        projectId: args.project_id,
+        projectId,
         status: args.status,
         assigneeAgentId: args.assignee_agent_id,
         assigneePersonId: args.assignee_person_id,
@@ -295,6 +305,7 @@ export const taskTools: ToolDefinition[] = [
     description: "Devuelve una tarea con responsables, timeline, artefactos y contexto del proyecto.",
     schema: z.object({ task_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       const task = await getTaskWithAssignees(ctx.db, args.task_id);
       if (!task) throw errors.notFound("task", args.task_id);
@@ -325,6 +336,7 @@ export const taskTools: ToolDefinition[] = [
       expected_version: z.number().int().positive(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       const before = await getTaskWithAssignees(ctx.db, args.task_id);
       if (!before) throw errors.notFound("task", args.task_id);
@@ -393,6 +405,7 @@ export const taskTools: ToolDefinition[] = [
       expected_version: z.number().int().positive(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    projectScope: { by: "task", arg: "task_id" },
     async handler(ctx, args) {
       const before = await getTask(ctx.db, args.task_id);
       if (!before) throw errors.notFound("task", args.task_id);
@@ -428,6 +441,8 @@ export const taskTools: ToolDefinition[] = [
     description: "Tablero de un proyecto: tareas agrupadas por estado (orden de columna).",
     schema: z.object({ project_id: z.string().min(1) }),
     flags: { read_only: true, external_effect: false, requires_approval: false },
+    // También lectura: sin scope el copiloto descubre ids de tareas ajenas.
+    projectScope: { by: "project", arg: "project_id" },
     async handler(ctx, args) {
       // H2: un project_id inexistente es not_found, NUNCA un tablero vacío OK
       // (un tablero vacío falso alimenta la alucinación de ids inventados).

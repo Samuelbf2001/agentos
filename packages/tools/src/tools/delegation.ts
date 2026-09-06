@@ -21,6 +21,8 @@ export const delegationTools: ToolDefinition[] = [
       parent_task_id: z.string().optional().describe("por defecto, la tarea actual del run"),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    // La hija hereda el proyecto del padre (engine.delegate); sin parent_task_id usa la tarea del run.
+    projectScope: { by: "task", arg: "parent_task_id", fallback: "ctx.task_id" },
     async handler(ctx, args) {
       const parentTaskId = args.parent_task_id ?? ctx.task_id;
       if (!parentTaskId) {
@@ -51,9 +53,20 @@ export const delegationTools: ToolDefinition[] = [
       task_id: z.string().optional(),
     }),
     flags: { read_only: false, external_effect: false, requires_approval: false },
+    // Con task_id (o tarea del run) el objetivo es su proyecto; sin tarea, hereda ctx.project_id.
+    projectScope: { by: "task", arg: "task_id", fallback: "ctx.task_id" },
     async handler(ctx, args) {
       const taskId = args.task_id ?? ctx.task_id ?? null;
       const task = taskId ? await getTask(ctx.db, taskId) : null;
+      // La aprobación cuelga del proyecto del RUN. Una tarea de otro proyecto no
+      // puede arrastrar la aprobación a ese proyecto (antes: task?.projectId ?? ctx).
+      if (task && ctx.project_id && task.projectId !== ctx.project_id) {
+        throw errors.validation("ask_human: la tarea pertenece a otro proyecto distinto al del run", {
+          task_id: task.id,
+          task_project_id: task.projectId,
+          ctx_project_id: ctx.project_id,
+        });
+      }
       // ApprovalKind no tiene 'question': se persiste como 'deliverable' con
       // payload.type distinguiendo pregunta vs entregable (schemas de shared son intocables).
       const approval = await ctx.engine.requestApproval({
@@ -61,7 +74,7 @@ export const delegationTools: ToolDefinition[] = [
         payload: { type: args.kind, title: args.title, body: args.body, task_id: taskId },
         runId: ctx.run_id,
         taskId,
-        projectId: task?.projectId ?? ctx.project_id ?? null,
+        projectId: ctx.project_id ?? task?.projectId ?? null,
         requestedBy: ctx.actor,
       });
       return { status: "pending_approval", approval_id: approval.id };

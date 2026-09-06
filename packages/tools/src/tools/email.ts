@@ -19,6 +19,8 @@ export const emailTools: ToolDefinition[] = [
       body: z.string().min(1),
     }),
     flags: { read_only: false, external_effect: true, requires_approval: true },
+    // "none": un email no pertenece a un proyecto; su cinturón es el Gate 2 (aprobación humana).
+    projectScope: "none",
     handler(_ctx, args) {
       // Stub deliberado: simula, jamás envía.
       return {
