@@ -193,6 +193,36 @@ describe("Hoy", () => {
     expect(screen.getByText("Sólo Conecty")).toBeTruthy();
   });
 
+  it("una revisión muestra la evidencia entregada con sus artefactos", async () => {
+    mockFetch([
+      { path: "/api/waiting", body: { approvals: [], review_tasks: [
+        {
+          task: makeTask({ id: "t-evidencia", status: "REVIEW", title: "Diagnóstico de procesos", updatedAt: 3_000 }),
+          artifacts: [
+            makeArtifact({ id: "art-1", taskId: "t-evidencia", title: "Mapa SIPOC", kind: "document" }),
+            makeArtifact({ id: "art-2", taskId: "t-evidencia", title: "Notas de la entrevista", kind: "note" }),
+          ],
+        },
+      ] } },
+      { path: "/api/runs", body: { runs: [] } },
+      { path: /^\/api\/projects\/[^/]+\/phase-status$/, body: { status: { launchId: null, complete: false, items: [], reason: "no_launch" } } },
+      { path: "/api/tasks", body: { tasks: [] } },
+    ]);
+    renderHoy();
+    const card = await screen.findByTestId("decision-review:t-evidencia");
+    expect(within(card).getByText("Evidencia entregada")).toBeTruthy();
+    expect(within(card).getByText(/Mapa SIPOC/)).toBeTruthy();
+    expect(within(card).getByText(/Notas de la entrevista/)).toBeTruthy();
+  });
+
+  it("el detalle técnico nunca arranca abierto", async () => {
+    mockFetch(baseRoutes());
+    renderHoy();
+    const tool = await screen.findByTestId("decision-approval:ap-tool");
+    const details = within(tool).getByText("Detalle técnico").closest("details");
+    expect(details?.open).toBe(false);
+  });
+
   it("con la bandeja limpia habla al usuario, no al desarrollador", async () => {
     mockFetch([
       { path: "/api/waiting", body: { approvals: [], review_tasks: [] } },

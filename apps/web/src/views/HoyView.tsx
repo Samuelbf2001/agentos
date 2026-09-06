@@ -46,14 +46,12 @@ function DecisionCard({
   selectable,
   selected,
   onToggle,
-  defaultOpen = false,
 }: {
   decision: Decision;
   clientName: string;
   selectable: boolean;
   selected: boolean;
   onToggle: (id: string) => void;
-  defaultOpen?: boolean;
 }) {
   const decideApproval = useStore((s) => s.decideApproval);
   const approveTaskReview = useStore((s) => s.approveTaskReview);
@@ -113,7 +111,22 @@ function DecisionCard({
       <h3 className="mt-2 text-title text-ink">{question}</h3>
       <p className="mt-1 text-body text-muted">{decision.unlocks}</p>
 
-      {body ? (
+      {decision.kind === "review" ? (
+        <div className="mt-3">
+          <p className="text-label text-muted">Evidencia entregada</p>
+          {decision.artifacts.length > 0 ? (
+            <ul className="mt-1 space-y-0.5">
+              {decision.artifacts.map((artifact) => (
+                <li key={artifact.id} className="text-body text-ink-2">
+                  {artifact.title} <span className="text-muted">· {artifact.kind}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-body text-muted">Sin evidencia adjunta</p>
+          )}
+        </div>
+      ) : body ? (
         <div className="mt-3">
           <p className={`whitespace-pre-line text-body text-ink-2 ${bodyExpanded ? "" : "line-clamp-4"}`}>{body}</p>
           <button
@@ -190,7 +203,7 @@ function DecisionCard({
       ) : null}
 
       {payload ? (
-        <details className="mt-4" open={defaultOpen}>
+        <details className="mt-4">
           <summary className="press cursor-pointer text-label text-faint">Detalle técnico</summary>
           {technicalLines.length > 0 ? (
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-small">
@@ -388,7 +401,6 @@ export default function HoyView() {
                     selectable={decision.risk === "bajo"}
                     selected={selected.includes(decision.id)}
                     onToggle={toggle}
-                    defaultOpen
                   />
                 ))}
               </div>
