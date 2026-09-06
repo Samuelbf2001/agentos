@@ -37,7 +37,7 @@ describe("resolveSandbox", () => {
 });
 
 describe("con sandbox apagado", () => {
-  it("POST /api/auth/sandbox-login es 404 y GET /api/health trae sandbox:false", async () => {
+  it("POST /api/auth/sandbox-login es 401 (la guarda ni la deja pasar) y GET /api/health trae sandbox:false", async () => {
     const fx = await makeFixture({ ...MINIMAL, sandbox: false });
     try {
       const login = await fx.api.app.inject({
@@ -45,7 +45,7 @@ describe("con sandbox apagado", () => {
         url: "/api/auth/sandbox-login",
         payload: { person_id: fx.person.id },
       });
-      expect(login.statusCode).toBe(404);
+      expect(login.statusCode).toBe(401);
 
       const health = await fx.api.app.inject({ method: "GET", url: "/api/health" });
       expect(health.statusCode).toBe(200);
