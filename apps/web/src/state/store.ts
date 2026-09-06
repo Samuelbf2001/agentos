@@ -84,6 +84,17 @@ export interface CreateTaskInput {
   labels?: string[];
 }
 
+/**
+ * Opciones de envío al canal web. `threadHint` fija la session_key
+ * (`web:<personId>:<hint>`) en vez del uuid aleatorio: el panel del tablero usa
+ * `board:<projectId>` para reabrir siempre el mismo hilo. `projectId` pone ese
+ * proyecto en el scope del run aunque `activeProjectId` sea otro o null.
+ */
+export interface SendChatOptions {
+  threadHint?: string;
+  projectId?: string;
+}
+
 /** Entregable en REVIEW esperando decisión humana (bandeja, CA-4.2 / fix H10). */
 export interface ReviewEntry {
   task: Task;
@@ -187,7 +198,7 @@ export interface AppStore extends EventState {
 
   loadThreads(): Promise<void>;
   openThread(threadId: string | null): Promise<void>;
-  sendChatMessage(text: string): Promise<void>;
+  sendChatMessage(text: string, opts?: SendChatOptions): Promise<void>;
 
   loadApprovals(): Promise<void>;
   decideApproval(id: string, decision: "approved" | "rejected", note?: string): Promise<void>;
@@ -953,7 +964,7 @@ export const useStore = create<AppStore>()((set, get) => {
       }
     },
 
-    async sendChatMessage(text) {
+    async sendChatMessage(text, opts) {
       const person = get().person;
       if (!person || !text.trim()) return;
       const state = get();
@@ -972,6 +983,10 @@ export const useStore = create<AppStore>()((set, get) => {
       } else {
         threadHint = crypto.randomUUID();
       }
+      // Hint determinista (panel del tablero): manda sobre lo parseado para que
+      // el mensaje nunca caiga en otro hilo aunque la slice apunte a otro.
+      if (opts?.threadHint) threadHint = opts.threadHint;
+      const projectId = opts?.projectId ?? state.activeProjectId ?? undefined;
       set({ chatSending: true });
       // Eco optimista del mensaje propio (idempotente: el WS lo dedupe por id).
       const optimistic: Message = {
@@ -992,9 +1007,11 @@ export const useStore = create<AppStore>()((set, get) => {
           message_id: messageId,
           text,
           ...(threadHint ? { thread_hint: threadHint } : {}),
-          ...(get().activeProjectId ? { project_id: get().activeProjectId! } : {}),
+          ...(projectId ? { project_id: projectId } : {}),
         });
-        if (!get().chat.threadId) {
+        // Hilo nuevo, o el servidor lo enrutó a otro (hint determinista):
+        // se abre el que respondió para no mezclar mensajes de dos hilos.
+        if (get().chat.threadId !== res.thread_id) {
           await get().openThread(res.thread_id);
           await get().loadThreads();
         }

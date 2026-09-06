@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../state/store";
 import CreateTaskDialog from "./CreateTaskDialog";
 import TaskSearchBox from "./TaskSearchBox";
+import BoardCopilotPanel from "../components/chat/BoardCopilotPanel";
 import type { BoardFilter, Person, Stage, Task, TaskAssigneePerson, TaskStatus } from "../lib/types";
 import {
   getTaskAssignees,
@@ -341,6 +342,9 @@ export default function BoardView() {
   const setBoardLabelFilter = useStore((state) => state.setBoardLabelFilter);
   const labelCatalog = useStore((state) => state.labelCatalog);
   const [creating, setCreating] = useState(false);
+  // Copiloto: panel lateral con el hilo `board:<projectId>`; al cambiar de
+  // proyecto el panel mismo salta al hilo del nuevo (nunca mezcla hilos).
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor),
@@ -406,8 +410,8 @@ export default function BoardView() {
 
   return (
     <div className="min-h-full overflow-x-hidden bg-surface-2 p-3 sm:p-4 lg:overflow-auto">
-      <div className="mx-auto max-w-[1680px]">
-        <div className="rounded-panel border border-line bg-surface shadow-rest">
+      <div className="mx-auto flex max-w-[1680px] flex-col gap-3 lg:flex-row lg:items-start">
+        <div className="min-w-0 flex-1 rounded-panel border border-line bg-surface shadow-rest">
           <div className="border-b border-line px-3 py-3 sm:px-4 sm:py-4">
             {/* Sin cabecera duplicada: el nombre del cliente y la fase viven
                 arriba, en la barra del proyecto. Aquí sólo lo operativo. */}
@@ -422,6 +426,21 @@ export default function BoardView() {
                 className="press inline-flex min-h-9 items-center justify-center gap-1.5 rounded-tight bg-ink px-3 py-1.5 text-small font-semibold text-surface"
               >
                 Nueva tarea
+              </button>
+              <button
+                type="button"
+                data-testid="board-copilot-toggle"
+                aria-pressed={copilotOpen}
+                aria-expanded={copilotOpen}
+                aria-controls="board-copilot"
+                onClick={() => setCopilotOpen((open) => !open)}
+                className={`press inline-flex min-h-10 items-center justify-center gap-1.5 rounded-tight border px-3 py-1.5 text-small font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-link focus:ring-offset-1 ${
+                  copilotOpen
+                    ? "border-ink bg-ink text-surface"
+                    : "border-line bg-surface text-ink hover:bg-surface-2"
+                }`}
+              >
+                Copiloto
               </button>
               <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-small">
                 <span className="text-muted">
@@ -532,6 +551,13 @@ export default function BoardView() {
             )}
           </div>
         </div>
+        {copilotOpen ? (
+          <BoardCopilotPanel
+            projectId={activeProjectId}
+            projectName={project?.name}
+            onClose={() => setCopilotOpen(false)}
+          />
+        ) : null}
       </div>
       {activeProjectId ? (
         <CreateTaskDialog
