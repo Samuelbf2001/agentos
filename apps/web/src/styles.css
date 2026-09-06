@@ -25,73 +25,73 @@
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   /* Cinco tamaños. El tracking va POR tamaño, nunca uno solo para todos. */
-  --text-display: 1.625rem; /* 26px */
-  --text-display--line-height: 1.12;
-  --text-display--letter-spacing: -0.021em;
-  --text-display--font-weight: 680;
+  --text-display: 1.875rem; /* 30px */
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -0.022em;
+  --text-display--font-weight: 700;
 
-  --text-title: 1.1875rem; /* 19px */
+  --text-title: 1.25rem; /* 20px */
   --text-title--line-height: 1.25;
   --text-title--letter-spacing: -0.014em;
-  --text-title--font-weight: 640;
+  --text-title--font-weight: 650;
 
   --text-body: 0.9375rem; /* 15px */
   --text-body--line-height: 1.55;
-  --text-body--letter-spacing: 0em;
+  --text-body--letter-spacing: -0.003em;
 
   --text-small: 0.8125rem; /* 13px */
   --text-small--line-height: 1.45;
-  --text-small--letter-spacing: 0.002em;
+  --text-small--letter-spacing: 0em;
 
   --text-label: 0.75rem; /* 12px — el mínimo absoluto, también en lo clicable */
   --text-label--line-height: 1.3;
-  --text-label--letter-spacing: 0.075em;
-  --text-label--font-weight: 640;
+  --text-label--letter-spacing: 0.01em;
+  --text-label--font-weight: 600;
 
   /* ── Neutros con sesgo frío ───────────────────────────────────────────── */
-  --color-canvas: #f2f4f7;
-  --color-canvas-deep: #e8ebf0;
+  --color-canvas: #f5f5f7;
+  --color-canvas-deep: #e9e9ee;
   --color-surface: #ffffff;
-  --color-surface-2: #fbfcfd;
-  --color-ink: #14181d;
-  --color-ink-2: #3d454e;
-  --color-muted: #6b747e;
-  --color-faint: #98a1ab;
-  --color-line: #dde2e8;
-  --color-line-soft: #e9edf1;
+  --color-surface-2: #fafafa;
+  --color-ink: #1d1d1f;
+  --color-ink-2: #3a3a3c;
+  --color-muted: #6e6e73;
+  --color-faint: #a1a1a6;
+  --color-line: #e5e5ea;
+  --color-line-soft: #f0f0f3;
 
   /* ── Gramática de estado ──────────────────────────────────────────────── */
   /* Ámbar: trabajo en curso. */
-  --color-work: #a96a0b;
-  --color-work-bg: #fbefd9;
-  --color-work-line: #efd6a8;
+  --color-work: #b45309;
+  --color-work-bg: #fff4e5;
+  --color-work-line: #f6dcb3;
   /* Violeta: espera una decisión humana. Uso único. */
-  --color-decide: #6a4ca8;
-  --color-decide-bg: #ede7f8;
-  --color-decide-line: #d3c6ee;
+  --color-decide: #6e4ecf;
+  --color-decide-bg: #f0ebfb;
+  --color-decide-line: #d9cdf3;
   /* Rojo: roto o vencido. */
-  --color-broken: #a33a31;
-  --color-broken-bg: #fae4e1;
-  --color-broken-line: #f0c6c1;
+  --color-broken: #d70015;
+  --color-broken-bg: #fdecec;
+  --color-broken-line: #f5c2c2;
   /* Verde: cerrado o aprobado. */
-  --color-done: #2c6a45;
-  --color-done-bg: #dfede4;
-  --color-done-line: #bfdccb;
+  --color-done: #1f8a4c;
+  --color-done-bg: #e6f5ec;
+  --color-done-line: #bfe3cc;
   /* Azul: enlace y selección. Nunca estado. */
-  --color-link: #2a5da8;
-  --color-link-bg: #e4edfa;
+  --color-link: #0071e3;
+  --color-link-bg: #e8f1fd;
 
   /* Cromática flotante */
-  --color-chrome: rgb(255 255 255 / 0.68);
-  --color-chrome-edge: rgb(255 255 255 / 0.5);
+  --color-chrome: rgb(245 245 247 / 0.82);
+  --color-chrome-edge: rgb(0 0 0 / 0.06);
 
   /* ── Profundidad: tres sombras, tres radios ───────────────────────────── */
-  --shadow-rest: 0 1px 2px rgb(16 24 36 / 0.05), 0 1px 1px rgb(16 24 36 / 0.03);
-  --shadow-raise: 0 4px 14px rgb(16 24 36 / 0.07), 0 1px 3px rgb(16 24 36 / 0.05);
-  --shadow-float: 0 18px 40px rgb(16 24 36 / 0.13), 0 3px 10px rgb(16 24 36 / 0.07);
+  --shadow-rest: 0 1px 2px rgb(0 0 0 / 0.04), 0 2px 10px rgb(0 0 0 / 0.04);
+  --shadow-raise: 0 2px 6px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.08);
+  --shadow-float: 0 12px 40px rgb(0 0 0 / 0.16), 0 2px 8px rgb(0 0 0 / 0.08);
 
-  --radius-tight: 8px;
-  --radius-soft: 12px;
+  --radius-tight: 10px;
+  --radius-soft: 14px;
   --radius-panel: 18px;
 
   /* ── Movimiento: muelle amortiguado 1.0, sin rebote ───────────────────── */
