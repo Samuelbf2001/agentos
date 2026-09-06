@@ -149,7 +149,6 @@ function AgentsTab() {
 
 function ConfigTab() {
   const killSwitch = useStore((s) => s.killSwitch);
-  const setKillSwitch = useStore((s) => s.setKillSwitch);
   const [rows, setRows] = useState<AppConfigRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,22 +167,9 @@ function ConfigTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 rounded-soft border border-line bg-surface p-4">
-        <div>
-          <p className="text-body font-bold">Kill switch (US-11)</p>
-          <p className="text-small text-muted">
-            Al activarlo no arrancan runs nuevos y los activos se cancelan en ≤10 s.
-          </p>
-        </div>
-        <button
-          onClick={() => void setKillSwitch(!killSwitch)}
-          className={`ml-auto rounded-tight px-3 py-1.5 text-small font-medium text-surface ${
-            killSwitch ? "bg-done hover:bg-done" : "bg-broken hover:bg-broken"
-          }`}
-        >
-          {killSwitch ? "▶ Reanudar agentes" : "⏸ Pausar agentes"}
-        </button>
-      </div>
+      <p className="text-small text-muted">
+        {killSwitch ? "Agentes pausados" : "Agentes activos"}
+      </p>
 
       <div className="rounded-soft border border-line bg-surface p-4">
         <p className="text-small font-bold uppercase text-faint">

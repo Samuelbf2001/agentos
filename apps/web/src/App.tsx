@@ -122,12 +122,6 @@ function Shell() {
       {killSwitch ? (
         <div className="flex flex-wrap items-center justify-center gap-3 bg-broken-bg px-4 py-1.5 text-small text-broken">
           <span className="font-semibold">Los agentes están pausados: no arrancan runs nuevos.</span>
-          <button
-            onClick={() => void setKillSwitch(false)}
-            className="press rounded-tight border border-broken-line bg-surface px-2.5 py-1 text-small font-semibold text-broken"
-          >
-            Reanudar agentes
-          </button>
         </div>
       ) : null}
 
