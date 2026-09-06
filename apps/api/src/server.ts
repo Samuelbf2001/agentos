@@ -5,8 +5,10 @@
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
+import { errors } from "@agentos/shared";
 import { getPerson } from "@agentos/db";
 import { createApiContext, type ApiContext, type ApiOptions } from "./context.js";
 import { extractToken, type Session } from "./auth.js";
@@ -41,9 +43,32 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   const ctx = await createApiContext(options);
   const app = Fastify({ logger: options.logger ?? false });
 
+  // `origin` como función (en vez del array/string directo): así, ante un
+  // origen fuera de la lista, @fastify/cors desactiva TODO el manejo de CORS
+  // para esa petición (ni allow-origin ni allow-methods ni preflight), en vez
+  // de solo omitir allow-origin. Fail-closed también en el preflight.
+  const allowedOrigins = new Set(
+    Array.isArray(ctx.corsOrigin) ? ctx.corsOrigin : [ctx.corsOrigin],
+  );
   await app.register(cors, {
-    origin: ctx.corsOrigin,
+    origin: (origin, cb) => {
+      cb(null, !!origin && allowedOrigins.has(origin));
+    },
     credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  });
+  // Límite de tasa SOLO donde hace falta (`global: false`): las dos rutas
+  // públicas sin sesión (/api/auth/login y /api/auth/people) declaran el suyo
+  // en `config.rateLimit`. El 429 sale con el mismo sobre de error que el resto
+  // de la API ({ error: { code, message } }) vía AgentosError.
+  await app.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: (_req, ctx) =>
+      errors.rateLimited(
+        `Demasiadas peticiones: máximo ${ctx.max} por ${ctx.after}. Reintenta más tarde.`,
+        { max: ctx.max, retry_after: ctx.after },
+      ),
   });
   await app.register(websocket);
   // Subida de artefactos (US: cerrar una tarea desde la interfaz). El limite

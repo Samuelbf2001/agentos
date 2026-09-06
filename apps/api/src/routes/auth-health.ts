@@ -5,33 +5,56 @@ import { errors } from "@agentos/shared";
 import { getPerson, listPeople } from "@agentos/db";
 import { API_VERSION, healthCounts, type ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
-import { SESSION_COOKIE } from "../auth.js";
 
 const LoginBody = z.object({
   password: z.string().min(1),
   person_id: z.string().min(1),
 });
 
-export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): void {
-  app.get("/api/health", async () => ({
-    ok: true,
-    version: API_VERSION,
-    now: Date.now(),
-    uptime_ms: Date.now() - ctx.startedAt,
-    kill_switch: await ctx.engine.isKillSwitchActive(),
-    recovery: ctx.recovery,
-    pool: ctx.pool.snapshot(),
-    counts: await healthCounts(ctx.db),
-  }));
+/** Ventana del límite de tasa en el formato que espera @fastify/rate-limit. */
+function limit(rule: { max: number; timeWindowMs: number }) {
+  return { rateLimit: { max: rule.max, timeWindow: rule.timeWindowMs } };
+}
 
-  /** Personas internas para el selector del login (solo id + nombre + rol). */
-  app.get("/api/auth/people", async () => ({
+export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): void {
+  /**
+   * Salud PÚBLICA (la usa el healthcheck del contenedor): solo señales agregadas.
+   * Jamás rutas del sistema de archivos, variables de entorno, versiones de
+   * dependencias ni identificadores de runs — el detalle de la recuperación y
+   * del pool viaja como contadores, no como listas de ids.
+   */
+  app.get("/api/health", async () => {
+    const pool = ctx.pool.snapshot();
+    const countIds = (buckets: Record<string, string[]>): number =>
+      Object.values(buckets).reduce((total, ids) => total + ids.length, 0);
+    return {
+      ok: true,
+      version: API_VERSION,
+      now: Date.now(),
+      uptime_ms: Date.now() - ctx.startedAt,
+      kill_switch: await ctx.engine.isKillSwitchActive(),
+      recovery: {
+        interrupted_runs: ctx.recovery.interruptedRuns.length,
+        requeued_tasks: ctx.recovery.requeuedTasks.length,
+      },
+      pool: { running: countIds(pool.running), queued: countIds(pool.queued) },
+      counts: await healthCounts(ctx.db),
+    };
+  });
+
+  /**
+   * Personas internas para el desplegable del login. Es PÚBLICA: devuelve el
+   * mínimo imprescindible para pintar el selector (id + nombre) — nunca email,
+   * rol ni organización — y con límite de tasa por IP para que no sirva de
+   * directorio del equipo a un escáner.
+   */
+  app.get("/api/auth/people", { config: limit(ctx.rateLimits.people) }, async () => ({
     people: (await listPeople(ctx.db))
       .filter((p) => p.isInternal)
-      .map((p) => ({ id: p.id, full_name: p.fullName, role: p.role })),
+      .map((p) => ({ id: p.id, full_name: p.fullName })),
   }));
 
-  app.post("/api/auth/login", async (req, reply) => {
+  app.post("/api/auth/login", { config: limit(ctx.rateLimits.login) }, async (req, reply) => {
     const body = parse(LoginBody, req.body);
     if (!ctx.auth.verifyPassword(body.password)) {
       return reply.status(401).send({ error: { code: "invalid_credentials", message: "Contraseña incorrecta" } });
@@ -48,7 +71,9 @@ export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): vo
   app.get("/api/auth/me", async (req) => ({ session: req.session }));
 
   app.post("/api/auth/logout", async (_req, reply) => {
-    reply.header("set-cookie", `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0`);
+    // Mismos atributos que la cookie emitida (incluido `Secure`): un navegador
+    // no borra una cookie `Secure` con una respuesta que no lo lleva.
+    reply.header("set-cookie", ctx.auth.clearCookie());
     return { ok: true };
   });
 }

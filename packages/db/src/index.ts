@@ -42,4 +42,10 @@ export * from "./repos.js";
 // Motor de launch de Módulos de Fase (§13.3) y seed: escritos UNA vez contra
 // la fachada, valen para los dos motores.
 export * from "./modules/launch.js";
-export { seed, type SeedCounts } from "./seed.js";
+export {
+  seed,
+  seedCatalog,
+  seedDemo,
+  type SeedCounts,
+  type CatalogSeedResult,
+} from "./seed.js";

@@ -18,6 +18,7 @@ import {
   createProject,
   getAgentBySlug,
   getArtifact,
+  getOrganization,
   getProject,
   getTask,
   listDocs,
@@ -25,6 +26,7 @@ import {
   listLabelCatalog,
   listLabelsForTasks,
   listAssignablePeople,
+  listOrganizations,
   listProjects,
   listProjectSources,
   listRunsForTask,
@@ -181,13 +183,26 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
 
   // ── Projects ──────────────────────────────────────────────────────────────
 
-  app.get("/api/projects", async () => ({ projects: await listProjects(db) }));
+  app.get("/api/projects", async () => {
+    const projects = await listProjects(db);
+    // Una sola consulta a organizaciones (mapa en memoria) para evitar N+1
+    // al resolver el nombre del cliente por cada proyecto.
+    const orgs = await listOrganizations(db);
+    const orgNameById = new Map(orgs.map((org) => [org.id, org.name]));
+    return {
+      projects: projects.map((project) => ({
+        ...project,
+        orgName: orgNameById.get(project.orgId) ?? null,
+      })),
+    };
+  });
 
   app.get("/api/projects/:id", async (req) => {
     const { id } = req.params as { id: string };
     const project = await getProject(db, id);
     if (!project) throw errors.notFound("project", id);
-    return { project };
+    const org = await getOrganization(db, project.orgId);
+    return { project: { ...project, orgName: org?.name ?? null } };
   });
 
   app.post("/api/projects", async (req, reply) => {

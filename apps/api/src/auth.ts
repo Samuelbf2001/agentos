@@ -24,6 +24,10 @@ export interface AuthService {
   issueToken(person: { id: string; fullName: string }, now?: number): string;
   verifyToken(token: string | undefined | null, now?: number): Session | null;
   cookieFor(token: string): string;
+  /** Cookie de borrado (logout): MISMOS atributos que la de emisión. */
+  clearCookie(): string;
+  /** true si las cookies se emiten con `Secure` (producción / HTTPS). */
+  readonly cookieSecure: boolean;
 }
 
 function b64url(buf: Buffer): string {
@@ -37,18 +41,29 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ba, bb);
 }
 
-export function createAuthService(opts: { sharedPassword: string; sessionSecret?: string }): AuthService {
+export function createAuthService(opts: {
+  sharedPassword: string;
+  sessionSecret?: string;
+  /** Emite las cookies con `Secure` (obligatorio en producción / detrás de HTTPS). */
+  cookieSecure?: boolean;
+}): AuthService {
   const password = opts.sharedPassword;
-  // Secreto de firma: explícito o derivado de la contraseña (suficiente para
-  // un workspace local mono-usuario; jamás se persiste).
+  // Secreto de firma: explícito (AGENTOS_SESSION_SECRET, obligatorio en
+  // producción) o derivado de la contraseña en desarrollo — suficiente para un
+  // workspace local mono-usuario; jamás se persiste. Rotar el secreto invalida
+  // TODAS las sesiones emitidas con el anterior (las firmas dejan de casar).
   const secret =
     opts.sessionSecret ?? createHash("sha256").update(`agentos-session:${password}`).digest("hex");
+  const cookieSecure = opts.cookieSecure === true;
+  const secureAttr = cookieSecure ? "; Secure" : "";
 
   function sign(payloadB64: string): string {
     return b64url(createHmac("sha256", secret).update(payloadB64).digest());
   }
 
   return {
+    cookieSecure,
+
     verifyPassword(candidate: string): boolean {
       return typeof candidate === "string" && safeEqual(candidate, password);
     },
@@ -81,9 +96,25 @@ export function createAuthService(opts: { sharedPassword: string; sessionSecret?
     },
 
     cookieFor(token: string): string {
-      return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+      return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax${secureAttr}; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+    },
+
+    clearCookie(): string {
+      return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax${secureAttr}; Max-Age=0`;
     },
   };
+}
+
+/**
+ * ¿Se emiten cookies con `Secure`? `AGENTOS_COOKIE_SECURE` manda (1/true → sí,
+ * 0/false → no); sin la variable, se activa solo en producción. Un despliegue
+ * detrás de HTTPS jamás debe emitir la cookie de sesión sin `Secure`.
+ */
+export function resolveCookieSecure(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.AGENTOS_COOKIE_SECURE?.trim().toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  return (env.NODE_ENV ?? "").toLowerCase() === "production";
 }
 
 /** Extrae el token de Authorization: Bearer o de la cookie de sesión. */

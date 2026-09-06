@@ -20,6 +20,10 @@ export const ErrorCodes = {
   HUMAN_APPROVAL_REQUIRED: "human_approval_required",
   PENDING_APPROVAL: "pending_approval",
   APPROVAL_INVALIDATED: "approval_invalidated",
+  /** Arranque mal configurado (secretos u orígenes obligatorios en producción). */
+  CONFIGURATION_ERROR: "configuration_error",
+  /** Demasiadas peticiones a una ruta pública con límite de tasa. */
+  RATE_LIMITED: "rate_limited",
   // Política / gobierno
   POLICY_DENIED: "policy_denied",
   KILL_SWITCH_ACTIVE: "kill_switch_active",
@@ -76,6 +80,11 @@ export const errors = {
     ),
   validation: (message: string, details?: unknown) =>
     new AgentosError(ErrorCodes.VALIDATION_ERROR, message, details),
+  /** Configuración de arranque inválida: fail-closed ANTES de servir tráfico. */
+  configuration: (message: string, details?: unknown) =>
+    new AgentosError(ErrorCodes.CONFIGURATION_ERROR, message, details),
+  rateLimited: (message: string, details?: unknown) =>
+    new AgentosError(ErrorCodes.RATE_LIMITED, message, details),
   /** Cadena de mando rota: la razón (`terminated_ancestor` | `missing_manager` | `cycle`) viaja en details. */
   notAssignable: (agent: string, reason: string, details?: Record<string, unknown>) =>
     new AgentosError(
