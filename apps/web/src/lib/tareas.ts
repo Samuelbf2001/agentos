@@ -134,7 +134,15 @@ export interface Contexto {
   people: Person[];
   /** Persona de la sesión; resuelve `responsable=yo`. */
   meId: string | null;
+  /**
+   * Nombre real de cada organización, sacado del recibo de launch
+   * (`inputs.empresa`). `/api/projects` no lo trae, así que puede faltar.
+   */
+  clientNames?: Map<string, string>;
 }
+
+/** Lo mínimo para poder nombrar a un cliente. */
+export type ClienteCtx = Pick<Contexto, "projects" | "clientNames">;
 
 // ── Nombres legibles ────────────────────────────────────────────────────────
 
@@ -169,15 +177,18 @@ function prefijoComun(a: string, b: string): string {
 }
 
 /**
- * Nombre del cliente. La API todavía NO publica el nombre de la organización
- * —`/api/projects` sólo devuelve `org_id`—, así que se deduce de lo único
- * legible que llega al navegador: los nombres de sus proyectos. Con un solo
- * proyecto es su nombre (que es exactamente lo que ya muestra la columna
- * "Cliente" de la lista de proyectos); con varios, el prefijo que comparten.
- * Cuando no comparten nada se identifica por el id, antes que inventar uno.
+ * Nombre del cliente. `/api/projects` sólo devuelve `org_id`, así que el
+ * nombre real sale del recibo de launch del proyecto (`inputs.empresa`), que
+ * es un endpoint que ya existe. Cuando el proyecto no nació de un módulo no hay
+ * recibo: entonces se deduce de lo único legible que queda, los nombres de sus
+ * proyectos —uno solo es su nombre; varios, el prefijo que comparten— y en
+ * último término se identifica por el id, antes que inventar uno.
  */
-export function clienteLabel(orgId: string | null, projects: Project[]): string {
+export function clienteLabel(orgId: string | null, ctx: ClienteCtx): string {
   if (!orgId) return "Sin cliente";
+  const real = ctx.clientNames?.get(orgId);
+  if (real) return real;
+  const projects = ctx.projects;
   const own = projects.filter((project) => project.orgId === orgId);
   if (own.length === 0) return `Cliente ${orgId.slice(0, 6)}`;
   const first = own[0]!;
@@ -268,7 +279,7 @@ function valorDeColumna(task: Task, columna: Columna, ctx: Contexto): string | n
     case "titulo":
       return normalizar(task.title);
     case "cliente":
-      return normalizar(clienteLabel(orgIdOf(task, ctx.projects), ctx.projects));
+      return normalizar(clienteLabel(orgIdOf(task, ctx.projects), ctx));
     case "proyecto":
       return normalizar(projectOf(task, ctx.projects)?.name ?? "");
     case "estado":
@@ -341,7 +352,7 @@ export function agrupar(
   for (const task of tasks) {
     if (agrupacion === "cliente") {
       const orgId = orgIdOf(task, ctx.projects);
-      push(orgId ?? "sin-cliente", clienteLabel(orgId, ctx.projects), task);
+      push(orgId ?? "sin-cliente", clienteLabel(orgId, ctx), task);
     } else if (agrupacion === "proyecto") {
       const project = projectOf(task, ctx.projects);
       push(task.projectId, project?.name ?? `Proyecto ${task.projectId.slice(0, 6)}`, task);
@@ -428,7 +439,7 @@ export interface Chip {
 export function chipsActivos(filtros: Filtros, ctx: Contexto): Chip[] {
   const chips: Chip[] = [];
   if (filtros.cliente) {
-    chips.push({ key: "cliente", label: "Cliente", value: clienteLabel(filtros.cliente, ctx.projects) });
+    chips.push({ key: "cliente", label: "Cliente", value: clienteLabel(filtros.cliente, ctx) });
   }
   if (filtros.proyecto) {
     const project = ctx.projects.find((p) => p.id === filtros.proyecto);
@@ -460,10 +471,10 @@ export function hayFiltros(filtros: Filtros): boolean {
 }
 
 /** Clientes presentes en la base, para el desplegable. */
-export function clientesDe(projects: Project[]): { id: string; label: string }[] {
-  const ids = [...new Set(projects.map((project) => project.orgId))];
+export function clientesDe(ctx: ClienteCtx): { id: string; label: string }[] {
+  const ids = [...new Set(ctx.projects.map((project) => project.orgId))];
   return ids
-    .map((id) => ({ id, label: clienteLabel(id, projects) }))
+    .map((id) => ({ id, label: clienteLabel(id, ctx) }))
     .sort((a, b) => a.label.localeCompare(b.label, "es"));
 }
 

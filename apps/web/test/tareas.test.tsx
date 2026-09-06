@@ -246,15 +246,22 @@ describe("agrupación (pura)", () => {
 });
 
 describe("cliente y query", () => {
-  it("el nombre del cliente sale de sus proyectos: la API todavía no lo publica", () => {
-    expect(clienteLabel("org-1", ctx.projects)).toBe(project.name);
+  it("el nombre real del cliente manda; sin recibo se deduce de sus proyectos", () => {
+    // Con recibo de launch: el nombre de la empresa, tal cual.
     expect(
-      clienteLabel("org-9", [
-        { ...project, id: "a", orgId: "org-9", name: "Gamma assessment" },
-        { ...project, id: "b", orgId: "org-9", name: "Gamma operación" },
-      ]),
+      clienteLabel("org-1", { ...ctx, clientNames: new Map([["org-1", "ACME S.A."]]) }),
+    ).toBe("ACME S.A.");
+    // Sin recibo: un proyecto presta su nombre; varios, el prefijo común.
+    expect(clienteLabel("org-1", ctx)).toBe(project.name);
+    expect(
+      clienteLabel("org-9", {
+        projects: [
+          { ...project, id: "a", orgId: "org-9", name: "Gamma assessment" },
+          { ...project, id: "b", orgId: "org-9", name: "Gamma operación" },
+        ],
+      }),
     ).toBe("Gamma");
-    expect(clienteLabel(null, ctx.projects)).toBe("Sin cliente");
+    expect(clienteLabel(null, ctx)).toBe("Sin cliente");
   });
 
   it("los filtros viajan en la query y vuelven idénticos", () => {
@@ -277,6 +284,13 @@ describe("cliente y query", () => {
     );
     expect(chips.map((c) => c.key)).toEqual(["cliente", "responsable", "vencimiento"]);
     expect(chips.map((c) => c.value)).toEqual([projectB.name, "Yo", "Vencidas"]);
+    // Y con el nombre real del cliente, el chip lo usa sin tocar nada más.
+    expect(
+      chipsActivos(
+        { ...FILTROS_VACIOS, cliente: "org-2" },
+        { ...ctx, clientNames: new Map([["org-2", "Delta Logística"]]) },
+      )[0]!.value,
+    ).toBe("Delta Logística");
   });
 });
 
@@ -298,6 +312,17 @@ const viewRoutes = [
     },
   },
   {
+    method: "PATCH",
+    path: "/api/tasks/t-acme-hoy",
+    body: ({ body }: Wire) => ({
+      task: makeTask({
+        id: "t-acme-hoy",
+        projectId: project.id,
+        title: (body as { title: string }).title,
+      }),
+    }),
+  },
+  {
     method: "POST",
     path: "/api/tasks/t-acme-hoy/move",
     body: ({ body }: Wire) => ({
@@ -312,6 +337,15 @@ const viewRoutes = [
   { path: "/api/projects", body: { projects: [project, projectB] } },
   { path: "/api/auth/people", body: { people: [person, personB] } },
   { path: "/api/labels", body: { labels: [{ label: "cliente", count: 2 }, { label: "ops", count: 1 }] } },
+  {
+    path: /^\/api\/projects\/[^/]+\/launches$/,
+    body: ({ url }: Wire) => {
+      const projectId = url.split("/api/projects/")[1]?.split("/")[0];
+      const org = projectId === projectB.id ? projectB.orgId : project.orgId;
+      const empresa = projectId === projectB.id ? "Delta Logística" : "ACME S.A.";
+      return { launches: [{ org_id: org, project_id: projectId, inputs: { empresa } }] };
+    },
+  },
   { path: /^\/api\/tasks\/[^/]+$/, body: { task: makeTask(), events: [], artifacts: [], runs: [] } },
 ];
 
@@ -520,6 +554,28 @@ describe("TareasView (render)", () => {
       expect(move).toBeTruthy();
       expect(move!.body).toMatchObject({ to: "IN_PROGRESS" });
     });
+  });
+
+  it("el título se renombra en línea, sin abrir la ficha", async () => {
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("tarea-renombrar-t-acme-hoy"));
+    const input = await screen.findByTestId("tarea-titulo-input-t-acme-hoy");
+    fireEvent.change(input, { target: { value: "Zanjar el mapa SIPOC con ventas" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH" && c.url.endsWith("/api/tasks/t-acme-hoy"));
+      expect(patch).toBeTruthy();
+      expect(patch!.body).toMatchObject({ title: "Zanjar el mapa SIPOC con ventas", expected_version: 3 });
+    });
+    // La fila se queda donde estaba: renombrar no es navegar.
+    await waitFor(() =>
+      expect(screen.getByTestId("tarea-abrir-t-acme-hoy").textContent).toBe(
+        "Zanjar el mapa SIPOC con ventas",
+      ),
+    );
   });
 
   it("sin coincidencias lo dice y ofrece volver a la base completa", async () => {

@@ -133,7 +133,7 @@ function StatusSelect({
       value={task.status}
       onClick={(event) => event.stopPropagation()}
       onChange={(event) => void move(event.target.value as TaskStatus)}
-      className={`min-h-6 appearance-none rounded-[6px] border px-1.5 py-0.5 text-label font-semibold uppercase focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50 ${toneClass}`}
+      className={`min-h-[22px] appearance-none rounded-[6px] border px-1.5 py-0.5 text-label font-semibold uppercase focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50 ${toneClass}`}
     >
       {TASK_STATUSES.map((status) => (
         <option key={status} value={status}>
@@ -208,7 +208,7 @@ function TitleCell({ task, onChanged }: { task: Task; onChanged: (task: Task) =>
           event.stopPropagation();
           void openTask(task.id);
         }}
-        className={`min-w-0 flex-1 truncate text-left text-small font-medium text-ink hover:text-link ${busy ? "opacity-50" : ""}`}
+        className={`min-w-0 max-w-[15rem] flex-1 truncate text-left text-small font-medium text-ink hover:text-link ${busy ? "opacity-50" : ""}`}
       >
         {task.title}
       </button>
@@ -221,9 +221,9 @@ function TitleCell({ task, onChanged }: { task: Task; onChanged: (task: Task) =>
           event.stopPropagation();
           setEditing(true);
         }}
-        className="press invisible shrink-0 rounded-tight px-1 text-label text-faint hover:text-ink-2 group-hover:visible"
+        className="press shrink-0 rounded-tight px-1 text-label text-faint opacity-0 hover:text-ink-2 group-hover:opacity-100"
       >
-        Renombrar
+        <span aria-hidden="true">✎</span>
       </button>
     </span>
   );
@@ -249,7 +249,7 @@ function TaskRow({
   const responsable = responsablePrincipal(task);
   const overdue = task.status !== "DONE" && task.status !== "CANCELLED" && (task.dueAt ?? task.due_at ?? Number.POSITIVE_INFINITY) < Date.now();
 
-  const cell = "border-b border-line-soft px-2.5 py-1 align-middle";
+  const cell = "border-b border-line-soft px-1.5 py-1 align-middle";
 
   return (
     <tr
@@ -261,29 +261,29 @@ function TaskRow({
         selected ? "bg-link-bg" : ""
       } ${overdue ? "late" : ""}`}
     >
-      <td className={`${cell} max-w-0`}>
+      <td className={`${cell} w-full`}>
         <TitleCell task={task} onChanged={onChanged} />
       </td>
-      <td className={`${cell} whitespace-nowrap text-small`}>
+      <td className={`${cell} max-w-[11rem] truncate text-small`}>
         {orgId ? (
           <Link
             to={paths.tareas({ cliente: orgId })}
             onClick={(event) => event.stopPropagation()}
-            className="text-link hover:underline"
+            className="block max-w-[8rem] truncate text-link hover:underline"
           >
-            {clienteLabel(orgId, ctx.projects)}
+            {clienteLabel(orgId, ctx)}
           </Link>
         ) : (
           <span className="text-faint">—</span>
         )}
       </td>
-      <td className={`${cell} whitespace-nowrap text-small`}>
+      <td className={`${cell} max-w-[11rem] truncate text-small`}>
         {project ? (
           <Link
             to={paths.proyecto(project.id, "ruta")}
             title="Ir a la Ruta del proyecto"
             onClick={(event) => event.stopPropagation()}
-            className="text-ink-2 hover:text-link hover:underline"
+            className="block max-w-[8rem] truncate text-ink-2 hover:text-link hover:underline"
           >
             {project.name}
           </Link>
@@ -294,25 +294,25 @@ function TaskRow({
       <td className={`${cell} whitespace-nowrap`}>
         <StatusSelect task={task} onChanged={onChanged} />
       </td>
-      <td className={`${cell} whitespace-nowrap text-small text-ink-2`}>
+      <td className={`${cell} max-w-[9rem] truncate text-small text-ink-2`}>
         {responsable ? (
-          <span className="inline-flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5">
             <PersonAvatar name={personName(responsable, ctx.people)} size={5} />
-            {personName(responsable, ctx.people)}
+            <span className="max-w-[6rem] truncate">{personName(responsable, ctx.people)}</span>
           </span>
         ) : (
           <span className="text-faint">Sin responsable</span>
         )}
       </td>
-      <td className={cell}>
-        <span className="flex flex-wrap gap-1">
+      <td className={`${cell} max-w-[9rem]`}>
+        <span className="flex max-w-[5rem] gap-1 overflow-hidden">
           {labels.length === 0 ? <span className="text-label text-faint">—</span> : null}
           {labels.map((label) => (
             <Link
               key={label}
               to={paths.tareas({ etiqueta: label })}
               onClick={(event) => event.stopPropagation()}
-              className="rounded-full bg-link-bg px-1.5 py-0.5 text-label text-link"
+              className="shrink-0 rounded-full bg-link-bg px-1.5 py-0.5 text-label text-link"
             >
               {label}
             </Link>
@@ -320,7 +320,9 @@ function TaskRow({
         </span>
       </td>
       <td className={`${cell} whitespace-nowrap`}>
-        <DuePill task={task} />
+        <span className="block max-w-[8.25rem] truncate">
+          <DuePill task={task} />
+        </span>
       </td>
       <td className={`${cell} whitespace-nowrap text-label uppercase text-muted`}>
         {task.priority === "urgent"
@@ -357,7 +359,7 @@ function TaskCard({ task, ctx, selected }: { task: Task; ctx: Contexto; selected
         <span className="min-w-0 flex-1 text-small font-medium leading-snug text-ink">{task.title}</span>
       </span>
       <span className="flex flex-wrap items-center gap-1.5 text-label text-muted">
-        <span className="max-w-[10rem] truncate">{clienteLabel(orgId, ctx.projects)}</span>
+        <span className="max-w-[10rem] truncate">{clienteLabel(orgId, ctx)}</span>
         {project ? <span className="max-w-[10rem] truncate text-faint">· {project.name}</span> : null}
       </span>
       <span className="flex flex-wrap items-center gap-1.5 text-label">
@@ -395,6 +397,7 @@ export default function TareasView() {
   const [quickTitle, setQuickTitle] = useState("");
   const [quickProject, setQuickProject] = useState<string>(() => leerProyectoReciente() ?? "");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [clientNames, setClientNames] = useState<Map<string, string>>(new Map());
   const searchRef = useRef<HTMLInputElement>(null);
 
   const filtros = useMemo(() => parseFiltros(params), [params]);
@@ -402,8 +405,8 @@ export default function TareasView() {
   const orden = useMemo(() => parseOrden(params), [params]);
 
   const ctx = useMemo<Contexto>(
-    () => ({ projects, people, meId: me?.id ?? null }),
-    [projects, people, me],
+    () => ({ projects, people, meId: me?.id ?? null, clientNames }),
+    [projects, people, me, clientNames],
   );
 
   const cargar = useCallback(async () => {
@@ -440,6 +443,37 @@ export default function TareasView() {
     if (!quickProject && projects.length > 0) setQuickProject(projects[0]!.id);
   }, [projects, quickProject]);
 
+  /**
+   * El nombre real del cliente vive en el recibo de launch del proyecto
+   * (`inputs.empresa`), porque `/api/projects` sólo devuelve `org_id`. Se pide
+   * un recibo por proyecto y el que falle simplemente deja a ese cliente con el
+   * nombre deducido: media lista de nombres es mejor que ninguno.
+   */
+  useEffect(() => {
+    if (projects.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const results = await Promise.allSettled(
+        projects.map((project) => api.projectLaunches(project.id)),
+      );
+      if (cancelled) return;
+      const names = new Map<string, string>();
+      results.forEach((result, index) => {
+        if (result.status !== "fulfilled") return;
+        const receipt = result.value.launches[0];
+        if (!receipt) return;
+        const inputs = receipt.inputs as { empresa?: unknown; alias?: unknown };
+        const name = typeof inputs.empresa === "string" ? inputs.empresa : inputs.alias;
+        const orgId = receipt.org_id || projects[index]!.orgId;
+        if (typeof name === "string" && name.trim()) names.set(orgId, name.trim());
+      });
+      setClientNames(names);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projects]);
+
   function aplicar(next: Filtros, extra?: { agrupacion?: Agrupacion; orden?: typeof orden }): void {
     setParams(
       filtrosAParams(next, {
@@ -464,7 +498,7 @@ export default function TareasView() {
   /** Orden de recorrido del teclado: el mismo que se ve, grupo a grupo. */
   const recorrido = useMemo(() => grupos.flatMap((grupo) => grupo.tasks), [grupos]);
   const chips = useMemo(() => chipsActivos(filtros, ctx), [filtros, ctx]);
-  const clientes = useMemo(() => clientesDe(projects), [projects]);
+  const clientes = useMemo(() => clientesDe(ctx), [ctx]);
   const proyectosDelCliente = useMemo(
     () => (filtros.cliente ? projects.filter((p) => p.orgId === filtros.cliente) : projects),
     [projects, filtros.cliente],
@@ -884,7 +918,7 @@ export default function TareasView() {
                     </h2>
                   ) : null}
                   <div className="overflow-x-auto rounded-panel border border-line-soft bg-surface shadow-rest">
-                    <table className="w-full min-w-[64rem] border-collapse text-left">
+                    <table className="w-full min-w-[58rem] border-collapse text-left">
                       <thead>
                         <tr>
                           {COLUMNAS.map((columna) => (
@@ -898,7 +932,9 @@ export default function TareasView() {
                                     : "descending"
                                   : "none"
                               }
-                              className="border-b border-line px-2.5 py-1.5 text-label uppercase text-muted"
+                              className={`border-b border-line px-2.5 py-1.5 text-label uppercase text-muted ${
+                                columna === "titulo" ? "w-full" : "whitespace-nowrap"
+                              }`}
                             >
                               <button
                                 type="button"
