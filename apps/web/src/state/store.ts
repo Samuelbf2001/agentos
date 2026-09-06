@@ -417,11 +417,6 @@ export const useStore = create<AppStore>()((set, get) => {
         get().loadKillSwitch(),
         get().refreshBadges(),
       ]);
-      const savedProject = localStorage.getItem("agentos_project");
-      const projects = get().projects;
-      const target =
-        (savedProject && projects.find((p) => p.id === savedProject)?.id) ?? projects[0]?.id ?? null;
-      if (target) await get().setActiveProject(target);
     },
 
     async login(password, personId) {
@@ -545,11 +540,6 @@ export const useStore = create<AppStore>()((set, get) => {
         taskDetailError: null,
         taskMutationError: null,
       });
-      try {
-        if (projectId) localStorage.setItem("agentos_project", projectId);
-      } catch {
-        /* ignore */
-      }
       if (!projectId) {
         wires.offBoard?.();
         wires.offBoard = null;

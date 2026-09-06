@@ -289,11 +289,11 @@ function ContextStrip({ task, detailProject, sources, documents, onOpenContext }
     <section className="mt-4 rounded-panel border border-line bg-surface-2 p-3" aria-labelledby="task-context-title">
       <div className="flex items-center justify-between gap-2">
         <h3 id="task-context-title" className="text-label font-bold uppercase text-muted">Contexto operativo</h3>
-        <Link to="/context" onClick={onOpenContext} className="text-label font-semibold text-link underline underline-offset-2">abrir contexto</Link>
+        <Link to={paths.proyecto(task.projectId, "contexto")} onClick={onOpenContext} className="text-label font-semibold text-link underline underline-offset-2">abrir contexto</Link>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-small">
         {detailProject ? (
-          <Link to="/board" onClick={onOpenContext} className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface px-2 py-1 font-semibold text-ink-2 hover:border-faint">
+          <Link to={paths.proyecto(task.projectId, "tablero")} onClick={onOpenContext} className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface px-2 py-1 font-semibold text-ink-2 hover:border-faint">
             <span aria-hidden="true">⌂</span>
             <span className="max-w-[14rem] truncate">{detailProject.name}</span>
           </Link>

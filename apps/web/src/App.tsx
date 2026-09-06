@@ -228,33 +228,9 @@ function Shell() {
           <Route path="/admin" element={<Navigate to={paths.sistema("ajustes")} replace />} />
           <Route path="/runs" element={<Navigate to={paths.sistema("actividad")} replace />} />
           <Route path="/runs/:runId" element={<LegacyRun />} />
-          <Route
-            path="/board"
-            element={
-              <Navigate
-                to={activeProjectId ? paths.proyecto(activeProjectId, "tablero") : "/proyectos"}
-                replace
-              />
-            }
-          />
-          <Route
-            path="/chat"
-            element={
-              <Navigate
-                to={activeProjectId ? paths.proyecto(activeProjectId, "conversacion") : "/proyectos"}
-                replace
-              />
-            }
-          />
-          <Route
-            path="/context"
-            element={
-              <Navigate
-                to={activeProjectId ? paths.proyecto(activeProjectId, "contexto") : "/proyectos"}
-                replace
-              />
-            }
-          />
+          <Route path="/board" element={<Navigate to={paths.proyectos()} replace />} />
+          <Route path="/chat" element={<Navigate to={paths.proyectos()} replace />} />
+          <Route path="/context" element={<Navigate to={paths.proyectos()} replace />} />
           <Route path="/meetings" element={<Navigate to={paths.sistema("fuentes")} replace />} />
           <Route path="*" element={<Navigate to="/hoy" replace />} />
         </Routes>
