@@ -14,7 +14,7 @@ import SystemTeamView from "./SystemTeamView";
 const TAB_SUBTITLES: Record<SystemTab, string> = {
   ahora: "Quién está trabajando en este segundo y con qué herramienta.",
   actividad: "Todas las ejecuciones, con su tarea y su proyecto.",
-  salud: "Contadores y fuentes de datos.",
+  fuentes: "Estado de las fuentes externas y de la cola de reuniones.",
   equipo: "Personas y agentes que pueden recibir trabajo.",
   ajustes: "Agentes, presupuesto y kill switch.",
 };
@@ -59,7 +59,7 @@ export default function SystemLayout() {
       ) : (
         <div className="mx-auto w-full max-w-[1180px] px-4 pb-20 pt-5 sm:px-5">
           {current === "actividad" ? <RunsView /> : null}
-          {current === "salud" ? <SystemHealthView /> : null}
+          {current === "fuentes" ? <SystemHealthView /> : null}
           {current === "equipo" ? <SystemTeamView /> : null}
           {current === "ajustes" ? <AdminView /> : null}
         </div>

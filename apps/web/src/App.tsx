@@ -215,13 +215,14 @@ function Shell() {
           <Route path="/nuevo-proyecto" element={<NewProjectWizard />} />
           <Route path="/sistema" element={<Navigate to={paths.sistema("ahora")} replace />} />
           <Route path="/sistema/actividad/:runId" element={<RunDetailView />} />
+          <Route path="/sistema/salud" element={<Navigate to={paths.sistema("fuentes")} replace />} />
           <Route path="/sistema/:tab" element={<SystemLayout />} />
           <Route path="/activo" element={<AssetView />} />
 
           {/* Rutas anteriores: se conservan como redirección, no como destino. */}
           <Route path="/waiting" element={<Navigate to="/hoy" replace />} />
           <Route path="/my-tasks" element={<Navigate to={paths.misTareas()} replace />} />
-          <Route path="/brain" element={<Navigate to={paths.sistema("salud")} replace />} />
+          <Route path="/brain" element={<Navigate to={paths.sistema("fuentes")} replace />} />
           <Route path="/swarm" element={<Navigate to={paths.sistema("ahora")} replace />} />
           <Route path="/admin" element={<Navigate to={paths.sistema("ajustes")} replace />} />
           <Route path="/runs" element={<Navigate to={paths.sistema("actividad")} replace />} />

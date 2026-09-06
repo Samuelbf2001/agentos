@@ -17,13 +17,13 @@ export const PROJECT_TAB_LABELS: Record<ProjectTab, string> = {
   actividad: "Actividad",
 };
 
-export const SYSTEM_TABS = ["ahora", "actividad", "salud", "equipo", "ajustes"] as const;
+export const SYSTEM_TABS = ["ahora", "actividad", "fuentes", "equipo", "ajustes"] as const;
 export type SystemTab = (typeof SYSTEM_TABS)[number];
 
 export const SYSTEM_TAB_LABELS: Record<SystemTab, string> = {
   ahora: "Ahora mismo",
   actividad: "Actividad",
-  salud: "Salud",
+  fuentes: "Fuentes",
   equipo: "Equipo",
   ajustes: "Ajustes",
 };

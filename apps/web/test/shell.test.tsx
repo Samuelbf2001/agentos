@@ -101,7 +101,7 @@ describe("shell y navegación", () => {
   it("las rutas viejas redirigen a su nuevo sitio en vez de romperse", async () => {
     renderApp("/brain");
     expect(await screen.findByRole("heading", { name: "Sistema" })).toBeTruthy();
-    expect(screen.getByText("Contadores y fuentes de datos.")).toBeTruthy();
+    expect(screen.getByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
   });
 
   it("el enjambre vive en Sistema y ya no es entrada de menú", async () => {

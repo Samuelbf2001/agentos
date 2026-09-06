@@ -236,10 +236,10 @@ describe("smoke de vistas", () => {
     expect(screen.getByText(project.name)).toBeTruthy();
   });
 
-  it("Sistema › Salud pinta contadores y fuentes (lo que era el Cerebro)", async () => {
+  it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro)", async () => {
     ui(<SystemHealthView />);
-    expect(await screen.findByText("Proyectos")).toBeTruthy();
-    expect(screen.getByText("AgentOS")).toBeTruthy();
+    expect(await screen.findByText("AgentOS")).toBeTruthy();
+    expect(screen.getByText("Núcleo de trabajo operativo.")).toBeTruthy();
   });
 
   it("Sistema › Equipo pinta personas y agentes", async () => {

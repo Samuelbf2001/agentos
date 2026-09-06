@@ -9,19 +9,10 @@
 import { Link } from "react-router-dom";
 import { useBrainOverview } from "../state/useBrainOverview";
 import { useStore } from "../state/store";
-import { Card, Chip, SectionHead, Stat, type Tone } from "../components/system";
+import { Card, Chip, SectionHead, type Tone } from "../components/system";
 import { ErrorBox, Spinner } from "../components/ui";
 import { paths } from "../lib/paths";
 import type { BrainSource } from "../lib/types";
-
-const COUNTERS: { key: string; label: string }[] = [
-  { key: "projects", label: "Proyectos" },
-  { key: "tasks", label: "Tareas" },
-  { key: "people", label: "Personas" },
-  { key: "agents", label: "Agentes" },
-  { key: "knowledge_docs", label: "Documentos de contexto" },
-  { key: "project_sources", label: "Fuentes ligadas" },
-];
 
 const SOURCE_STATUS: Record<BrainSource["status"], { label: string; tone: Tone }> = {
   connected: { label: "conectada", tone: "done" },
@@ -60,22 +51,13 @@ export default function SystemHealthView() {
   if (error) return <ErrorBox message={error} onRetry={reload} />;
   if (!overview) return <Spinner label="Leyendo el inventario del sistema…" />;
 
-  const counts = overview.core.counts;
   const degraded = overview.sources.filter((s) => s.status !== "connected");
 
   return (
     <div className="density-explorar">
       <p className="max-w-[62ch] text-body text-muted">
-        Qué hay guardado y de qué integraciones se puede fiar ahora mismo. Lectura del{" "}
-        {fmtMoment(overview.generated_at)}.
+        De qué integraciones se puede fiar ahora mismo. Lectura del {fmtMoment(overview.generated_at)}.
       </p>
-
-      <SectionHead label="Qué hay en la plataforma" />
-      <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-        {COUNTERS.map((c) => (
-          <Stat key={c.key} value={counts[c.key] ?? "—"} label={c.label} />
-        ))}
-      </div>
 
       <SectionHead label="Fuentes" count={overview.sources.length} />
       {degraded.length > 0 ? (
