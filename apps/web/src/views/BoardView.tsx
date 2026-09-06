@@ -344,7 +344,11 @@ export default function BoardView() {
   const [creating, setCreating] = useState(false);
   // Copiloto: panel lateral con el hilo `board:<projectId>`; al cambiar de
   // proyecto el panel mismo salta al hilo del nuevo (nunca mezcla hilos).
-  const [copilotOpen, setCopilotOpen] = useState(false);
+  // El estado vive en el store para que la ficha de tarea pueda cerrarlo
+  // cuando no caben los dos (<1280px); al salir del tablero se cierra.
+  const copilotOpen = useStore((state) => state.copilotOpen);
+  const setCopilotOpen = useStore((state) => state.setCopilotOpen);
+  useEffect(() => () => setCopilotOpen(false), [setCopilotOpen]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor),
@@ -433,7 +437,7 @@ export default function BoardView() {
                 aria-pressed={copilotOpen}
                 aria-expanded={copilotOpen}
                 aria-controls="board-copilot"
-                onClick={() => setCopilotOpen((open) => !open)}
+                onClick={() => setCopilotOpen(!copilotOpen)}
                 className={`press inline-flex min-h-10 items-center justify-center gap-1.5 rounded-tight border px-3 py-1.5 text-small font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-link focus:ring-offset-1 ${
                   copilotOpen
                     ? "border-ink bg-ink text-surface"

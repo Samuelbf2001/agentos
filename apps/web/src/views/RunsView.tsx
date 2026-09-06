@@ -50,7 +50,7 @@ export default function RunsView({ projectId }: { projectId?: string } = {}) {
   const openTask = useStore((s) => s.openTask);
   const boardTasks = useStore((s) => s.board.tasks);
   const [params, setParams] = useSearchParams();
-  const taskFilter = params.get("tarea");
+  const taskFilter = params.get("de_tarea");
 
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -171,7 +171,7 @@ export default function RunsView({ projectId }: { projectId?: string } = {}) {
             <Chip tone="link">Sólo {filteredTaskTitle ?? "una tarea"}</Chip>
             <button
               onClick={() => {
-                params.delete("tarea");
+                params.delete("de_tarea");
                 setParams(params, { replace: true });
               }}
               className="press text-small text-link hover:underline"

@@ -132,7 +132,17 @@ export interface AppStore extends EventState {
   taskDetailId: string | null;
   taskDetailError: string | null;
   taskMutationError: string | null;
+  /**
+   * Último 409 de la ficha abierta. Tras releer la tarea, el control inline
+   * que falló reabre su popover con el valor nuevo y un aviso de una línea.
+   */
+  taskConflict: { taskId: string; at: number } | null;
   taskSaving: boolean;
+  /**
+   * Panel copiloto del tablero. Vive en el store porque el side peek de la
+   * ficha lo cierra por debajo de 1280px (no caben los dos, decisión §3.1).
+   */
+  copilotOpen: boolean;
   boardFilter: BoardFilter;
   /** Etiqueta activa del tablero; null = sin filtrar por etiqueta. */
   boardLabelFilter: string | null;
@@ -163,6 +173,7 @@ export interface AppStore extends EventState {
   setActiveProject(projectId: string | null): Promise<void>;
   setBoardFilter(filter: BoardFilter): void;
   setBoardLabelFilter(label: string | null): void;
+  setCopilotOpen(open: boolean): void;
   loadLabels(projectId?: string): Promise<void>;
   refetchBoard(): Promise<void>;
   moveTaskOptimistic(taskId: string, to: TaskStatus): Promise<boolean>;
@@ -192,6 +203,8 @@ export interface AppStore extends EventState {
     },
   ): Promise<boolean>;
   assignTaskPeople(taskId: string, personIds: string[], primaryPersonId: string | null): Promise<boolean>;
+  /** Cambia la tarea de proyecto (optimista, con reversión). */
+  moveTaskToProject(taskId: string, projectId: string): Promise<boolean>;
   commentOnTask(taskId: string, body: string): Promise<void>;
   approveTaskReview(taskId: string, note?: string): Promise<void>;
   rejectTaskReview(taskId: string, note: string): Promise<void>;
@@ -291,6 +304,52 @@ export const useStore = create<AppStore>()((set, get) => {
     }
   }
 
+  /**
+   * Cambio de proyecto: la tarjeta sale del tablero viejo y entra en el nuevo
+   * (si es el que está montado). Sirve tanto para el paso optimista como para
+   * la reversión: se llama con la tarea "de destino" en cada caso.
+   */
+  function applyProjectMove(task: Task): void {
+    const state = get();
+    const tasks = { ...state.board.tasks };
+    if (state.board.projectId === task.projectId) tasks[task.id] = task;
+    else delete tasks[task.id];
+    set({ board: { ...state.board, tasks } });
+    if (state.taskDetail?.task.id === task.id) {
+      const project = state.projects.find((candidate) => candidate.id === task.projectId) ?? null;
+      set({ taskDetail: { ...state.taskDetail, task, project } });
+    }
+  }
+
+  function isVersionConflict(err: unknown): boolean {
+    return err instanceof ApiError && (err.code === "version_conflict" || err.code === "conflict" || err.status === 409);
+  }
+
+  /**
+   * 409: la tarea cambió por debajo. Se relee (sin pasar por el spinner de
+   * apertura) y se deja la marca para que el control que falló reabra su
+   * popover con el valor nuevo.
+   */
+  async function handleConflict(taskId: string): Promise<void> {
+    await refetchTask(taskId);
+    set({ taskConflict: { taskId, at: Date.now() } });
+  }
+
+  /** Proyección camelCase del body PATCH, para pintar antes de que responda la API. */
+  function optimisticPatch(task: Task, patch: Parameters<AppStore["updateTask"]>[1]): Task {
+    const next: Task = { ...task };
+    if (patch.title !== undefined) next.title = patch.title;
+    if (patch.description !== undefined) next.description = patch.description;
+    if (patch.definition_of_done !== undefined) next.definitionOfDone = patch.definition_of_done;
+    if (patch.activity_type !== undefined) next.activityType = patch.activity_type;
+    if (patch.priority !== undefined) next.priority = patch.priority;
+    if (patch.due_at !== undefined) {
+      next.dueAt = patch.due_at;
+      if ("due_at" in next) next.due_at = patch.due_at;
+    }
+    return next;
+  }
+
   function normalizeMutationError(err: unknown, fallback: string): string {
     return err instanceof ApiError
       ? `${err.code}: ${err.message}`
@@ -380,7 +439,9 @@ export const useStore = create<AppStore>()((set, get) => {
     taskDetailId: null,
     taskDetailError: null,
     taskMutationError: null,
+    taskConflict: null,
     taskSaving: false,
+    copilotOpen: false,
     boardFilter: "all",
     boardLabelFilter: null,
     labelCatalog: [],
@@ -466,7 +527,9 @@ export const useStore = create<AppStore>()((set, get) => {
         taskDetailId: null,
         taskDetailError: null,
         taskMutationError: null,
+        taskConflict: null,
         taskSaving: false,
+        copilotOpen: false,
         boardFilter: "all",
         boardLabelFilter: null,
         labelCatalog: [],
@@ -526,6 +589,10 @@ export const useStore = create<AppStore>()((set, get) => {
 
     setBoardLabelFilter(label) {
       set({ boardLabelFilter: label });
+    },
+
+    setCopilotOpen(open) {
+      set({ copilotOpen: open });
     },
 
     async loadLabels(projectId) {
@@ -595,28 +662,24 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     async moveTaskOptimistic(taskId, to) {
-      const task = get().board.tasks[taskId];
+      // La ficha puede estar abierta sobre una tarea que no está en el tablero
+      // montado (Hoy, Tareas, búsqueda): la fuente es la ficha o el tablero.
+      const task = currentTask(taskId);
       if (!task) return false;
       if (task.status === to) return true;
       const prev = task;
       // Optimista: pinta el destino ya.
-      set({
-        board: { ...get().board, tasks: { ...get().board.tasks, [taskId]: { ...task, status: to } } },
-      });
+      mergeTask({ ...task, status: to });
       try {
         const { task: updated } = await api.moveTask(taskId, {
           to,
           expected_version: prev.version,
         });
-        set({
-          board: { ...get().board, tasks: { ...get().board.tasks, [taskId]: updated } },
-        });
+        mergeTask(updated);
         return true;
       } catch (err) {
         // Reconciliación: revertir y contar el error de dominio.
-        set({
-          board: { ...get().board, tasks: { ...get().board.tasks, [taskId]: prev } },
-        });
+        mergeTask(prev);
         // La regla anti-teatro (ningún REVIEW/DONE sin artefacto) es la causa
         // más frecuente de rechazo y la única que el humano puede resolver ahí
         // mismo: en vez de revertir en silencio, se abre la ficha explicando
@@ -638,8 +701,9 @@ export const useStore = create<AppStore>()((set, get) => {
           return false;
         }
         toastError(err, "La API rechazó la transición");
-        if (err instanceof ApiError && (err.code === "version_conflict" || err.code === "conflict")) {
+        if (isVersionConflict(err)) {
           void get().refetchBoard();
+          if (get().taskDetail?.task.id === taskId) await handleConflict(taskId);
         }
         return false;
       }
@@ -711,7 +775,12 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     async setTaskLabels(taskId, labels) {
+      const prev = currentTask(taskId);
       set({ taskSaving: true, taskMutationError: null });
+      // Optimista: las etiquetas no participan en la reconciliación por
+      // versión (PUT sin expected_version, a propósito), así que sólo se
+      // revierte si la API falla.
+      if (prev) mergeTask({ ...prev, labels });
       try {
         const result = await api.setTaskLabels(taskId, labels);
         mergeTask(result.task);
@@ -719,6 +788,7 @@ export const useStore = create<AppStore>()((set, get) => {
         get().pushToast("ok", "Etiquetas actualizadas");
         return true;
       } catch (err) {
+        if (prev) mergeTask(prev);
         const message = normalizeMutationError(err, "No se pudieron guardar las etiquetas");
         set({ taskMutationError: message });
         toastError(err, "No se pudieron guardar las etiquetas");
@@ -809,6 +879,7 @@ export const useStore = create<AppStore>()((set, get) => {
         taskDetailLoading: true,
         taskDetailError: null,
         taskMutationError: null,
+        taskConflict: null,
         taskDetail: null,
       });
       try {
@@ -839,25 +910,28 @@ export const useStore = create<AppStore>()((set, get) => {
 
     closeTask() {
       taskDetailRequestSeq += 1;
-      set({ taskDetail: null, taskDetailId: null, taskDetailLoading: false, taskDetailError: null, taskMutationError: null, taskSaving: false });
+      set({ taskDetail: null, taskDetailId: null, taskDetailLoading: false, taskDetailError: null, taskMutationError: null, taskConflict: null, taskSaving: false });
     },
 
     async updateTask(taskId, patch) {
       const current = currentTask(taskId);
       if (!current) return false;
-      set({ taskSaving: true, taskMutationError: null });
+      set({ taskSaving: true, taskMutationError: null, taskConflict: null });
+      // Optimista: se pinta al cerrar el popover; si la API rechaza, se revierte.
+      mergeTask(optimisticPatch(current, patch));
       try {
         const { task } = await api.updateTask(taskId, {
           ...patch,
           expected_version: current.version,
         });
         mergeTask(task);
-        get().pushToast("ok", "Cambios de tarea guardados");
         return true;
       } catch (err) {
+        mergeTask(current);
         const message = normalizeMutationError(err, "No se pudieron guardar los cambios");
         set({ taskMutationError: message });
-        toastError(err, "No se pudieron guardar los cambios");
+        if (isVersionConflict(err)) await handleConflict(taskId);
+        else toastError(err, "No se pudieron guardar los cambios");
         return false;
       } finally {
         set({ taskSaving: false });
@@ -869,7 +943,14 @@ export const useStore = create<AppStore>()((set, get) => {
       if (!current) return false;
       const uniqueIds = [...new Set(personIds.filter(Boolean))];
       const primary = primaryPersonId && uniqueIds.includes(primaryPersonId) ? primaryPersonId : uniqueIds[0] ?? null;
-      set({ taskSaving: true, taskMutationError: null });
+      set({ taskSaving: true, taskMutationError: null, taskConflict: null });
+      // Optimista: conserva los datos embebidos de quien ya estaba.
+      const known = new Map((current.assignees ?? []).map((assignee) => [assignee.personId ?? assignee.person_id ?? assignee.person?.id ?? "", assignee]));
+      mergeTask({
+        ...current,
+        assigneePersonId: primary,
+        assignees: uniqueIds.map((personId) => ({ ...(known.get(personId) ?? {}), personId, isPrimary: personId === primary })),
+      });
       try {
         const result = await api.assignTask(taskId, {
           expected_version: current.version,
@@ -880,12 +961,41 @@ export const useStore = create<AppStore>()((set, get) => {
           ? { ...result.task, assignees: result.assignees }
           : result.task;
         mergeTask(task);
-        get().pushToast("ok", "Responsables actualizados");
         return true;
       } catch (err) {
+        mergeTask(current);
         const message = normalizeMutationError(err, "No se pudieron actualizar los responsables");
         set({ taskMutationError: message });
-        toastError(err, "No se pudieron actualizar los responsables");
+        if (isVersionConflict(err)) await handleConflict(taskId);
+        else toastError(err, "No se pudieron actualizar los responsables");
+        return false;
+      } finally {
+        set({ taskSaving: false });
+      }
+    },
+
+    async moveTaskToProject(taskId, projectId) {
+      const current = currentTask(taskId);
+      if (!current) return false;
+      if (current.projectId === projectId) return true;
+      set({ taskSaving: true, taskMutationError: null, taskConflict: null });
+      applyProjectMove({ ...current, projectId });
+      try {
+        const { task } = await api.moveTaskProject(taskId, {
+          project_id: projectId,
+          expected_version: current.version,
+        });
+        applyProjectMove(task);
+        // Contexto (fuentes, documentos, roster) del proyecto nuevo, sin spinner.
+        void refetchTask(taskId);
+        void get().loadProjectPeople(projectId);
+        return true;
+      } catch (err) {
+        applyProjectMove(current);
+        const message = normalizeMutationError(err, "No se pudo cambiar la tarea de proyecto");
+        set({ taskMutationError: message });
+        if (isVersionConflict(err)) await handleConflict(taskId);
+        else toastError(err, "No se pudo cambiar la tarea de proyecto");
         return false;
       } finally {
         set({ taskSaving: false });

@@ -206,6 +206,51 @@ export function reduceEvent(
         }
         break;
       }
+      /**
+       * Cambio de proyecto. Payload asumido (lo publica `POST /api/tasks/:id/project`
+       * en `board:<from>` y `board:<to>`):
+       *   `{ task: Task, from_project_id: string, to_project_id: string }`
+       * (`taskId` opcional como redundancia). La tarjeta sale del tablero
+       * viejo y entra en el nuevo si es el montado; la ficha abierta se relee.
+       */
+      case "task.moved_project": {
+        const moved = p.task && typeof p.task === "object" ? (p.task as Task) : null;
+        const movedId = moved?.id ?? taskId;
+        const from = typeof p.from_project_id === "string" ? p.from_project_id : null;
+        const to = typeof p.to_project_id === "string" ? p.to_project_id : moved?.projectId ?? null;
+        if (!movedId) break;
+        const boardId = next.board.projectId;
+        if (boardId && boardId === from && boardId !== to) {
+          const rest = { ...next.board.tasks };
+          delete rest[movedId];
+          next = { ...next, board: { ...next.board, tasks: rest } };
+        } else if (boardId && boardId === to && moved) {
+          next = {
+            ...next,
+            board: { ...next.board, tasks: { ...next.board.tasks, [movedId]: moved } },
+          };
+        }
+        effects.push({ kind: "refetch_task", taskId: movedId });
+        break;
+      }
+      /**
+       * PATCH /api/tasks/:id publica `task.updated` con `{ task }` (tarea completa).
+       * Si la tarjeta está en el tablero montado se sustituye entera; la ficha
+       * abierta se relee para reconciliar version y campos derivados.
+       */
+      case "task.updated": {
+        const updated = p.task && typeof p.task === "object" ? (p.task as Task) : null;
+        const updatedId = updated?.id ?? taskId;
+        if (!updatedId) break;
+        if (updated && next.board.tasks[updatedId]) {
+          next = {
+            ...next,
+            board: { ...next.board, tasks: { ...next.board.tasks, [updatedId]: updated } },
+          };
+        }
+        effects.push({ kind: "refetch_task", taskId: updatedId });
+        break;
+      }
       case "task.reaped": {
         if (taskId) effects.push({ kind: "refetch_task", taskId });
         break;

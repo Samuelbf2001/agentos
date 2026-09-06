@@ -277,6 +277,22 @@ export const api = {
     id: string,
     body: { to: TaskStatus; expected_version: number; note?: string; blocked_reason?: string },
   ) => request<{ task: Task }>(`/api/tasks/${id}/move`, { method: "POST", body }),
+  /**
+   * Cambio de proyecto. El backend valida destino, responsables de otro
+   * cliente y padre/dependencias, recalcula `orderKey` y publica
+   * `task.moved_project` en `board:<viejo>` y `board:<nuevo>`.
+   */
+  moveTaskProject: (id: string, body: { project_id: string; expected_version: number }) =>
+    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/project`, {
+      method: "POST",
+      body,
+    }).then((result) => ({
+      ...result,
+      task: normalizeTask({
+        ...(result.task as WireTask),
+        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
+      }),
+    })),
   commentTask: (id: string, body: string) =>
     request<{ event: TaskEvent }>(`/api/tasks/${id}/comment`, { method: "POST", body: { body } }),
   approveTask: (id: string, expectedVersion: number, note?: string) =>

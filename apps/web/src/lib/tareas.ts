@@ -521,3 +521,86 @@ export function guardarProyectoReciente(projectId: string): void {
     // Idem: el selector simplemente empezará vacío la próxima vez.
   }
 }
+
+// ── Persistencia de la ficha (side peek) ────────────────────────────────────
+
+export const PEEK_WIDTH_KEY = "agentos_task_peek_width";
+export const PEEK_MODE_KEY = "agentos_task_peek_mode";
+export const PEEK_MORE_KEY = "agentos_task_peek_more";
+
+export const PEEK_MIN_WIDTH = 384;
+export const PEEK_MAX_WIDTH = 920;
+export const PEEK_DEFAULT_WIDTH = 560;
+/** Paso del tirador con teclado (ArrowLeft/ArrowRight). */
+export const PEEK_KEY_STEP = 32;
+
+export type PeekMode = "side" | "center" | "full";
+export const PEEK_MODES: PeekMode[] = ["side", "center", "full"];
+
+/** Ancho máximo real del peek para una ventana dada: nunca más del 90 %. */
+export function anchoMaximoPeek(innerWidth: number): number {
+  return Math.max(PEEK_MIN_WIDTH, Math.min(PEEK_MAX_WIDTH, Math.floor(innerWidth * 0.9)));
+}
+
+/** `clamp(384, ancho, min(920, innerWidth*0.9))`: el puntero puede salirse de la ventana. */
+export function acotarAnchoPeek(width: number, innerWidth: number): number {
+  if (!Number.isFinite(width)) return PEEK_DEFAULT_WIDTH;
+  return Math.min(anchoMaximoPeek(innerWidth), Math.max(PEEK_MIN_WIDTH, Math.round(width)));
+}
+
+/** Ancho que corresponde a un puntero en `clientX` con el panel pegado a la derecha. */
+export function anchoDesdePuntero(clientX: number, innerWidth: number): number {
+  return acotarAnchoPeek(innerWidth - clientX, innerWidth);
+}
+
+export function leerAnchoPeek(innerWidth: number = typeof window !== "undefined" ? window.innerWidth : 1280): number {
+  try {
+    const raw = localStorage.getItem(PEEK_WIDTH_KEY);
+    const parsed = raw === null ? Number.NaN : Number(raw);
+    return acotarAnchoPeek(Number.isFinite(parsed) ? parsed : PEEK_DEFAULT_WIDTH, innerWidth);
+  } catch {
+    return acotarAnchoPeek(PEEK_DEFAULT_WIDTH, innerWidth);
+  }
+}
+
+export function guardarAnchoPeek(width: number): void {
+  try {
+    localStorage.setItem(PEEK_WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    // Sin almacenamiento el tirador sigue funcionando: sólo no se recuerda.
+  }
+}
+
+export function leerModoPeek(): PeekMode {
+  try {
+    const raw = localStorage.getItem(PEEK_MODE_KEY);
+    return raw === "center" || raw === "full" ? raw : "side";
+  } catch {
+    return "side";
+  }
+}
+
+export function guardarModoPeek(mode: PeekMode): void {
+  try {
+    localStorage.setItem(PEEK_MODE_KEY, mode);
+  } catch {
+    // Idem.
+  }
+}
+
+/** "N más propiedades": si el usuario las desplegó, se quedan desplegadas. */
+export function leerMasPropiedades(): boolean {
+  try {
+    return localStorage.getItem(PEEK_MORE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function guardarMasPropiedades(open: boolean): void {
+  try {
+    localStorage.setItem(PEEK_MORE_KEY, open ? "1" : "0");
+  } catch {
+    // Idem.
+  }
+}

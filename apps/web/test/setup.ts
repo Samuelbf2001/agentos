@@ -25,6 +25,21 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   })) as unknown as typeof window.matchMedia;
 }
 
+// jsdom no implementa PointerEvent: sin él, `fireEvent.pointerDown` llega como
+// Event plano (sin button ni clientX) y el tirador de la ficha no se entera.
+if (typeof window !== "undefined" && typeof window.PointerEvent === "undefined") {
+  class PointerEventPolyfill extends MouseEvent {
+    pointerId: number;
+    pointerType: string;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 1;
+      this.pointerType = init.pointerType ?? "mouse";
+    }
+  }
+  (window as unknown as Record<string, unknown>).PointerEvent = PointerEventPolyfill;
+}
+
 // jsdom no implementa scrollIntoView.
 if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};

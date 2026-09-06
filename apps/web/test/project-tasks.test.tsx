@@ -113,8 +113,12 @@ describe("contrato visual de proyectos y tareas", () => {
     );
     expect(screen.getByText("Kickoff ACME")).toBeTruthy();
     expect(screen.getByText("Mapa de contexto")).toBeTruthy();
-    fireEvent.click(screen.getByRole("checkbox", { name: /Ana/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Guardar responsables" }));
+    // Rediseño Notion: el selector de personas es un popover que guarda al
+    // cerrarse; no existe "Guardar responsables".
+    expect(screen.queryByRole("button", { name: "Guardar responsables" })).toBeNull();
+    fireEvent.click(screen.getByTestId("prop-assignees"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Ana/ }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     await waitFor(() => {
       expect(calls.find((call) => call.method === "POST" && call.url.includes("/assign"))?.body).toEqual({
         expected_version: 3,
@@ -141,8 +145,9 @@ describe("contrato visual de proyectos y tareas", () => {
         <TaskDrawer />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("checkbox", { name: /Ana/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Guardar responsables" }));
+    fireEvent.click(screen.getByTestId("prop-assignees"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Ana/ }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     await waitFor(() => {
       expect(calls.find((call) => call.method === "POST" && call.url.includes("/assign"))?.body).toEqual({
         expected_version: 3,
@@ -172,8 +177,10 @@ describe("contrato visual de proyectos y tareas", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
-    fireEvent.change(screen.getByLabelText("Edición rápida"), { target: { value: "Preparar el material." } });
+    // Rediseño Notion: el textarea está siempre visible y guarda al salir del
+    // bloque; no existen "Editar" ni "Guardar descripción".
+    expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
+    fireEvent.change(screen.getByTestId("task-description-input"), { target: { value: "Preparar el material." } });
 
     fireEvent.click(screen.getByRole("button", { name: /Enlace/ }));
     fireEvent.change(screen.getByLabelText("Texto visible"), { target: { value: "Brief" } });
@@ -187,7 +194,8 @@ describe("contrato visual de proyectos y tareas", () => {
     fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
     expect(screen.getByAltText("Mapa del proceso").getAttribute("src")).toBe("https://images.example.com/mapa.png");
 
-    fireEvent.click(screen.getByRole("button", { name: "Guardar descripción" }));
+    expect(screen.queryByRole("button", { name: "Guardar descripción" })).toBeNull();
+    fireEvent.blur(screen.getByTestId("task-description-input"));
     await waitFor(() => {
       expect(calls.find((call) => call.method === "PATCH" && call.url.includes("/api/tasks/t1"))?.body).toEqual({
         expected_version: 3,
