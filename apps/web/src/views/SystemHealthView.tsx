@@ -13,6 +13,7 @@ import { Card, Chip, SectionHead, type Tone } from "../components/system";
 import { ErrorBox, Spinner } from "../components/ui";
 import { paths } from "../lib/paths";
 import type { BrainSource } from "../lib/types";
+import MeetingProcessingView from "./MeetingProcessingView";
 
 const SOURCE_STATUS: Record<BrainSource["status"], { label: string; tone: Tone }> = {
   connected: { label: "conectada", tone: "done" },
@@ -101,6 +102,9 @@ export default function SystemHealthView() {
           );
         })}
       </div>
+
+      <SectionHead label="Cola de reuniones" />
+      <MeetingProcessingView />
     </div>
   );
 }

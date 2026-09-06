@@ -6,7 +6,6 @@
  * Fase 2 — Fuentes del proyecto: sección para asociar reuniones y conversaciones
  * de WhatsApp de 2brain (WhatsAppHub) e ingerirlas como docs tipados del Hub.
  */
-import MeetingProcessingView from "./MeetingProcessingView";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import type {
@@ -539,15 +538,14 @@ function ProcessesTab() {
 
 /**
  * Contexto del proyecto. Las metodologías emigraron a Activo Sixteam, porque
- * son de Sixteam y no del cliente; a cambio, el panel de reuniones vive aquí,
- * junto a los documentos que produce.
+ * son de Sixteam y no del cliente; el panel de reuniones vive en Sistema ›
+ * Fuentes, porque es transversal a todos los proyectos.
  */
 export default function ContextView() {
-  const [tab, setTab] = useState<"docs" | "processes" | "meetings">("docs");
+  const [tab, setTab] = useState<"docs" | "processes">("docs");
   const tabs = [
     { id: "docs" as const, label: "Documentos" },
     { id: "processes" as const, label: "Procesos" },
-    { id: "meetings" as const, label: "Reuniones" },
   ];
   return (
     <div className="density-explorar mx-auto max-w-[1180px] px-4 pb-20 pt-5 sm:px-5">
@@ -565,7 +563,7 @@ export default function ContextView() {
           </button>
         ))}
       </div>
-      {tab === "docs" ? <DocsTab /> : tab === "processes" ? <ProcessesTab /> : <MeetingProcessingView />}
+      {tab === "docs" ? <DocsTab /> : <ProcessesTab />}
     </div>
   );
 }

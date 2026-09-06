@@ -254,15 +254,7 @@ function Shell() {
               />
             }
           />
-          <Route
-            path="/meetings"
-            element={
-              <Navigate
-                to={activeProjectId ? paths.proyecto(activeProjectId, "contexto") : "/proyectos"}
-                replace
-              />
-            }
-          />
+          <Route path="/meetings" element={<Navigate to={paths.sistema("fuentes")} replace />} />
           <Route path="*" element={<Navigate to="/hoy" replace />} />
         </Routes>
       </main>

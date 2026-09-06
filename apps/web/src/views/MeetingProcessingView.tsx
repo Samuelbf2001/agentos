@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
+import { paths } from "../lib/paths";
 import type { MeetingProcessingFilter, MeetingProcessingItem, MeetingProcessingOverview } from "../lib/types";
 import { EmptyState, ErrorBox, Spinner } from "../components/ui";
 
@@ -167,7 +168,7 @@ export default function MeetingProcessingView() {
               <h2 className="mt-1 text-title font-bold text-ink">Historial intacto, contexto explícito</h2>
               <p className="mt-1 text-small text-muted">{data ? `${data.agentos_context.linked} reuniones enlazadas · ${data.agentos_context.ingested} ingeridas como evidencia` : "Se cargará cuando WhatsAppHub responda."}</p>
             </div>
-            <Link to="/context" className="inline-flex min-h-10 items-center rounded-soft border border-link bg-link-bg px-3 text-small font-bold text-link hover:border-link hover:bg-link-bg">Asociar al contexto de un proyecto</Link>
+            <Link to={paths.proyectos()} className="inline-flex min-h-10 items-center rounded-soft border border-link bg-link-bg px-3 text-small font-bold text-link hover:border-link hover:bg-link-bg">Ver los proyectos</Link>
           </div>
           <p className="mt-3 rounded-soft border border-work-line bg-work-bg px-3 py-2 text-small leading-relaxed text-work">Las tareas candidatas siguen siendo candidatas. Solo el flujo de revisión autorizado en WhatsAppHub puede confirmarlas o crear tareas históricas en Notion.</p>
         </section>

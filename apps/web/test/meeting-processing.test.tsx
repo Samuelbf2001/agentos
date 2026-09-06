@@ -62,7 +62,7 @@ describe("Procesamiento de reuniones", () => {
     expect(screen.getByText("requiere revisión")).toBeTruthy();
     expect(screen.getByText(/tareas candidatas siguen siendo candidatas/i)).toBeTruthy();
     expect(screen.getByText("La extracción agotó los reintentos.")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Asociar al contexto/i }).getAttribute("href")).toBe("/context");
+    expect(screen.getByRole("link", { name: "Ver los proyectos" }).getAttribute("href")).toBe("/proyectos");
 
     fireEvent.click(screen.getByRole("button", { name: "Pendientes" }));
     await waitFor(() => expect(calls.some((call) => call.url.includes("status=pending"))).toBe(true));
