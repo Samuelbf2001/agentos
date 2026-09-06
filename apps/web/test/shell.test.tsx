@@ -147,12 +147,12 @@ describe("shell y navegación", () => {
 
   it("/board redirige a /proyectos", async () => {
     renderApp("/board");
-    expect(await screen.findByRole("heading", { name: "Proyectos" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Clientes" })).toBeTruthy();
   });
 
   it("/context redirige a /proyectos", async () => {
     renderApp("/context");
-    expect(await screen.findByRole("heading", { name: "Proyectos" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Clientes" })).toBeTruthy();
   });
 
   it("/meetings redirige a Sistema › Fuentes", async () => {

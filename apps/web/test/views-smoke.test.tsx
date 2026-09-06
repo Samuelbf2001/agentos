@@ -231,10 +231,10 @@ describe("smoke de vistas", () => {
     expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
   });
 
-  it("ProjectsView lista los proyectos con su posición en el ciclo", async () => {
+  it("ProjectsView lista los clientes con su posición en el ciclo", async () => {
     ui(<ProjectsView />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Proyectos" })).toBeTruthy();
-    expect(screen.getByText(project.name)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Clientes" })).toBeTruthy();
+    expect(screen.getAllByText(project.name).length).toBeGreaterThan(0);
   });
 
   it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro) y la Cola de reuniones", async () => {
