@@ -18,10 +18,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { ChevronsUpDown, Search, SlidersHorizontal } from "lucide-react";
 import { useStore } from "../state/store";
 import { api } from "../lib/api";
 import { paths } from "../lib/paths";
-import { ActionButton } from "../components/system";
+import { ActionButton, Card } from "../components/system";
 import {
   DuePill,
   EmptyState,
@@ -262,7 +263,7 @@ function TaskRow({
       data-selected={selected ? "true" : undefined}
       aria-selected={selected}
       onClick={() => void openTask(task.id)}
-      className={`group h-8 cursor-pointer transition-colors hover:bg-surface-2 ${
+      className={`group h-8 cursor-pointer transition-colors hover:bg-canvas-deep/40 ${
         selected ? "bg-link-bg" : ""
       } ${overdue ? "late" : ""}`}
     >
@@ -367,6 +368,9 @@ export default function TareasView() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [clientNames, setClientNames] = useState<Map<string, string>>(new Map());
   const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
+  // El panel de filtros es un plegable local: no viaja en la URL, así que un
+  // enlace compartido no arrastra si el que lo abrió lo tenía desplegado.
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const filtros = useMemo(() => parseFiltros(params), [params]);
@@ -475,6 +479,9 @@ export default function TareasView() {
   /** Orden de recorrido del teclado: el mismo que se ve, grupo a grupo. */
   const recorrido = useMemo(() => grupos.flatMap((grupo) => grupo.tasks), [grupos]);
   const chips = useMemo(() => chipsActivos(filtros, ctx), [filtros, ctx]);
+  // El texto vive en el buscador, siempre visible: el badge de "Filtros"
+  // cuenta sólo lo que está dentro del panel plegable.
+  const filtrosPanelCount = useMemo(() => chips.filter((chip) => chip.key !== "texto").length, [chips]);
   const clientes = useMemo(() => clientesDe(ctx), [ctx]);
   const proyectosDelCliente = useMemo(
     () => (filtros.cliente ? projects.filter((p) => p.orgId === filtros.cliente) : projects),
@@ -565,12 +572,18 @@ export default function TareasView() {
         </div>
       </div>
 
-      {/* ── Buscar, filtrar y agrupar ─────────────────────────────────────── */}
+      {/* ── Buscar, filtrar y agrupar: todo en una fila ───────────────────── */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-52 flex-1">
           <label htmlFor="tareas-buscar" className="sr-only">
             Buscar entre todas las tareas
           </label>
+          <Search
+            size={15}
+            strokeWidth={1.75}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"
+          />
           <input
             id="tareas-buscar"
             ref={searchRef}
@@ -579,7 +592,7 @@ export default function TareasView() {
             value={filtros.texto}
             onChange={(event) => setFiltro("texto", event.target.value)}
             placeholder="Buscar en todas las tareas…"
-            className="min-h-8 w-full rounded-full border border-line bg-surface px-3.5 py-1 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+            className="min-h-8 w-full rounded-full bg-surface pl-8 pr-8 py-1 text-small shadow-rest focus:outline-none focus:ring-2 focus:ring-link"
           />
           <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">
             /
@@ -592,155 +605,202 @@ export default function TareasView() {
           aria-pressed={mine}
           title="Sólo lo asignado a ti (m)"
           onClick={() => setFiltro("responsable", mine ? null : YO)}
-          className={`press inline-flex min-h-8 items-center gap-1.5 rounded-tight border px-2.5 py-1 text-small font-semibold ${
-            mine ? "border-link bg-link-bg text-link" : "border-line bg-surface text-muted"
+          className={`press inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 py-1 text-small font-semibold ${
+            mine ? "bg-link text-surface" : "bg-surface text-muted shadow-rest"
           }`}
         >
           Mis tareas
           <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">m</kbd>
         </button>
 
-        <label className="sr-only" htmlFor="tareas-agrupar">
-          Agrupar por
-        </label>
-        <select
-          id="tareas-agrupar"
-          data-testid="tareas-agrupar"
-          value={agrupacion}
-          onChange={(event) => aplicar(filtros, { agrupacion: event.target.value as Agrupacion })}
-          className={selectClass}
-        >
-          {AGRUPACIONES.map((value) => (
-            <option key={value} value={value}>
-              {value === "ninguna" ? "Sin agrupar" : `Agrupar: ${AGRUPACION_LABELS[value]}`}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <label className="sr-only" htmlFor="tareas-cliente">
-          Cliente
-        </label>
-        <select
-          id="tareas-cliente"
-          data-testid="tareas-filtro-cliente"
-          value={filtros.cliente ?? ""}
-          onChange={(event) => setFiltro("cliente", event.target.value || null)}
-          className={selectClass}
-        >
-          <option value="">Todos los clientes</option>
-          {clientes.map((cliente) => (
-            <option key={cliente.id} value={cliente.id}>
-              {cliente.label}
-            </option>
-          ))}
-        </select>
-
-        <label className="sr-only" htmlFor="tareas-proyecto">
-          Proyecto
-        </label>
-        <select
-          id="tareas-proyecto"
-          data-testid="tareas-filtro-proyecto"
-          value={filtros.proyecto ?? ""}
-          onChange={(event) => setFiltro("proyecto", event.target.value || null)}
-          className={selectClass}
-        >
-          <option value="">Todos los proyectos</option>
-          {proyectosDelCliente.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-
-        <label className="sr-only" htmlFor="tareas-responsable">
-          Responsable
-        </label>
-        <select
-          id="tareas-responsable"
-          data-testid="tareas-filtro-responsable"
-          value={filtros.responsable ?? ""}
-          onChange={(event) => setFiltro("responsable", event.target.value || null)}
-          className={selectClass}
-        >
-          <option value="">Cualquier responsable</option>
-          <option value={YO}>Yo</option>
-          {people.map((person) => (
-            <option key={person.id} value={person.id}>
-              {person.full_name || person.fullName}
-            </option>
-          ))}
-        </select>
-
-        <label className="sr-only" htmlFor="tareas-estado">
-          Estado
-        </label>
-        <select
-          id="tareas-estado"
-          data-testid="tareas-filtro-estado"
-          value={filtros.estado ?? ""}
-          onChange={(event) => setFiltro("estado", (event.target.value || null) as TaskStatus | null)}
-          className={selectClass}
-        >
-          <option value="">Cualquier estado</option>
-          {TASK_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {STATUS_LABELS[status]}
-            </option>
-          ))}
-        </select>
-
-        <label className="sr-only" htmlFor="tareas-etiqueta">
-          Etiqueta
-        </label>
-        <select
-          id="tareas-etiqueta"
-          data-testid="tareas-filtro-etiqueta"
-          value={filtros.etiqueta ?? ""}
-          onChange={(event) => setFiltro("etiqueta", event.target.value || null)}
-          className={selectClass}
-        >
-          <option value="">Cualquier etiqueta</option>
-          {labelCatalog.map((usage) => (
-            <option key={usage.label} value={usage.label}>
-              {usage.label} ({usage.count})
-            </option>
-          ))}
-        </select>
-
-        <label className="sr-only" htmlFor="tareas-vencimiento">
-          Vencimiento
-        </label>
-        <select
-          id="tareas-vencimiento"
-          data-testid="tareas-filtro-vencimiento"
-          value={filtros.vencimiento ?? ""}
-          onChange={(event) =>
-            setFiltro("vencimiento", (event.target.value || null) as Filtros["vencimiento"])
-          }
-          className={selectClass}
-        >
-          <option value="">Cualquier vencimiento</option>
-          {VENCIMIENTOS.map((value) => (
-            <option key={value} value={value}>
-              {VENCIMIENTO_LABELS[value]}
-            </option>
-          ))}
-        </select>
-
-        <label className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 text-label text-muted">
-          <input
-            type="checkbox"
-            data-testid="tareas-incluir-cerradas"
-            checked={filtros.cerradas}
-            onChange={(event) => setFiltro("cerradas", event.target.checked)}
-            className="h-4 w-4 rounded border-line accent-[var(--color-link)]"
+        <div className="relative">
+          <label className="sr-only" htmlFor="tareas-agrupar">
+            Agrupar por
+          </label>
+          <select
+            id="tareas-agrupar"
+            data-testid="tareas-agrupar"
+            value={agrupacion}
+            onChange={(event) => aplicar(filtros, { agrupacion: event.target.value as Agrupacion })}
+            className="min-h-8 appearance-none rounded-full bg-surface py-1 pl-3 pr-7 text-small text-ink-2 shadow-rest focus:outline-none focus:ring-2 focus:ring-link"
+          >
+            {AGRUPACIONES.map((value) => (
+              <option key={value} value={value}>
+                {value === "ninguna" ? "Sin agrupar" : `Agrupar: ${AGRUPACION_LABELS[value]}`}
+              </option>
+            ))}
+          </select>
+          <ChevronsUpDown
+            size={14}
+            strokeWidth={1.75}
+            aria-hidden="true"
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-faint"
           />
-          Incluir cerradas
-        </label>
+        </div>
+
+        <button
+          type="button"
+          data-testid="tareas-filtros-toggle"
+          aria-expanded={filtersOpen}
+          aria-pressed={filtersOpen}
+          onClick={() => setFiltersOpen((open) => !open)}
+          className={`press inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 py-1 text-small font-semibold ${
+            filtersOpen ? "bg-link-bg text-link" : "bg-surface text-muted shadow-rest"
+          }`}
+        >
+          <SlidersHorizontal size={15} strokeWidth={1.75} aria-hidden="true" />
+          Filtros
+          {filtrosPanelCount > 0 ? (
+            <span
+              data-testid="tareas-filtros-badge"
+              className="rounded-full bg-link px-1.5 text-label text-surface"
+            >
+              {filtrosPanelCount}
+            </span>
+          ) : null}
+        </button>
       </div>
+
+      {/* ── Panel plegable: los seis selects + cerradas, ocultos por defecto ─ */}
+      {filtersOpen ? (
+        <Card className="mt-2 p-4" data-testid="tareas-filtros-panel">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="block text-label text-muted" htmlFor="tareas-cliente">
+                Cliente
+              </label>
+              <select
+                id="tareas-cliente"
+                data-testid="tareas-filtro-cliente"
+                value={filtros.cliente ?? ""}
+                onChange={(event) => setFiltro("cliente", event.target.value || null)}
+                className={`${selectClass} mt-1 w-full`}
+              >
+                <option value="">Todos los clientes</option>
+                {clientes.map((cliente) => (
+                  <option key={cliente.id} value={cliente.id}>
+                    {cliente.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-label text-muted" htmlFor="tareas-proyecto">
+                Proyecto
+              </label>
+              <select
+                id="tareas-proyecto"
+                data-testid="tareas-filtro-proyecto"
+                value={filtros.proyecto ?? ""}
+                onChange={(event) => setFiltro("proyecto", event.target.value || null)}
+                className={`${selectClass} mt-1 w-full`}
+              >
+                <option value="">Todos los proyectos</option>
+                {proyectosDelCliente.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-label text-muted" htmlFor="tareas-responsable">
+                Responsable
+              </label>
+              <select
+                id="tareas-responsable"
+                data-testid="tareas-filtro-responsable"
+                value={filtros.responsable ?? ""}
+                onChange={(event) => setFiltro("responsable", event.target.value || null)}
+                className={`${selectClass} mt-1 w-full`}
+              >
+                <option value="">Cualquier responsable</option>
+                <option value={YO}>Yo</option>
+                {people.map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.full_name || person.fullName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-label text-muted" htmlFor="tareas-estado">
+                Estado
+              </label>
+              <select
+                id="tareas-estado"
+                data-testid="tareas-filtro-estado"
+                value={filtros.estado ?? ""}
+                onChange={(event) => setFiltro("estado", (event.target.value || null) as TaskStatus | null)}
+                className={`${selectClass} mt-1 w-full`}
+              >
+                <option value="">Cualquier estado</option>
+                {TASK_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {STATUS_LABELS[status]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-label text-muted" htmlFor="tareas-etiqueta">
+                Etiqueta
+              </label>
+              <select
+                id="tareas-etiqueta"
+                data-testid="tareas-filtro-etiqueta"
+                value={filtros.etiqueta ?? ""}
+                onChange={(event) => setFiltro("etiqueta", event.target.value || null)}
+                className={`${selectClass} mt-1 w-full`}
+              >
+                <option value="">Cualquier etiqueta</option>
+                {labelCatalog.map((usage) => (
+                  <option key={usage.label} value={usage.label}>
+                    {usage.label} ({usage.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-label text-muted" htmlFor="tareas-vencimiento">
+                Vencimiento
+              </label>
+              <select
+                id="tareas-vencimiento"
+                data-testid="tareas-filtro-vencimiento"
+                value={filtros.vencimiento ?? ""}
+                onChange={(event) =>
+                  setFiltro("vencimiento", (event.target.value || null) as Filtros["vencimiento"])
+                }
+                className={`${selectClass} mt-1 w-full`}
+              >
+                <option value="">Cualquier vencimiento</option>
+                {VENCIMIENTOS.map((value) => (
+                  <option key={value} value={value}>
+                    {VENCIMIENTO_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <label className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 self-end text-label text-muted">
+              <input
+                type="checkbox"
+                data-testid="tareas-incluir-cerradas"
+                checked={filtros.cerradas}
+                onChange={(event) => setFiltro("cerradas", event.target.checked)}
+                className="h-4 w-4 rounded border-line accent-[var(--color-link)]"
+              />
+              Incluir cerradas
+            </label>
+          </div>
+        </Card>
+      ) : null}
 
       {/* ── Lo filtrado se ve y se puede quitar ───────────────────────────── */}
       {chips.length > 0 ? (
@@ -776,7 +836,7 @@ export default function TareasView() {
           event.preventDefault();
           void crearRapido();
         }}
-        className="mt-3 flex flex-wrap items-center gap-2 rounded-soft bg-surface px-2.5 py-2 shadow-rest"
+        className="mt-3 flex flex-wrap items-center gap-2 rounded-full bg-surface px-3.5 py-2 shadow-rest"
       >
         <span aria-hidden="true" className="text-title leading-none text-faint">
           +
@@ -860,65 +920,69 @@ export default function TareasView() {
               }
               return (
                 <section key={grupo.key} data-testid={`tareas-grupo-${grupo.key}`}>
-                  {agrupacion !== "ninguna" ? (
-                    <h2 className="mb-1.5 flex items-center gap-2 text-label text-muted">
-                      {agrupacion === "estado" ? (
-                        <StatusPill status={grupo.key as TaskStatus} />
-                      ) : (
-                        grupo.label
-                      )}
-                      <span className="rounded-full bg-canvas-deep px-1.5 py-px text-label tabular-nums text-muted">
-                        {grupo.tasks.length}
-                      </span>
-                    </h2>
-                  ) : null}
-                  <div className="overflow-x-auto rounded-panel bg-surface shadow-rest">
-                    <table className="w-full min-w-[58rem] border-collapse text-left">
-                      <thead>
-                        <tr>
-                          {COLUMNAS.map((columna) => (
-                            <th
-                              key={columna}
-                              scope="col"
-                              aria-sort={
-                                orden.columna === columna
-                                  ? orden.direccion === "asc"
-                                    ? "ascending"
-                                    : "descending"
-                                  : "none"
-                              }
-                              className={`border-b border-line px-2.5 py-1.5 text-label text-muted ${
-                                columna === "titulo" ? "w-full" : "whitespace-nowrap"
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                data-testid={`tareas-orden-${columna}`}
-                                onClick={() => ordenarPor(columna)}
-                                className="press inline-flex items-center gap-1 text-muted hover:text-ink-2"
+                  <Card className="overflow-hidden">
+                    {agrupacion !== "ninguna" ? (
+                      <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
+                        <h2 className="text-title text-ink">
+                          {agrupacion === "estado" ? (
+                            <StatusPill status={grupo.key as TaskStatus} />
+                          ) : (
+                            grupo.label
+                          )}
+                        </h2>
+                        <span className="rounded-full bg-canvas-deep px-1.5 py-px text-label tabular-nums text-muted">
+                          {grupo.tasks.length}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[58rem] border-collapse text-left">
+                        <thead>
+                          <tr>
+                            {COLUMNAS.map((columna) => (
+                              <th
+                                key={columna}
+                                scope="col"
+                                aria-sort={
+                                  orden.columna === columna
+                                    ? orden.direccion === "asc"
+                                      ? "ascending"
+                                      : "descending"
+                                    : "none"
+                                }
+                                className={`border-b border-line-soft px-2.5 py-1.5 text-label text-muted ${
+                                  columna === "titulo" ? "w-full" : "whitespace-nowrap"
+                                }`}
                               >
-                                {COLUMNA_LABELS[columna]}
-                                {orden.columna === columna ? (
-                                  <span aria-hidden="true">{orden.direccion === "asc" ? "↑" : "↓"}</span>
-                                ) : null}
-                              </button>
-                            </th>
+                                <button
+                                  type="button"
+                                  data-testid={`tareas-orden-${columna}`}
+                                  onClick={() => ordenarPor(columna)}
+                                  className="press inline-flex items-center gap-1 text-muted hover:text-ink-2"
+                                >
+                                  {COLUMNA_LABELS[columna]}
+                                  {orden.columna === columna ? (
+                                    <span aria-hidden="true">{orden.direccion === "asc" ? "↑" : "↓"}</span>
+                                  ) : null}
+                                </button>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {grupo.tasks.map((task, index) => (
+                            <TaskRow
+                              key={task.id}
+                              task={task}
+                              ctx={ctx}
+                              selected={cursor === indexBase + index}
+                              onChanged={onChanged}
+                            />
                           ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {grupo.tasks.map((task, index) => (
-                          <TaskRow
-                            key={task.id}
-                            task={task}
-                            ctx={ctx}
-                            selected={cursor === indexBase + index}
-                            onChanged={onChanged}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
                 </section>
               );
             })}
