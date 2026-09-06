@@ -55,6 +55,17 @@ describe("mapa del ciclo", () => {
     expect(milestones[0]?.label).toBe("Trabajo de la fase");
   });
 
+  it("enlaza el hito con su ítem de cierre cuando comparten kind (hitos vs. cierre)", () => {
+    const milestones = milestonesFor("ENTENDER", tasks, incomplete);
+    const entrevista = milestones.find((m) => m.label === "Entrevista");
+    // "entrevista" existe como activityType y como kind del cierre.
+    expect(entrevista?.closureItem?.kind).toBe("entrevista");
+    const asis = milestones.find((m) => m.label === "Procesos as-is");
+    expect(asis?.closureItem?.kind).toBe("proceso_asis");
+    // Sin cierre pasado, ningún hito trae ítem.
+    expect(milestonesFor("ENTENDER", tasks)[0]?.closureItem).toBeNull();
+  });
+
   it("un candado se abre sólo cuando el cierre de fase está completo", () => {
     const pending = { stage: "ENTENDER", gateState: "pending" } as const;
     expect(gateStateFor("ENTENDER", pending, false)).toBe("locked");

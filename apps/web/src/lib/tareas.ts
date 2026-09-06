@@ -249,7 +249,13 @@ function coincideTexto(task: Task, texto: string, ctx: Contexto): boolean {
 export function filtrar(tasks: Task[], filtros: Filtros, ctx: Contexto, now = Date.now()): Task[] {
   const responsableId = filtros.responsable === YO ? ctx.meId : filtros.responsable;
   return tasks.filter((task) => {
-    if (!filtros.cerradas && ESTADOS_CERRADOS.includes(task.status)) return false;
+    if (
+      !filtros.cerradas &&
+      !(filtros.estado && ESTADOS_CERRADOS.includes(filtros.estado)) &&
+      ESTADOS_CERRADOS.includes(task.status)
+    ) {
+      return false;
+    }
     if (filtros.proyecto && task.projectId !== filtros.proyecto) return false;
     if (filtros.cliente && orgIdOf(task, ctx.projects) !== filtros.cliente) return false;
     if (filtros.estado && task.status !== filtros.estado) return false;

@@ -73,6 +73,29 @@ describe("caminos de vuelta desde la actividad", () => {
     });
   });
 
+  it("los títulos se piden por id, no bajando la base entera (I2)", async () => {
+    const task2 = makeTask({ id: "t-i2-unico", title: "Publicar el informe final" });
+    const run2 = makeRun({ id: "r-i2", taskId: task2.id, projectId: project.id });
+    const scopedRoutes = [
+      { path: "/api/runs", body: { runs: [run2] } },
+      { path: /^\/api\/tasks\/t-i2-unico$/, body: { task: task2, events: [], artifacts: [], runs: [] } },
+      { path: "/api/tasks", status: 500, body: { error: { code: "no_debería_llamarse", message: "no" } } },
+    ];
+    const { calls } = mockFetch(scopedRoutes);
+    seed();
+    render(
+      <MemoryRouter initialEntries={["/sistema/actividad"]}>
+        <RunsView />
+      </MemoryRouter>,
+    );
+
+    const row = await screen.findByTestId("run-row-r-i2");
+    expect(await within(row).findByText("Publicar el informe final")).toBeTruthy();
+    // Nunca se pide la base entera de tareas para resolver un título.
+    expect(calls.some((c) => c.method === "GET" && c.url.endsWith("/api/tasks"))).toBe(false);
+    expect(calls.filter((c) => c.url.endsWith("/api/tasks/t-i2-unico")).length).toBe(1);
+  });
+
   it("dentro de un proyecto la lista se filtra por ese proyecto", async () => {
     const { calls } = mockFetch(routes);
     seed();

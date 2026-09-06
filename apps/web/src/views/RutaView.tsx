@@ -114,7 +114,7 @@ function MilestoneRow({
       </span>
       <span className="min-w-0 flex-1 text-ink-2">{label}</span>
       <span className="shrink-0 tabular-nums text-muted">
-        {done}/{total}
+        {done}/{total} tareas cerradas
       </span>
     </li>
   );
@@ -270,17 +270,22 @@ export default function RutaView({ project }: { project: Project }) {
                       : "Esta fase no tiene tareas todavía."}
                   </p>
                 ) : (
-                  <ul className="mt-3 grid gap-1.5">
-                    {column.milestones.map((m) => (
-                      <MilestoneRow
-                        key={m.key}
-                        label={m.label}
-                        done={m.done}
-                        total={m.total}
-                        state={m.state}
-                      />
-                    ))}
-                  </ul>
+                  <>
+                    {/* Esto sale de tareas por activityType; el cierre oficial (documentos,
+                        procesos, artefactos) es el panel de abajo, no esta columna. */}
+                    <p className="mt-3 text-label uppercase text-faint">Trabajo de la fase</p>
+                    <ul className="mt-1.5 grid gap-1.5">
+                      {column.milestones.map((m) => (
+                        <MilestoneRow
+                          key={m.key}
+                          label={m.label}
+                          done={m.done}
+                          total={m.total}
+                          state={m.state}
+                        />
+                      ))}
+                    </ul>
+                  </>
                 )}
               </Card>
 
@@ -326,7 +331,9 @@ export default function RutaView({ project }: { project: Project }) {
       <div className="grid gap-3 lg:grid-cols-[1.35fr_0.95fr]">
         <Card className="p-4" data-testid="phase-closure">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-title text-ink">Cerrar {STAGE_LABELS[project.stage]}</h3>
+            {/* "Entregables (Context Hub)": viene de phase-status (documentos, procesos,
+                artefactos), no de las tareas por activityType de la columna de arriba. */}
+            <h3 className="text-title text-ink">Entregables (Context Hub)</h3>
             {closure ? (
               closure.complete ? (
                 <Chip tone="done">Entregables completos</Chip>

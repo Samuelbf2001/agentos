@@ -113,12 +113,15 @@ export function decisionFromApproval(approval: Approval, project: Project | unde
 
 export function decisionFromReview(task: Task, artifacts: Artifact[]): Decision {
   // Un entregable que además pide aprobación o toca fuera vale más que una
-  // revisión rutinaria: sólo las rutinarias entran en el lote.
+  // revisión rutinaria: sólo las rutinarias entran en el lote. Un REVIEW sin
+  // artefacto no puede ser "bajo": el motor rechaza REVIEW/DONE sin evidencia,
+  // así que llegar aquí sin artefactos ya es una anomalía que pide mirar (M5).
   const sensitive = task.requiresApproval || task.externalEffect;
+  const risk: DecisionRisk = artifacts.length === 0 ? "medio" : sensitive ? "medio" : "bajo";
   return {
     id: `review:${task.id}`,
     kind: "review",
-    risk: sensitive ? "medio" : "bajo",
+    risk,
     title: task.title,
     unlocks: sensitive
       ? "Cierra la tarea y confirma un entregable marcado como sensible."

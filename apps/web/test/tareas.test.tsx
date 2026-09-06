@@ -144,6 +144,11 @@ describe("filtros (puros)", () => {
     ).toEqual(["t-beta-cerrada", "t-beta-sin-fecha"]);
   });
 
+  it("filtrar por un estado cerrado lo muestra aunque «cerradas» no esté marcado (I3)", () => {
+    const visible = filtrar(base(), { ...FILTROS_VACIOS, estado: "DONE" }, ctx, AHORA);
+    expect(visible.map((t) => t.id)).toEqual(["t-beta-cerrada"]);
+  });
+
   it("el texto busca también por nombre de proyecto y por etiqueta, sin tildes", () => {
     expect(filtrar(base(), { ...FILTROS_VACIOS, texto: "beta" }, ctx, AHORA)).toHaveLength(2);
     expect(filtrar(base(), { ...FILTROS_VACIOS, texto: "ZANJAR" }, ctx, AHORA)).toHaveLength(1);
@@ -358,6 +363,7 @@ function renderTareas(entry = "/tareas") {
     activeProjectId: null,
     labelCatalog: [],
     taskDetail: null,
+    taskDetailId: null,
     taskDetailLoading: false,
     taskDetailError: null,
     toasts: [],
@@ -468,6 +474,23 @@ describe("TareasView (render)", () => {
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
   });
 
+  it("con la ficha abierta, los atajos de teclado de la lista no actúan (M8)", async () => {
+    renderTareas();
+    const row = await screen.findByTestId("tarea-fila-t-acme-hoy");
+    fireEvent.click(row);
+    await waitFor(() => expect(useStore.getState().taskDetailId).toBe("t-acme-hoy"));
+
+    // "m" no debe filtrar por "mis tareas" mientras la ficha está abierta.
+    fireEvent.keyDown(window, { key: "m" });
+    expect(screen.getByTestId("tareas-mias").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy();
+
+    // "j"/"Enter" tampoco mueven el cursor de la lista ni reabren otra ficha.
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(useStore.getState().taskDetailId).toBe("t-acme-hoy");
+  });
+
   it("arranca con el filtro ya puesto cuando viene en la query", async () => {
     renderTareas("/tareas?responsable=yo");
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
@@ -556,6 +579,62 @@ describe("TareasView (render)", () => {
     });
   });
 
+  it("desde BACKLOG el desplegable sólo ofrece los destinos humanos válidos (I4)", async () => {
+    renderTareas();
+    const select = await screen.findByTestId("tarea-estado-t-beta-sin-fecha");
+    const options = within(select)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    // BACKLOG->READY y BACKLOG->CANCELLED son las únicas transiciones humanas;
+    // el resto de la matriz (IN_PROGRESS, REVIEW, BLOCKED, DONE) no aparece.
+    expect(options).toEqual(["BACKLOG", "READY", "CANCELLED"]);
+  });
+
+  it("una tarea DONE no ofrece cambios de estado (I4)", async () => {
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+    // Los cerrados sólo aparecen si se piden: filtrar por "Terminada" (I3) los trae.
+    fireEvent.change(screen.getByTestId("tareas-filtro-estado"), { target: { value: "DONE" } });
+    const select = await screen.findByTestId("tarea-estado-t-beta-cerrada");
+    expect(select.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("move envía expected_version y un 409 no revierte en silencio (I4)", async () => {
+    calls = mockFetch([
+      {
+        method: "POST",
+        path: "/api/tasks/t-acme-hoy/move",
+        status: 409,
+        body: { error: { code: "version_conflict", message: "La tarea cambió de versión" } },
+      },
+      ...viewRoutes,
+    ]).calls;
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-estado-t-acme-hoy")).toBeTruthy());
+
+    fireEvent.change(screen.getByTestId("tarea-estado-t-acme-hoy"), {
+      target: { value: "IN_PROGRESS" },
+    });
+
+    await waitFor(() => {
+      const move = calls.find((c) => c.method === "POST" && c.url.includes("/api/tasks/t-acme-hoy/move"));
+      expect(move).toBeTruthy();
+      expect(move!.body).toMatchObject({ to: "IN_PROGRESS", expected_version: 3 });
+    });
+
+    // El mensaje real llega al usuario y la ficha se abre; no hay reversión muda.
+    await waitFor(() => {
+      const toasts = useStore.getState().toasts;
+      expect(
+        toasts.some((t) => t.kind === "error" && t.text.includes("La tarea cambió de versión")),
+      ).toBe(true);
+    });
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "GET" && c.url.endsWith("/api/tasks/t-acme-hoy"))).toBe(true),
+    );
+    expect(screen.getByTestId("tarea-estado-t-acme-hoy").getAttribute("data-status")).toBe("READY");
+  });
+
   it("el título se renombra en línea, sin abrir la ficha", async () => {
     renderTareas();
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
@@ -576,6 +655,26 @@ describe("TareasView (render)", () => {
         "Zanjar el mapa SIPOC con ventas",
       ),
     );
+  });
+
+  it("con muchas tareas capa el render a 200 y «Mostrar más» revela el resto, sin tocar los contadores (I2)", async () => {
+    const many = Array.from({ length: 250 }, (_, i) =>
+      makeTask({ id: `t-many-${i}`, projectId: project.id, title: `Tarea generada ${i}`, status: "READY" }),
+    );
+    mockFetch([{ method: "GET", path: "/api/tasks", body: { tasks: many } }, ...viewRoutes]);
+    renderTareas();
+
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-many-0")).toBeTruthy());
+    expect(screen.getAllByTestId(/^tarea-fila-/).length).toBe(200);
+    // Los contadores del resumen siguen viendo el total, no el tope de render.
+    expect(screen.getByTestId("tareas-resumen").textContent).toContain("250 de 250 tareas");
+
+    const bar = screen.getByTestId("tareas-mostrar-mas");
+    expect(bar.textContent).toContain("Mostrando 200 de 250");
+    fireEvent.click(within(bar).getByText("Mostrar más"));
+
+    await waitFor(() => expect(screen.getAllByTestId(/^tarea-fila-/).length).toBe(250));
+    expect(screen.queryByTestId("tareas-mostrar-mas")).toBeNull();
   });
 
   it("sin coincidencias lo dice y ofrece volver a la base completa", async () => {
@@ -609,6 +708,10 @@ describe("Tareas en la navegación global", () => {
       reviewTasks: [],
       failedRunsCount: 0,
       labelCatalog: [],
+      taskDetail: null,
+      taskDetailId: null,
+      taskDetailLoading: false,
+      taskDetailError: null,
       toasts: [],
     });
     return render(

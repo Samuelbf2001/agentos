@@ -6,6 +6,7 @@ import { vi } from "vitest";
 import type {
   Agent,
   Approval,
+  Artifact,
   Message,
   Person,
   Project,
@@ -183,6 +184,22 @@ export function makeApproval(overrides: Partial<Approval> = {}): Approval {
     decidedAt: null,
     note: null,
     createdAt: Date.now() - 60_000,
+    ...overrides,
+  };
+}
+
+export function makeArtifact(overrides: Partial<Artifact> = {}): Artifact {
+  return {
+    id: "art-1",
+    taskId: "t1",
+    runId: "r1",
+    kind: "note",
+    title: "Notas de la entrevista",
+    content: "Hallazgos de la sesión.",
+    path: null,
+    meta: null,
+    createdBy: "agent:sally",
+    createdAt: 1000,
     ...overrides,
   };
 }

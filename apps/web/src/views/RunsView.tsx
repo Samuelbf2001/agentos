@@ -37,6 +37,13 @@ const RUN_STATUS_OPTIONS: { value: string; label: string }[] = [
 const selectCls =
   "min-h-9 rounded-tight border border-line bg-surface px-2.5 py-1.5 text-small text-ink-2";
 
+/**
+ * Caché en memoria de título por tarea (I2): esta vista vive dos veces
+ * (global en Sistema y filtrada dentro de cada proyecto) y sondea cada 10s,
+ * así que compartir la caché entre montajes evita pedir de nuevo lo ya sabido.
+ */
+const taskTitleCache = new Map<string, string>();
+
 export default function RunsView({ projectId }: { projectId?: string } = {}) {
   const agents = useStore((s) => s.agents);
   const projects = useStore((s) => s.projects);
@@ -75,23 +82,32 @@ export default function RunsView({ projectId }: { projectId?: string } = {}) {
   }, [load]);
 
   // Títulos de tarea para que la columna diga el trabajo y no un identificador.
+  // No se baja la base entera (I2): sólo se piden, en paralelo, los ids
+  // distintos que aparecen en la página de runs visible y que aún no estén en
+  // la caché en memoria.
   useEffect(() => {
+    const ids = Array.from(
+      new Set((runs ?? []).map((r) => r.taskId).filter((id): id is string => Boolean(id))),
+    ).filter((id) => !taskTitleCache.has(id));
+    if (ids.length === 0) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.tasks(projectId ? { project_id: projectId } : {});
-        if (cancelled) return;
-        const map: Record<string, string> = {};
-        for (const t of res.tasks) map[t.id] = t.title;
-        setTitles(map);
-      } catch {
-        /* la columna cae a un enlace genérico, nunca a un id crudo */
-      }
+    void (async () => {
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const detail = await api.task(id);
+            taskTitleCache.set(id, detail.task.title);
+          } catch {
+            /* la columna cae a un enlace genérico, nunca a un id crudo */
+          }
+        }),
+      );
+      if (!cancelled) setTitles((prev) => ({ ...prev, ...Object.fromEntries(taskTitleCache) }));
     })();
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [runs]);
 
   const titleOf = useCallback(
     (taskId: string): string | null => {

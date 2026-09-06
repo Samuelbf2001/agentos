@@ -12,7 +12,7 @@ import {
   sortByRisk,
   summarizePayload,
 } from "../src/lib/decisions";
-import { makeApproval, makeTask, project } from "./helpers";
+import { makeApproval, makeArtifact, makeTask, project } from "./helpers";
 import type { Project } from "../src/lib/types";
 
 const otherProject: Project = { ...project, id: "proj-2", name: "Conecty", stage: "CONSTRUIR" };
@@ -26,9 +26,11 @@ const deliverableApproval = makeApproval({
   createdAt: 2_000,
 });
 
+// Rutinaria de verdad: en REVIEW con su artefacto (M5, el motor nunca deja
+// llegar un REVIEW sin evidencia adjunta).
 const routineReview = {
   task: makeTask({ id: "t-rutina", status: "REVIEW", title: "Notas de la entrevista 4", updatedAt: 3_000 }),
-  artifacts: [],
+  artifacts: [makeArtifact({ id: "art-rutina", taskId: "t-rutina" })],
 };
 const sensitiveReview = {
   task: makeTask({
@@ -38,11 +40,11 @@ const sensitiveReview = {
     requiresApproval: true,
     updatedAt: 4_000,
   }),
-  artifacts: [],
+  artifacts: [makeArtifact({ id: "art-sensible", taskId: "t-sensible" })],
 };
 const secondRoutine = {
   task: makeTask({ id: "t-rutina-2", status: "REVIEW", title: "Notas de la entrevista 5", updatedAt: 6_000 }),
-  artifacts: [],
+  artifacts: [makeArtifact({ id: "art-rutina-2", taskId: "t-rutina-2" })],
 };
 
 function build() {
@@ -61,6 +63,15 @@ describe("decisiones de Hoy", () => {
     expect(byId.get("approval:ap-deliv")?.risk).toBe("medio");
     expect(byId.get("review:t-sensible")?.risk).toBe("medio");
     expect(byId.get("review:t-rutina")?.risk).toBe("bajo");
+  });
+
+  it("un REVIEW sin artefacto nunca es riesgo bajo, aunque no sea sensible (M5)", () => {
+    const [decision] = buildDecisions(
+      [],
+      [{ task: makeTask({ id: "t-sin-evidencia", status: "REVIEW" }), artifacts: [] }],
+      [project],
+    );
+    expect(decision?.risk).toBe("medio");
   });
 
   it("ordena por riesgo y, a igual riesgo, por lo que lleva más tiempo esperando", () => {

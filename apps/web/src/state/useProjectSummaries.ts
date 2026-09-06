@@ -80,18 +80,27 @@ export function useProjectSummaries(projects: Project[]): {
     let cancelled = false;
     setLoading(true);
     (async () => {
+      // Antes: una llamada `api.tasks({ project_id })` por proyecto (N). Una
+      // sola lista global agrupada en cliente evita bajar la base entera N
+      // veces (I2); el cierre de fase no tiene equivalente global, así que
+      // sigue siendo una llamada por proyecto.
       const results = await Promise.allSettled([
-        ...projects.map((p) => api.tasks({ project_id: p.id })),
+        api.tasks({}),
         ...projects.map((p) => api.phaseStatus(p.id)),
         api.runs({ status: "running", limit: 100 }),
       ]);
       if (cancelled) return;
       const nextTasks: Record<string, Task[]> = {};
       const nextClosure: Record<string, PhaseClosureStatus> = {};
+      const allTasksResult = results[0];
+      if (allTasksResult && allTasksResult.status === "fulfilled") {
+        for (const t of (allTasksResult.value as { tasks: Task[] }).tasks) {
+          if (!t.projectId) continue;
+          (nextTasks[t.projectId] ??= []).push(t);
+        }
+      }
       projects.forEach((p, i) => {
-        const t = results[i];
-        if (t && t.status === "fulfilled") nextTasks[p.id] = (t.value as { tasks: Task[] }).tasks;
-        const c = results[projects.length + i];
+        const c = results[1 + i];
         if (c && c.status === "fulfilled") {
           nextClosure[p.id] = (c.value as { status: PhaseClosureStatus }).status;
         }

@@ -34,8 +34,10 @@ import {
   StatusPill,
 } from "../components/ui";
 import {
+  HUMAN_TRANSITIONS,
   TASK_STATUSES,
   getTaskLabels,
+  isTerminalStatus,
   type Task,
   type TaskStatus,
 } from "../lib/types";
@@ -83,6 +85,13 @@ function columnasTablero(cerradas: boolean): TaskStatus[] {
 const selectClass =
   "min-h-8 rounded-tight border border-line bg-surface px-2 py-1 text-small text-ink-2 focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
 
+/**
+ * Tope de render (I2): con miles de tareas la base entera se pide de una
+ * sola vez, pero pintar todas las filas de golpe cuesta. Filtros y contadores
+ * siguen viendo el total; sólo la tabla/tablero se sirve por páginas.
+ */
+const RENDER_STEP = 200;
+
 // ── Estado en línea: el motor puede decir que no, y entonces se revierte ────
 
 function StatusSelect({
@@ -124,18 +133,23 @@ function StatusSelect({
     }
   }
 
+  // Sólo se ofrecen las transiciones humanas válidas desde el estado actual
+  // (I4); en un estado terminal (DONE/CANCELLED) el desplegable se deshabilita.
+  const terminal = isTerminalStatus(task.status);
+  const options = [task.status, ...HUMAN_TRANSITIONS[task.status]];
+
   return (
     <select
       aria-label={`Estado de ${task.title}`}
       data-testid={`tarea-estado-${task.id}`}
       data-status={task.status}
-      disabled={busy}
+      disabled={busy || terminal}
       value={task.status}
       onClick={(event) => event.stopPropagation()}
       onChange={(event) => void move(event.target.value as TaskStatus)}
       className={`min-h-[22px] appearance-none rounded-[6px] border px-1.5 py-0.5 text-label font-semibold uppercase focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50 ${toneClass}`}
     >
-      {TASK_STATUSES.map((status) => (
+      {options.map((status) => (
         <option key={status} value={status}>
           {STATUS_LABELS[status]}
         </option>
@@ -387,6 +401,7 @@ export default function TareasView() {
   const createTask = useStore((s) => s.createTask);
   const openTask = useStore((s) => s.openTask);
   const detailTask = useStore((s) => s.taskDetail?.task ?? null);
+  const taskDetailId = useStore((s) => s.taskDetailId);
 
   const [params, setParams] = useSearchParams();
   const [tasks, setTasks] = useState<Task[] | null>(null);
@@ -398,6 +413,7 @@ export default function TareasView() {
   const [quickProject, setQuickProject] = useState<string>(() => leerProyectoReciente() ?? "");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [clientNames, setClientNames] = useState<Map<string, string>>(new Map());
+  const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const filtros = useMemo(() => parseFiltros(params), [params]);
@@ -494,7 +510,15 @@ export default function TareasView() {
     return ordenar(filtrar(tasks, filtros, ctx), orden.columna, orden.direccion, ctx);
   }, [tasks, filtros, ctx, orden]);
 
-  const grupos = useMemo(() => agrupar(visibles, agrupacion, ctx), [visibles, agrupacion, ctx]);
+  // El tope de render vuelve a 200 cuando cambian filtros, agrupación u
+  // orden: si no, "Mostrar más" de una vista anterior se arrastraría a otra.
+  useEffect(() => {
+    setRenderLimit(RENDER_STEP);
+  }, [filtros, agrupacion, orden]);
+
+  const visiblesRender = useMemo(() => visibles.slice(0, renderLimit), [visibles, renderLimit]);
+
+  const grupos = useMemo(() => agrupar(visiblesRender, agrupacion, ctx), [visiblesRender, agrupacion, ctx]);
   /** Orden de recorrido del teclado: el mismo que se ve, grupo a grupo. */
   const recorrido = useMemo(() => grupos.flatMap((grupo) => grupo.tasks), [grupos]);
   const chips = useMemo(() => chipsActivos(filtros, ctx), [filtros, ctx]);
@@ -513,6 +537,9 @@ export default function TareasView() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Con la ficha abierta, el teclado es suyo: nada de mover el cursor de
+      // la lista ni de reinterpretar "m" por debajo (M8).
+      if (taskDetailId) return;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
@@ -973,7 +1000,7 @@ export default function TareasView() {
         {!error && visibles.length > 0 && vista === "tablero" ? (
           <div className="flex gap-2.5 overflow-x-auto pb-2" data-testid="tareas-tablero">
             {columnasTablero(filtros.cerradas).map((status) => {
-              const columna = visibles.filter((task) => task.status === status);
+              const columna = visiblesRender.filter((task) => task.status === status);
               return (
                 <section
                   key={status}
@@ -998,6 +1025,21 @@ export default function TareasView() {
                 </section>
               );
             })}
+          </div>
+        ) : null}
+
+        {!error && visibles.length > renderLimit ? (
+          <div className="mt-3 flex items-center gap-2 text-small text-muted" data-testid="tareas-mostrar-mas">
+            <span>
+              Mostrando {visiblesRender.length} de {visibles.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setRenderLimit((n) => Math.min(n + RENDER_STEP, visibles.length))}
+              className="press font-semibold text-link hover:underline"
+            >
+              Mostrar más
+            </button>
           </div>
         ) : null}
       </div>

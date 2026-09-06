@@ -8,7 +8,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import HoyView from "../src/views/HoyView";
 import { useStore } from "../src/state/store";
-import { agents, makeApproval, makeTask, mockFetch, person, project } from "./helpers";
+import { agents, makeApproval, makeArtifact, makeTask, mockFetch, person, project } from "./helpers";
 import type { Project } from "../src/lib/types";
 
 const conecty: Project = { ...project, id: "proj-2", name: "Conecty", stage: "CONSTRUIR" };
@@ -21,8 +21,10 @@ const approvals = [
 
 const reviewTasks = [
   {
+    // Rutinaria de verdad: con su artefacto (M5, un REVIEW sin evidencia no
+    // puede ser riesgo bajo, así que no vale como fixture de lote batchable).
     task: makeTask({ id: "t-rutina", status: "REVIEW", title: "Notas de la entrevista 4", updatedAt: 3_000 }),
-    artifacts: [],
+    artifacts: [makeArtifact({ id: "art-t-rutina", taskId: "t-rutina" })],
   },
   {
     task: makeTask({
@@ -36,7 +38,7 @@ const reviewTasks = [
   },
   {
     task: makeTask({ id: "t-rutina-2", status: "REVIEW", title: "Notas de la entrevista 5", updatedAt: 6_000 }),
-    artifacts: [],
+    artifacts: [makeArtifact({ id: "art-t-rutina-2", taskId: "t-rutina-2" })],
   },
 ];
 
@@ -139,6 +141,49 @@ describe("Hoy", () => {
       const approvals = calls.filter((c) => c.method === "POST" && c.url.includes("/approve"));
       expect(approvals.map((c) => c.url.split("/")[5])).toEqual(["t-rutina", "t-rutina-2"]);
     });
+  });
+
+  it("si una aprobación del lote falla, cuenta 1 aprobada y 1 fallida y no reporta éxito total (B1)", async () => {
+    const routes = baseRoutes().map((route) =>
+      route.path instanceof RegExp && route.path.test("/api/tasks/t-rutina-2/approve")
+        ? {
+            ...route,
+            statusFn: ({ url }: { url: string }) => (url.includes("t-rutina-2") ? 409 : 200),
+            body: ({ url }: { url: string }) =>
+              url.includes("t-rutina-2")
+                ? { error: { code: "version_conflict", message: "La tarea cambió" } }
+                : { task: makeTask({ id: url.split("/")[5] ?? "t", status: "DONE" }) },
+          }
+        : route,
+    );
+    const { calls } = mockFetch(routes);
+    renderHoy();
+
+    const bar = await screen.findByTestId("batch-bar");
+    fireEvent.click(within(bar).getByText("Seleccionarlas todas"));
+    fireEvent.click(screen.getByTestId("batch-approve"));
+
+    await waitFor(() => {
+      const approvals = calls.filter((c) => c.method === "POST" && c.url.includes("/approve"));
+      expect(approvals.length).toBe(2);
+    });
+
+    // No se reintenta tras el fallo real: exactamente una llamada por decisión.
+    const approveCalls = calls.filter((c) => c.method === "POST" && c.url.includes("/approve"));
+    expect(approveCalls.map((c) => c.url.split("/")[5])).toEqual(["t-rutina", "t-rutina-2"]);
+
+    await waitFor(() => {
+      const toasts = useStore.getState().toasts;
+      expect(toasts.filter((t) => t.kind === "ok").length).toBe(1);
+      expect(toasts.some((t) => t.kind === "error" && t.text.includes("version_conflict"))).toBe(true);
+      expect(toasts.some((t) => t.kind === "error" && t.text.includes("Lote detenido: 1 de 2"))).toBe(true);
+    });
+    expect(useStore.getState().toasts.some((t) => t.text.includes("2 decisiones aprobadas"))).toBe(false);
+
+    // loadApprovals() una sola vez al final del lote (M6): la carga inicial +
+    // la del cierre del lote, ninguna intermedia por ítem.
+    const waitingCalls = calls.filter((c) => c.url.includes("/api/waiting"));
+    expect(waitingCalls.length).toBe(2);
   });
 
   it("el filtro por proyecto acota la bandeja al cliente que traes del tablero", async () => {

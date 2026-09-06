@@ -21,6 +21,13 @@ export interface Milestone {
   /** `done` = todas cerradas, `now` = hay trabajo en curso, `open` = sin empezar. */
   state: "done" | "now" | "open";
   taskIds: string[];
+  /**
+   * El ítem de cierre (phase-status) que declara el mismo `kind` que este
+   * hito, si lo hay. El hito viene de tareas por `activityType`; el cierre
+   * viene de otra fuente (documentos/procesos/artefactos) — este enlace es lo
+   * único que los conecta, para no mostrarlos como si fueran el mismo dato.
+   */
+  closureItem: PhaseClosureItem | null;
 }
 
 export interface CycleGate {
@@ -112,7 +119,11 @@ export function humanizeKind(kind: string): string {
  * Hitos de una etapa: los tipos de actividad de sus tareas. Un hito está
  * cerrado cuando todas sus tareas lo están, y "en curso" cuando alguna avanza.
  */
-export function milestonesFor(stage: Stage, tasks: Task[]): Milestone[] {
+export function milestonesFor(
+  stage: Stage,
+  tasks: Task[],
+  closure: PhaseClosureStatus | null = null,
+): Milestone[] {
   const groups = new Map<string, Task[]>();
   for (const task of tasks) {
     if (task.stage !== stage) continue;
@@ -122,9 +133,12 @@ export function milestonesFor(stage: Stage, tasks: Task[]): Milestone[] {
     list.push(task);
     groups.set(key, list);
   }
+  const closureItems = closure?.items ?? [];
   return [...groups.entries()].map(([key, list]) => {
     const done = list.filter((t) => t.status === "DONE").length;
     const active = list.some((t) => t.status === "IN_PROGRESS" || t.status === "REVIEW");
+    const target = normalizeKind(key);
+    const closureItem = closureItems.find((item) => normalizeKind(item.kind) === target) ?? null;
     return {
       key: `${stage}:${key}`,
       label: humanizeKind(key),
@@ -132,6 +146,7 @@ export function milestonesFor(stage: Stage, tasks: Task[]): Milestone[] {
       done,
       state: done === list.length ? "done" : active || done > 0 ? "now" : "open",
       taskIds: list.map((t) => t.id),
+      closureItem,
     } satisfies Milestone;
   });
 }
@@ -174,7 +189,7 @@ export function buildCycle(
     return {
       stage,
       status: index < current ? "closed" : index === current ? "active" : "blocked",
-      milestones: milestonesFor(stage, tasks),
+      milestones: milestonesFor(stage, tasks, closure),
       gate: {
         code: GATE_CODES[stage],
         stage,

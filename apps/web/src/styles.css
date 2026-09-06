@@ -3,10 +3,13 @@
 /*
  * Sistema visual de AgentOS (docs/DIRECCION-VISUAL.md + PLAN-v1.5 §Sistema visual).
  *
- * Una sola gramática de color: ámbar = trabajo en curso, violeta = espera una
- * decisión humana (y nada más), rojo = roto o vencido, verde = cerrado o
- * aprobado, azul = enlace y selección (nunca estado). Todo lo demás es
- * estructura, con neutros de sesgo frío. Queda prohibido el color por categoría.
+ * Una sola gramática de color: violeta = las decisiones que esperan en la
+ * bandeja de Hoy; ámbar = trabajo en curso y, por excepción explícita de
+ * diseño, también el gate listo para aprobar (aprobar es una acción, no una
+ * espera pasiva — así está en el prototipo aprobado, no es una fuga de la
+ * gramática); rojo = roto, vencido o riesgo alto; verde = cerrado o aprobado;
+ * azul = enlace y selección (nunca estado). Todo lo demás es estructura, con
+ * neutros de sesgo frío. Queda prohibido el color por categoría.
  *
  * Cinco tamaños de tipografía, cada uno con su propio tracking (los títulos
  * cierran, el cuerpo queda en cero, las etiquetas abren). Nada por debajo de

@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../state/store";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { paths } from "../lib/paths";
 import {
   batchable,
@@ -268,7 +268,6 @@ export default function HoyView() {
   const reviewTasks = useStore((s) => s.reviewTasks);
   const projects = useStore((s) => s.projects);
   const loadApprovals = useStore((s) => s.loadApprovals);
-  const approveTaskReview = useStore((s) => s.approveTaskReview);
   const pushToast = useStore((s) => s.pushToast);
   const [params, setParams] = useSearchParams();
   const projectFilter = params.get("proyecto");
@@ -307,27 +306,40 @@ export default function HoyView() {
 
   /**
    * Aprobación en lote: llamadas secuenciales a la API que ya existe, una por
-   * decisión, para no romper el `expected_version` de la siguiente.
+   * decisión, para no romper el `expected_version` de la siguiente. Cada
+   * llamada va directo a `api.approveTask` (no a la acción del store) porque
+   * necesitamos que un fallo real se propague: el conteo tiene que reflejar
+   * lo que de verdad pasó, no lo que el store se tragó en su try/catch.
    */
   async function approveSelected() {
-    const chosen = batchCandidates.filter((d) => selected.includes(d.id) && d.taskId);
+    const chosen = batchCandidates.filter((d) => selected.includes(d.id) && d.taskId && d.task);
     if (chosen.length === 0) return;
     setBatching(true);
     let ok = 0;
+    let stopped = false;
     try {
       for (const decision of chosen) {
         try {
-          await approveTaskReview(decision.taskId!);
+          await api.approveTask(decision.taskId!, decision.task!.version);
           ok += 1;
-        } catch {
+          pushToast("ok", `Aprobada: ${decision.title}`);
+        } catch (err) {
+          const reason =
+            err instanceof ApiError
+              ? `${err.code}: ${err.message}`
+              : err instanceof Error
+                ? err.message
+                : "error desconocido";
+          pushToast("error", `No se pudo aprobar «${decision.title}»: ${reason}`);
+          stopped = true;
           break;
         }
       }
     } finally {
       setBatching(false);
       setSelected([]);
-      if (ok > 0) pushToast("ok", ok === 1 ? "1 decisión aprobada" : `${ok} decisiones aprobadas`);
-      if (ok < chosen.length) pushToast("error", "El lote se detuvo: revisa las que quedaron.");
+      if (stopped) pushToast("error", `Lote detenido: ${ok} de ${chosen.length} aprobadas.`);
+      void loadApprovals();
     }
   }
 

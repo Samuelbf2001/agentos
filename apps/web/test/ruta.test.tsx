@@ -114,6 +114,19 @@ describe("Ruta del proyecto", () => {
     expect(recibo.textContent).toContain("direccion, operaciones");
   });
 
+  it("rotula la columna del mapa como trabajo de la fase y el panel de cierre como Entregables (Context Hub)", async () => {
+    mockFetch(routes(incomplete));
+    renderRuta();
+
+    const column = await screen.findByTestId("cycle-column-ENTENDER");
+    expect(column.textContent).toContain("Trabajo de la fase");
+    // El contador de cada hito dice qué cuenta, no un "N/M" desnudo.
+    expect(column.textContent).toMatch(/\d+\/\d+ tareas cerradas/);
+
+    const closurePanel = await screen.findByTestId("phase-closure");
+    expect(closurePanel.textContent).toContain("Entregables (Context Hub)");
+  });
+
   it("con entregables pendientes el candado sigue cerrado y no ofrece aprobar", async () => {
     mockFetch(routes(incomplete));
     renderRuta();
