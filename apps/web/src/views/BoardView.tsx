@@ -16,7 +16,6 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../state/store";
 import CreateTaskDialog from "./CreateTaskDialog";
-import TaskSearchBox from "./TaskSearchBox";
 import BoardCopilotPanel from "../components/chat/BoardCopilotPanel";
 import type { BoardFilter, Person, Stage, Task, TaskAssigneePerson, TaskStatus } from "../lib/types";
 import {
@@ -416,9 +415,6 @@ export default function BoardView() {
             {/* Sin cabecera duplicada: el nombre del cliente y la fase viven
                 arriba, en la barra del proyecto. Aquí sólo lo operativo. */}
             <div className="flex flex-wrap items-center gap-3">
-              <div className="w-full sm:w-72">
-                <TaskSearchBox projectId={board.projectId ?? undefined} />
-              </div>
               <button
                 type="button"
                 data-testid="board-new-task"
