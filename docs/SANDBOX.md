@@ -16,6 +16,13 @@ pnpm sandbox:web      # apps/web en :4311, apuntando a :4310
 pisa una copia que ya estés usando. `pnpm sandbox:status` muestra tamaño y
 fecha de ambas bases y si la API/web ya responden.
 
+La API del sandbox arranca sin `tsx watch` (lanzada desde Claude Code o CI no
+hay terminal y el modo watch se cierra en silencio): para recargar cambios de
+`apps/api`, reinicia `sandbox:api`. La web sí recarga en caliente.
+
+Desde otro worktree sin `data/agentos.db`, apunta el origen de la copia:
+`AGENTOS_DB_PATH=../agentos/data/agentos.db pnpm sandbox:reset`.
+
 Desde Claude Code: las configuraciones `sandbox-api` y `sandbox-web` de
 `.claude/launch.json` lanzan lo mismo sin tocar la terminal.
 

@@ -131,7 +131,10 @@ function api(agentesFlag) {
   }
 
   console.log(`[sandbox] arrancando apps/api en :${API_PORT} contra data/sandbox.db`);
-  run("pnpm", ["--filter", "@agentos/api", "dev"], extraEnv);
+  // Sin `tsx watch`: lanzado desde un proceso sin terminal (Claude Code, CI)
+  // el modo watch se cierra en silencio al no tener stdin. El sandbox no
+  // necesita recarga en caliente de la API; para recargar, reinicia.
+  run("pnpm", ["--filter", "@agentos/api", "exec", "tsx", "src/index.ts"], extraEnv);
 }
 
 function web() {
