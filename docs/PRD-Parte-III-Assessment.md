@@ -266,6 +266,38 @@ existe; el de WhatsApp no.
 
 ---
 
+## 9.10 Versión 2: descubrir los procesos observando el trabajo
+
+Decisión de Ernesto del 2026-09-06, a raíz del análisis de Within: **el descubrimiento automático de
+procesos, observando lo que la gente hace en sus computadores, es la versión 2 del assessment.** No
+entra en la primera versión y no reemplaza a las entrevistas: las complementa.
+
+Qué aporta frente a la entrevista: captura lo que la gente hace de verdad, no lo que recuerda ni lo que
+cree que debería decir; descubre pasos y traspasos que nadie menciona porque son "obvios"; y da volumen
+y tiempo por paso medidos, que es justo el dato que el costeo hoy tiene que estimar por bandas.
+
+Qué exige, sin excepción, porque toca a personas:
+
+- **Se observa el trabajo, no al trabajador.** Lo capturado se anonimiza por diseño antes de llegar al
+  mapa: patrones de aplicaciones, secuencias y tiempos, nunca contenido de pantalla ni mensajes.
+- **Consentimiento informado y por escrito de cada persona**, con derecho a pausar y a salir. Son las
+  mismas reglas que fijamos para las cuentas de WhatsApp del equipo interno.
+- **Lo observado propone, no impone.** Un proceso descubierto por observación entra al mapa como
+  propuesta del agente y pasa por la misma validación humana que uno extraído de entrevista. La regla
+  anti-pisado no cambia.
+- **Nada sale del tenant del cliente.** Los datos de observación son del cliente y viven en su tenant;
+  a Sixteam le llega el mapa validado, no la captura.
+
+Cómo encaja con lo que ya está diseñado: los procesos observados son afirmaciones con una modalidad
+nueva, "observada", junto a las descriptivas, normativas y reportadas de la sección 9.3. El costeo de la
+sección 9.5 gana una cuarta etiqueta de origen, "medido por observación", que pesa más que "declarado"
+y que "estimado". Y la lista de lo que falta por entrevistar se enriquece: lo observado y no mencionado
+en ninguna entrevista es una pregunta pendiente.
+
+Qué no es: no es el acceso de agentes a computadoras virtuales para operar sistemas del cliente, que
+sigue siendo fase 2 de la arquitectura de plataformas. Aquí los computadores se observan para entender;
+allí se operan para ejecutar.
+
 ## Lo que necesito que decidas
 
 **El costeo se hace sobre el tiempo de las personas o también sobre el dinero perdido.** Lo primero es

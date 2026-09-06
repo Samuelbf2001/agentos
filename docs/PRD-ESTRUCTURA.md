@@ -41,7 +41,7 @@ El recorrido del cliente. Cada uno se desarrolla completo antes de pasar al sigu
 
 | # | Sección | Estado | Dónde vive | Qué falta |
 |---|---|---|---|---|
-| 9 | Assessment | Abierto | PRD §4.1 | El detalle de entrevistas, el costeo y cómo se detecta una brecha |
+| 9 | Assessment | Abierto | PRD §4.1 y Parte III | Confirmar tres decisiones de la Parte III. Versión 2 decidida: descubrimiento automático observando el trabajo (sección 9.10) |
 | 10 | Arquitectura y plan | Esbozado | PRD §4.1 y §7 | El criterio de decisión entre construir y comprar, y cómo nace el plan |
 | 11 | Implementación | Esbozado | PRD §4.2 | La metodología de ejecución y qué hacen los expertos |
 | 12 | Soporte | Esbozado | PRD §4.3 | El alcance real del agente de soporte y el ciclo de vigilancia |
