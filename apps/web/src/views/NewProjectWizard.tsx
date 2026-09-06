@@ -340,6 +340,8 @@ export default function NewProjectWizard() {
   const [search] = useSearchParams();
   /** La Ruta manda aqui la fase siguiente: el catalogo se acota a esa fase. */
   const phaseHint = search.get("fase") as Stage | null;
+  /** Activo Sixteam manda aquí el módulo que se quiere lanzar directamente. */
+  const moduloHint = search.get("modulo");
   const originProjectId = search.get("proyecto");
   const projects = useStore((s) => s.projects);
   const originProject = originProjectId ? projects.find((p) => p.id === originProjectId) : undefined;
@@ -459,6 +461,14 @@ export default function NewProjectWizard() {
     },
     [details, pushToast],
   );
+
+  // Llegó con ?modulo=<slug> desde Activo Sixteam: si existe en el catálogo,
+  // se preselecciona y el wizard arranca directo en el paso 2.
+  useEffect(() => {
+    if (!moduloHint || !modules || selected) return;
+    const found = modules.find((m) => m.slug === moduloHint);
+    if (found) void selectModule(found);
+  }, [moduloHint, modules, selected, selectModule]);
 
   const missingLabels = useMemo(() => {
     if (!selected || !preview) return [];

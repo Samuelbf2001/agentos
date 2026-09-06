@@ -215,9 +215,9 @@ function wizardRoutes() {
   ];
 }
 
-function ui() {
+function ui(entry = "/new-project") {
   return render(
-    <MemoryRouter initialEntries={["/new-project"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/new-project" element={<NewProjectWizard />} />
         {/* Tras disparar, el wizard entra al tablero DEL proyecto creado. */}
@@ -299,6 +299,14 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
     expect((screen.getByRole("switch", { name: /Preparación ISO 9001/ }) as HTMLInputElement).type).toBe(
       "checkbox",
     );
+  });
+
+  it("con ?modulo=<slug> desde Activo Sixteam preselecciona el módulo y arranca en el paso 2", async () => {
+    mockFetch(wizardRoutes());
+    ui("/new-project?modulo=consultoria");
+
+    await screen.findByLabelText(/Nombre de la empresa/);
+    expect(screen.queryByTestId("module-card-consultoria")).toBeNull();
   });
 
   it("con inputs incompletos lista los campos faltantes y deshabilita Continuar", async () => {

@@ -59,10 +59,11 @@ export const paths = {
   misTareas: () => "/tareas?responsable=yo",
   proyectos: () => "/proyectos",
   proyecto: (projectId: string, tab: ProjectTab = "ruta") => `/proyectos/${projectId}/${tab}`,
-  nuevoProyecto: (params?: { projectId?: string; phase?: string }) => {
+  nuevoProyecto: (params?: { projectId?: string; phase?: string; modulo?: string }) => {
     const search = new URLSearchParams();
     if (params?.projectId) search.set("proyecto", params.projectId);
     if (params?.phase) search.set("fase", params.phase);
+    if (params?.modulo) search.set("modulo", params.modulo);
     const qs = search.toString();
     return `/nuevo-proyecto${qs ? `?${qs}` : ""}`;
   },

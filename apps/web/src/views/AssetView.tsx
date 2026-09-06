@@ -10,18 +10,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
-import { useBrainOverview } from "../state/useBrainOverview";
 import { Markdown } from "../components/Markdown";
-import { ActionButton, Card, Chip, SectionHead, STAGE_LABELS, type Tone } from "../components/system";
+import { ActionButton, Card, Chip, SectionHead, STAGE_LABELS } from "../components/system";
 import { EmptyState, ErrorBox, Spinner } from "../components/ui";
 import { paths } from "../lib/paths";
-import type { BrainModule, Methodology, ModuleSummary } from "../lib/types";
-
-const MODULE_STATUS: Record<BrainModule["status"], { label: string; tone: Tone }> = {
-  available: { label: "disponible", tone: "done" },
-  partial: { label: "parcial", tone: "work" },
-  offline: { label: "no disponible", tone: "broken" },
-};
+import type { Methodology, ModuleSummary } from "../lib/types";
 
 function PhaseModules() {
   const [modules, setModules] = useState<ModuleSummary[] | null>(null);
@@ -70,7 +63,9 @@ function PhaseModules() {
             {m.project_type}
           </p>
           <div className="mt-3">
-            <ActionButton onClick={() => navigate(paths.nuevoProyecto())}>Lanzar este módulo</ActionButton>
+            <ActionButton onClick={() => navigate(paths.nuevoProyecto({ modulo: m.slug }))}>
+              Lanzar este módulo
+            </ActionButton>
           </div>
         </Card>
       ))}
@@ -149,14 +144,12 @@ function Methodologies() {
 }
 
 export default function AssetView() {
-  const { overview, error, reload } = useBrainOverview();
-
   return (
     <div className="density-explorar mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
       <h1 className="text-display text-ink">Activo Sixteam</h1>
       <p className="mt-1.5 max-w-[62ch] text-body text-muted">
-        El método es de Sixteam, no de un cliente: los módulos que arrancan una fase, las metodologías que
-        los agentes siguen y las capacidades que la plataforma puede ofrecer.
+        El método es de Sixteam, no de un cliente: los módulos que arrancan una fase y las metodologías que
+        los agentes siguen.
       </p>
 
       <SectionHead label="Módulos de fase" />
@@ -164,30 +157,6 @@ export default function AssetView() {
 
       <SectionHead label="Metodologías" />
       <Methodologies />
-
-      <SectionHead label="Capacidades" />
-      {error ? <ErrorBox message={error} onRetry={reload} /> : null}
-      {!overview && !error ? <Spinner label="Cargando capacidades…" /> : null}
-      {overview ? (
-        <div className="grid gap-2.5 lg:grid-cols-2">
-          {overview.modules.map((mod) => {
-            const status = MODULE_STATUS[mod.status];
-            const source = overview.sources.find((s) => s.id === mod.source_id);
-            return (
-              <Card key={mod.id} className="p-4" data-testid={`capability-${mod.id}`}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-body font-semibold text-ink">{mod.label}</h3>
-                  <Chip tone={status.tone}>{status.label}</Chip>
-                </div>
-                <p className="mt-1.5 text-small text-muted">{mod.description}</p>
-                <p className="mt-1.5 text-small text-faint">
-                  Depende de {source?.label ?? mod.source_id}
-                </p>
-              </Card>
-            );
-          })}
-        </div>
-      ) : null}
     </div>
   );
 }
