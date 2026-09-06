@@ -33,16 +33,19 @@ import {
   listTaskEvents,
   listTaskLabels,
   listTasks,
+  maxOrderKey,
   normalizeLabel,
   replaceTaskLabels,
   searchTasks,
   setGateState,
   updateProject,
   updateTask,
+  validateTaskAssigneeOrganization,
+  type AgentosDb,
   type Task,
 } from "@agentos/db";
 import fs from "node:fs";
-import { newId } from "@agentos/shared";
+import { ErrorCodes, isAgentosError, newId } from "@agentos/shared";
 import {
   artifactsRoot,
   guessContentType,
@@ -142,7 +145,26 @@ const MoveTaskBody = z.object({
   blocked_reason: BlockedReason.optional(),
 });
 
+const MoveTaskProjectBody = z.object({
+  project_id: z.string().min(1),
+  expected_version: z.number().int().positive(),
+});
+
 const CommentBody = z.object({ body: z.string().min(1) });
+
+/**
+ * Clave de orden al FINAL de una columna: mismo algoritmo que `nextOrderKey`
+ * del motor del tablero (crear/delegar) y que `readyOrderKey` de los módulos,
+ * sobre el mismo `maxOrderKey` de `@agentos/db`. El motor no exporta el suyo
+ * (función privada de `createBoardEngine`) y este archivo no toca packages/core.
+ */
+async function nextOrderKey(db: AgentosDb, projectId: string, status: TaskStatusT): Promise<string> {
+  const last = await maxOrderKey(db, projectId, status);
+  if (!last) return "m";
+  const tail = last.charCodeAt(last.length - 1);
+  if (tail < "z".charCodeAt(0)) return last.slice(0, -1) + String.fromCharCode(tail + 1);
+  return `${last}m`;
+}
 
 const AssignBody = z.object({
   expected_version: z.number().int().positive(),
@@ -583,7 +605,100 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       before: { title: before.title, dueAt: before.dueAt },
       after: { title: task.title, dueAt: task.dueAt },
     });
-    return { task: await taskWithAssignees(db, task) };
+    const updated = await taskWithAssignees(db, task);
+    // Igual que etiquetas y comentarios: sin este evento, el resto de pestañas
+    // no se enteraba de un cambio de título/prioridad/vencimiento.
+    await sink.publish(`board:${task.projectId}`, { type: "task.updated", payload: { task: updated } });
+    return { task: updated };
+  });
+
+  /**
+   * Cambio de proyecto de una tarjeta (ficha estilo Notion). No es una
+   * transición de la máquina de estados: conserva estado, etapa y responsables,
+   * pero exige que TODO lo que la tarjeta referencia siga siendo válido en el
+   * destino. Nada se limpia en silencio: si un responsable no pertenece al
+   * cliente del proyecto destino (ni es interno) o si padre/dependencias
+   * quedan en otro proyecto, se rechaza nombrando el conflicto.
+   */
+  app.post("/api/tasks/:id/project", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = parse(MoveTaskProjectBody, req.body);
+    const before = await getTask(db, id);
+    if (!before) throw errors.notFound("task", id);
+    const target = await getProject(db, body.project_id);
+    if (!target) throw errors.notFound("project", body.project_id);
+    if (before.version !== body.expected_version) {
+      throw errors.versionConflict("task", id, body.expected_version);
+    }
+    if (target.id === before.projectId) {
+      throw errors.validation("La tarea ya pertenece a ese proyecto", { taskId: id, projectId: target.id });
+    }
+
+    // Responsables: misma regla de aislamiento humano que crear/asignar (I3),
+    // evaluada contra la organización del proyecto DESTINO.
+    const assignees = await listTaskAssignees(db, id);
+    try {
+      await validateTaskAssigneeOrganization(
+        db,
+        target.id,
+        assignees.map((row) => row.personId),
+      );
+    } catch (err) {
+      if (!isAgentosError(err, ErrorCodes.VALIDATION_ERROR)) throw err;
+      const details = (err.details ?? {}) as { personId?: string };
+      const offender = assignees.find((row) => row.personId === details.personId);
+      const name = offender?.person?.fullName ?? details.personId ?? "desconocido";
+      throw errors.validation(
+        `El responsable ${name} no pertenece al cliente del proyecto destino "${target.name}" ni es personal interno`,
+        {
+          taskId: id,
+          personId: details.personId ?? null,
+          personName: offender?.person?.fullName ?? null,
+          fromProjectId: before.projectId,
+          toProjectId: target.id,
+          targetOrgId: target.orgId,
+        },
+      );
+    }
+
+    // Jerarquía y dependencias: no pueden quedar apuntando a otro proyecto.
+    if (before.parentTaskId) {
+      const parent = await getTask(db, before.parentTaskId);
+      if (parent && parent.projectId !== target.id) {
+        throw errors.validation(
+          `La tarea padre "${parent.title}" pertenece a otro proyecto; muévela primero o desvincúlala`,
+          { taskId: id, parentTaskId: parent.id, parentProjectId: parent.projectId, toProjectId: target.id },
+        );
+      }
+    }
+    for (const depId of before.dependsOn ?? []) {
+      const dep = await getTask(db, depId);
+      if (dep && dep.projectId !== target.id) {
+        throw errors.validation(
+          `La tarea depende de "${dep.title}", que pertenece a otro proyecto; muévela primero o quita la dependencia`,
+          { taskId: id, dependsOnTaskId: dep.id, dependencyProjectId: dep.projectId, toProjectId: target.id },
+        );
+      }
+    }
+
+    const orderKey = await nextOrderKey(db, target.id, before.status);
+    const moved = await updateTask(db, id, { projectId: target.id, orderKey }, body.expected_version);
+    await appendAudit(db, {
+      actor: personActor(req),
+      source: "ui",
+      action: "task.moved_project",
+      entityType: "task",
+      entityId: id,
+      before: { projectId: before.projectId, orderKey: before.orderKey },
+      after: { projectId: moved.projectId, orderKey: moved.orderKey },
+    });
+    const task = await taskWithAssignees(db, moved);
+    // Los dos tableros tienen que reaccionar: el viejo quita la tarjeta y el
+    // nuevo la añade. Mismo payload en ambos topics.
+    const payload = { task, from_project_id: before.projectId, to_project_id: target.id };
+    await sink.publish(`board:${before.projectId}`, { type: "task.moved_project", payload });
+    await sink.publish(`board:${target.id}`, { type: "task.moved_project", payload });
+    return { task };
   });
 
   app.post("/api/tasks/:id/move", async (req) => {
