@@ -9,7 +9,11 @@
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
     "notion:snapshot": "pnpm --filter @agentos/notion-migration snapshot",
-    "notion:import": "pnpm --filter @agentos/notion-migration import"
+    "notion:import": "pnpm --filter @agentos/notion-migration import",
+    "sandbox:reset": "node scripts/sandbox.mjs reset",
+    "sandbox:api": "node scripts/sandbox.mjs api",
+    "sandbox:web": "node scripts/sandbox.mjs web",
+    "sandbox:status": "node scripts/sandbox.mjs status"
   },
   "dependencies": {
     "tsx": "^4.20.0"
