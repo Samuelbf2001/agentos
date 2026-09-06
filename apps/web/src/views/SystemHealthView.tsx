@@ -49,59 +49,65 @@ export default function SystemHealthView() {
   const { overview, error, reload } = useBrainOverview();
   const projects = useStore((s) => s.projects);
 
-  if (error) return <ErrorBox message={error} onRetry={reload} />;
-  if (!overview) return <Spinner label="Leyendo el inventario del sistema…" />;
-
-  const degraded = overview.sources.filter((s) => s.status !== "connected");
+  const degraded = overview ? overview.sources.filter((s) => s.status !== "connected") : [];
 
   return (
     <div className="density-explorar">
       <p className="max-w-[62ch] text-body text-muted">
-        De qué integraciones se puede fiar ahora mismo. Lectura del {fmtMoment(overview.generated_at)}.
+        De qué integraciones se puede fiar ahora mismo.
+        {overview ? ` Lectura del ${fmtMoment(overview.generated_at)}.` : ""}
       </p>
 
-      <SectionHead label="Fuentes" count={overview.sources.length} />
-      {degraded.length > 0 ? (
-        <p className="mb-3 text-small text-muted">
-          {degraded.length === 1 ? "Una fuente no está" : `${degraded.length} fuentes no están`} al 100 %.
-          Los proyectos que dependen de ellas pueden quedarse sin contexto fresco:{" "}
-          <Link to={paths.proyectos()} className="press font-semibold text-link hover:underline">
-            revisa los {projects.length} proyectos abiertos
-          </Link>
-          .
-        </p>
-      ) : null}
-      <div className="grid gap-2.5 lg:grid-cols-2">
-        {overview.sources.map((source) => {
-          const status = SOURCE_STATUS[source.status];
-          return (
-            <Card key={source.id} className="p-4" data-testid={`source-${source.id}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-body font-semibold text-ink">{source.label}</h3>
-                <Chip tone={status.tone}>{status.label}</Chip>
-                <span className="ml-auto text-small text-faint">{source.mode.replace(/_/g, " ")}</span>
-              </div>
-              <p className="mt-1.5 text-small text-muted">{source.detail}</p>
-              <p className="mt-1.5 text-small text-faint">
-                Última lectura: {fmtMoment(source.last_checked_at)}
-                {source.last_snapshot_at ? ` · Captura: ${fmtMoment(source.last_snapshot_at)}` : ""}
-              </p>
-              {Object.keys(source.counts ?? {}).length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-small text-ink-2">
-                  {Object.entries(source.counts).map(([k, v]) => (
-                    <span key={k} className="tabular-nums">
-                      <span className="font-semibold">{String(v)}</span>{" "}
-                      <span className="text-muted">{k.replace(/_/g, " ")}</span>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <StageChips title="Etapas de tareas" stages={source.stages?.tasks} />
-              <StageChips title="Etapas de proyectos" stages={source.stages?.projects} />
-            </Card>
-          );
-        })}
-      </div>
+      {error ? (
+        <ErrorBox message={error} onRetry={reload} />
+      ) : !overview ? (
+        <Spinner label="Leyendo el inventario del sistema…" />
+      ) : (
+        <>
+          <SectionHead label="Fuentes" count={overview.sources.length} />
+          {degraded.length > 0 ? (
+            <p className="mb-3 text-small text-muted">
+              {degraded.length === 1 ? "Una fuente no está" : `${degraded.length} fuentes no están`} al 100 %.
+              Los proyectos que dependen de ellas pueden quedarse sin contexto fresco:{" "}
+              <Link to={paths.proyectos()} className="press font-semibold text-link hover:underline">
+                revisa los {projects.length} proyectos abiertos
+              </Link>
+              .
+            </p>
+          ) : null}
+          <div className="grid gap-2.5 lg:grid-cols-2">
+            {overview.sources.map((source) => {
+              const status = SOURCE_STATUS[source.status];
+              return (
+                <Card key={source.id} className="p-4" data-testid={`source-${source.id}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-body font-semibold text-ink">{source.label}</h3>
+                    <Chip tone={status.tone}>{status.label}</Chip>
+                    <span className="ml-auto text-small text-faint">{source.mode.replace(/_/g, " ")}</span>
+                  </div>
+                  <p className="mt-1.5 text-small text-muted">{source.detail}</p>
+                  <p className="mt-1.5 text-small text-faint">
+                    Última lectura: {fmtMoment(source.last_checked_at)}
+                    {source.last_snapshot_at ? ` · Captura: ${fmtMoment(source.last_snapshot_at)}` : ""}
+                  </p>
+                  {Object.keys(source.counts ?? {}).length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-small text-ink-2">
+                      {Object.entries(source.counts).map(([k, v]) => (
+                        <span key={k} className="tabular-nums">
+                          <span className="font-semibold">{String(v)}</span>{" "}
+                          <span className="text-muted">{k.replace(/_/g, " ")}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <StageChips title="Etapas de tareas" stages={source.stages?.tasks} />
+                  <StageChips title="Etapas de proyectos" stages={source.stages?.projects} />
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       <SectionHead label="Cola de reuniones" />
       <MeetingProcessingView />
