@@ -194,7 +194,7 @@ export function CreateTaskDialog({
         >
           <div className="flex shrink-0 items-start gap-3 border-b border-line px-4 py-3 sm:px-5">
             <div className="min-w-0 flex-1">
-              <p className="text-label font-bold uppercase text-faint">Nueva tarea</p>
+              <p className="text-label font-bold text-faint">Nueva tarea</p>
               <Dialog.Title className="mt-1 text-title font-semibold leading-snug text-ink">
                 Crear tarea en el tablero
               </Dialog.Title>

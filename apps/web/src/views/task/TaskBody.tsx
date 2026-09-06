@@ -23,14 +23,14 @@ function ProjectContextSection({ projectId, sources, documents, onNavigate }: {
   return (
     <section className="mt-5" aria-labelledby="task-context-title">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="task-context-title" className="text-small font-bold uppercase text-muted">Fuentes y documentos</h3>
+        <h3 id="task-context-title" className="text-small font-bold text-muted">Fuentes y documentos</h3>
         {/* El contexto es el del proyecto de la tarjeta abierta, nunca el proyecto activo guardado. */}
         <Link to={paths.proyecto(projectId, "contexto")} onClick={onNavigate} className="text-label font-semibold text-link underline underline-offset-2">abrir contexto</Link>
       </div>
       {sources.length > 0 || documents.length > 0 ? (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           <div>
-            <p className="text-label font-semibold uppercase text-faint">Fuentes vinculadas ({sources.length})</p>
+            <p className="text-label font-semibold text-faint">Fuentes vinculadas ({sources.length})</p>
             <ul className="mt-1 space-y-1">
               {sources.slice(0, 3).map((source) => (
                 <li key={source.id} className="truncate text-small text-muted" title={source.externalRef.title}>
@@ -41,7 +41,7 @@ function ProjectContextSection({ projectId, sources, documents, onNavigate }: {
             </ul>
           </div>
           <div>
-            <p className="text-label font-semibold uppercase text-faint">Documentos del proyecto ({documents.length})</p>
+            <p className="text-label font-semibold text-faint">Documentos del proyecto ({documents.length})</p>
             <ul className="mt-1 space-y-1">
               {documents.slice(0, 3).map((document) => (
                 <li key={document.id} className="truncate text-small text-muted" title={document.title}>
@@ -148,7 +148,7 @@ export function TaskBody() {
       <ProjectContextSection projectId={task.projectId} sources={sources} documents={documents} onNavigate={closeTask} />
 
       <section className="mt-5" aria-labelledby="task-artifacts-title">
-        <h3 id="task-artifacts-title" className="text-small font-bold uppercase text-muted">Artefactos ({detail.artifacts.length})</h3>
+        <h3 id="task-artifacts-title" className="text-small font-bold text-muted">Artefactos ({detail.artifacts.length})</h3>
         <div className="mt-1 space-y-2">{detail.artifacts.length === 0 ? <p className="text-small text-faint">Sin artefactos. Nada llega a REVIEW/DONE sin evidencia.</p> : detail.artifacts.map((artifact) => <ArtifactBlock key={artifact.id} artifact={artifact} />)}</div>
         <ArtifactAttacher
           saving={taskSaving}
@@ -158,12 +158,12 @@ export function TaskBody() {
       </section>
 
       <section className="mt-5" aria-labelledby="task-timeline-title">
-        <h3 id="task-timeline-title" className="text-small font-bold uppercase text-muted">Timeline</h3>
+        <h3 id="task-timeline-title" className="text-small font-bold text-muted">Timeline</h3>
         <ol className="mt-2 space-y-2">{timeline.map((event) => <li key={event.id} className="flex items-start gap-2 text-small"><span className="w-24 shrink-0 pt-0.5 text-label text-faint">{fmtDate(event.createdAt)}</span><span className="min-w-0 flex-1"><span className="font-medium">{event.kind}</span>{event.fromStatus || event.toStatus ? <span className="text-muted"> {event.fromStatus ?? "·"} → {event.toStatus ?? "·"}</span> : null}<span className="text-faint"> · {actorLabel(event.actor)}</span>{event.runId ? <><span className="text-faint"> · </span><Link to={paths.run(event.runId)} onClick={closeTask} className="text-link underline">run</Link></> : null}</span></li>)}{timeline.length === 0 ? <li className="text-small text-faint">(sin eventos)</li> : null}</ol>
       </section>
 
       <section className="mt-5" aria-labelledby="task-comments-title">
-        <h3 id="task-comments-title" className="text-small font-bold uppercase text-muted">Comentarios ({comments.length})</h3>
+        <h3 id="task-comments-title" className="text-small font-bold text-muted">Comentarios ({comments.length})</h3>
         <div className="mt-2 space-y-2">{comments.map((event) => <div key={event.id} className="rounded-tight bg-surface-2 p-2 text-small"><p className="text-label text-faint">{actorLabel(event.actor)} · {fmtDate(event.createdAt)}</p><p className="mt-0.5 break-words">{String((event.payload as { body?: string })?.body ?? "")}</p></div>)}</div>
         <div className="mt-2 flex gap-2"><label htmlFor="task-comment" className="sr-only">Comentario</label><input id="task-comment" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Comentar…" className="min-h-10 min-w-0 flex-1 rounded-tight border border-line px-2 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link" /><button type="button" disabled={!comment.trim()} onClick={() => { void commentOnTask(task.id, comment.trim()); setComment(""); }} className="min-h-10 rounded-tight bg-ink px-3 py-2 text-small font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-40">Enviar</button></div>
       </section>

@@ -33,7 +33,7 @@ function StageChips({ title, stages }: { title: string; stages: string[] | undef
   if (!stages || stages.length === 0) return null;
   return (
     <div className="mt-2">
-      <p className="text-label uppercase text-muted">{title}</p>
+      <p className="text-label text-muted">{title}</p>
       <div className="mt-1 flex flex-wrap gap-1.5">
         {stages.map((stage) => (
           <Chip key={stage} tone="quiet">

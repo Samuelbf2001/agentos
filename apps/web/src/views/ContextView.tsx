@@ -116,7 +116,7 @@ function SourcePickerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-soft border border-line bg-surface p-4 shadow-float">
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-soft bg-surface p-4 shadow-float">
         <div className="flex items-center justify-between">
           <h3 className="text-body font-bold">Asociar fuente de 2brain</h3>
           <button onClick={onClose} className="rounded px-2 py-1 text-small text-muted hover:bg-line-soft">
@@ -223,9 +223,9 @@ function SourcesSection({ projectId, onIngested }: { projectId: string; onIngest
   }
 
   return (
-    <div className="mb-3 rounded-soft border border-line bg-surface p-3">
+    <div className="mb-3 rounded-soft bg-surface shadow-rest p-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-label font-bold uppercase text-muted">
+        <h3 className="text-label font-bold text-muted">
           Fuentes del proyecto (2brain)
         </h3>
         <button
@@ -246,7 +246,7 @@ function SourcesSection({ projectId, onIngested }: { projectId: string; onIngest
       <ul className="mt-2 divide-y divide-line-soft">
         {(sources ?? []).map((s) => (
           <li key={s.id} className="flex items-center gap-2 py-1.5">
-            <span className="shrink-0 rounded bg-line px-1 py-0.5 text-label font-semibold">
+            <span className="shrink-0 rounded-full bg-line px-1 py-0.5 text-label font-semibold">
               {SOURCE_KIND_LABELS[s.kind]}
             </span>
             <div className="min-w-0 flex-1">
@@ -260,7 +260,7 @@ function SourcesSection({ projectId, onIngested }: { projectId: string; onIngest
               ) : null}
             </div>
             <span
-              className={`shrink-0 rounded px-1.5 py-0.5 text-label font-semibold ${
+              className={`shrink-0 rounded-full px-1.5 py-0.5 text-label font-semibold ${
                 SOURCE_STATUS_STYLES[s.status] ?? "bg-line text-ink-2"
               }`}
             >
@@ -366,7 +366,7 @@ function DocsTab({ projectId }: { projectId: string }) {
                   selected?.id === d.id ? "bg-line font-medium" : "hover:bg-line-soft"
                 }`}
               >
-                <span className="mr-1 rounded bg-line px-1 py-0.5 text-label font-semibold">
+                <span className="mr-1 rounded-full bg-line px-1 py-0.5 text-label font-semibold">
                   {KIND_LABELS[d.kind] ?? d.kind}
                 </span>
                 {d.title}
@@ -377,15 +377,15 @@ function DocsTab({ projectId }: { projectId: string }) {
       </div>
       <div className="min-w-0 flex-1">
         {selected ? (
-          <div className="rounded-soft border border-line bg-surface p-4">
-            <p className="text-label uppercase text-faint">
+          <div className="rounded-soft bg-surface shadow-rest p-4">
+            <p className="text-label text-faint">
               {KIND_LABELS[selected.kind] ?? selected.kind} · actualizado {fmtDate(selected.updatedAt)}
             </p>
             <h2 className="text-body font-bold">{selected.title}</h2>
             {selected.tags && selected.tags.length > 0 ? (
               <p className="mt-1 flex flex-wrap gap-1">
                 {selected.tags.map((t) => (
-                  <span key={t} className="rounded bg-link-bg px-1.5 py-0.5 text-label text-link">
+                  <span key={t} className="rounded-full bg-link-bg px-1.5 py-0.5 text-label text-link">
                     #{t}
                   </span>
                 ))}
@@ -395,7 +395,7 @@ function DocsTab({ projectId }: { projectId: string }) {
               <Markdown>{selected.bodyMd}</Markdown>
             </div>
             <div className="mt-4 border-t border-line-soft pt-2">
-              <p className="text-label font-bold uppercase text-faint">
+              <p className="text-label font-bold text-faint">
                 Fuentes (provenance)
               </p>
               {selected.sourceRefs && selected.sourceRefs.length > 0 ? (
@@ -447,9 +447,9 @@ function ProcessesTab() {
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-soft border border-line bg-surface">
+      <div className="overflow-x-auto rounded-soft bg-surface shadow-rest">
         <table className="w-full text-left text-small">
-          <thead className="bg-surface-2 text-label uppercase text-faint">
+          <thead className="bg-surface-2 text-label text-faint">
             <tr>
               <th className="px-3 py-2">Nombre</th>
               <th className="px-3 py-2">Dueño</th>
@@ -471,7 +471,7 @@ function ProcessesTab() {
                 <td className="px-3 py-2">{p.variant === "as_is" ? "as-is" : "to-be"}</td>
                 <td className="px-3 py-2">
                   <span
-                    className={`rounded px-1.5 py-0.5 text-label font-semibold ${
+                    className={`rounded-full px-1.5 py-0.5 text-label font-semibold ${
                       p.status === "validated"
                         ? "bg-done-bg text-done"
                         : "bg-work-bg text-work"
@@ -488,7 +488,7 @@ function ProcessesTab() {
         </table>
       </div>
       {selected ? (
-        <div className="rounded-soft border border-line bg-surface p-4">
+        <div className="rounded-soft bg-surface shadow-rest p-4">
           <h3 className="text-body font-bold">
             {selected.name} <span className="text-small font-normal text-faint">({selected.variant})</span>
           </h3>
@@ -511,7 +511,7 @@ function ProcessesTab() {
           )}
           {selected.painPoints && selected.painPoints.length > 0 ? (
             <div className="mt-2">
-              <p className="text-label font-bold uppercase text-faint">Puntos de dolor</p>
+              <p className="text-label font-bold text-faint">Puntos de dolor</p>
               <ul className="ml-4 list-disc text-small text-broken">
                 {selected.painPoints.map((p, i) => (
                   <li key={i}>{p}</li>

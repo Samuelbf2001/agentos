@@ -62,7 +62,7 @@ export default function BoardCopilotPanel({
       id="board-copilot"
       data-testid="board-copilot"
       aria-label="Copiloto del tablero"
-      className="order-first flex h-[55vh] w-full shrink-0 flex-col overflow-hidden rounded-panel border border-line bg-surface shadow-rest lg:sticky lg:top-3 lg:order-none lg:h-[calc(100vh-6rem)] lg:w-[24rem]"
+      className="order-first flex h-[55vh] w-full shrink-0 flex-col overflow-hidden rounded-panel bg-surface shadow-rest lg:sticky lg:top-3 lg:order-none lg:h-[calc(100vh-6rem)] lg:w-[24rem]"
     >
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">
         <div className="min-w-0 flex-1">

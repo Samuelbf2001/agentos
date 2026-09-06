@@ -133,7 +133,7 @@ export function TaskDescriptionEditor({
       }}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="task-description-title" className="text-small font-bold uppercase text-muted">Descripción</h3>
+        <h3 id="task-description-title" className="text-small font-bold text-muted">Descripción</h3>
         <div className="flex flex-wrap items-center gap-2" aria-label="Insertar contenido en descripción">
           <button type="button" onClick={() => openInsert("link")} className="min-h-9 rounded-soft border border-line bg-surface px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link">↗ Enlace</button>
           <button type="button" onClick={() => openInsert("image")} className="min-h-9 rounded-soft border border-line bg-surface px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link">▧ Imagen</button>
@@ -174,7 +174,7 @@ export function TaskDescriptionEditor({
       />
       {draft.trim() ? (
         <div className="mt-2 rounded-panel border border-line-soft bg-surface-2 p-3" aria-live="polite">
-          <p className="text-label font-bold uppercase text-faint">Vista previa</p>
+          <p className="text-label font-bold text-faint">Vista previa</p>
           <div className="mt-1 text-body"><Markdown>{draft}</Markdown></div>
         </div>
       ) : null}
@@ -217,7 +217,7 @@ export function DefinitionOfDoneEditor({
   return (
     <section className="mt-5" aria-labelledby="task-dod-title">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="task-dod-title" className="text-small font-bold uppercase text-muted">
+        <h3 id="task-dod-title" className="text-small font-bold text-muted">
           Definición de terminado
         </h3>
         {saving && draft.trim() !== value.trim() ? <span className="text-label text-faint">Guardando…</span> : null}
@@ -255,7 +255,7 @@ export function ArtifactBlock({ artifact }: { artifact: Artifact }) {
         onClick={() => setOpen((value) => !value)}
         className="flex min-h-10 w-full items-center gap-2 bg-surface-2 px-3 py-2 text-left text-small focus:outline-none focus:ring-2 focus:ring-link focus:ring-inset"
       >
-        <span className="rounded bg-line px-1 py-0.5 font-mono text-label">{artifact.kind}</span>
+        <span className="rounded-full bg-line px-1 py-0.5 font-mono text-label">{artifact.kind}</span>
         <span className="min-w-0 flex-1 truncate font-medium">{artifact.title}</span>
         <span className="text-faint" aria-hidden="true">{open ? "▾" : "▸"}</span>
       </button>

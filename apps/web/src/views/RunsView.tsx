@@ -195,13 +195,13 @@ export default function RunsView({ projectId }: { projectId?: string } = {}) {
       ) : null}
 
       {filtered && filtered.length > 0 ? (
-        <div className="overflow-x-auto rounded-panel border border-line-soft bg-surface shadow-rest">
+        <div className="overflow-x-auto rounded-panel bg-surface shadow-rest">
           <table className="w-full min-w-[58rem] border-collapse text-left">
             <thead>
               <tr>
                 {["Ejecución", "Tarea", "Proyecto", "Agente", "Estado", "Tokens", "Coste", "Cuándo"].map(
                   (h) => (
-                    <th key={h} scope="col" className="border-b border-line px-3 py-2.5 text-label uppercase text-muted">
+                    <th key={h} scope="col" className="border-b border-line px-3 py-2.5 text-label text-muted">
                       {h}
                     </th>
                   ),

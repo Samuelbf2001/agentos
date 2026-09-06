@@ -26,7 +26,7 @@ export function SearchOverlay({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/25 backdrop-blur-[1px]" />
         <Dialog.Content
-          className="enter-rise fixed left-1/2 top-20 z-50 w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 rounded-panel border border-line bg-surface p-3 shadow-float focus:outline-none"
+          className="enter-rise fixed left-1/2 top-20 z-50 w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 rounded-panel bg-surface p-3 shadow-float focus:outline-none"
           aria-describedby={undefined}
         >
           <Dialog.Title className="sr-only">Buscar tareas</Dialog.Title>

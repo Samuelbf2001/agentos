@@ -138,7 +138,7 @@ function StatusSelect({
       value={task.status}
       onClick={(event) => event.stopPropagation()}
       onChange={(event) => void move(event.target.value as TaskStatus)}
-      className={`min-h-[22px] appearance-none rounded-[6px] border px-1.5 py-0.5 text-label font-semibold uppercase focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50 ${toneClass}`}
+      className={`min-h-[22px] appearance-none rounded-[6px] border px-1.5 py-0.5 text-label font-semibold focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50 ${toneClass}`}
     >
       {options.map((status) => (
         <option key={status} value={status}>
@@ -329,7 +329,7 @@ function TaskRow({
           <DuePill task={task} />
         </span>
       </td>
-      <td className={`${cell} whitespace-nowrap text-label uppercase text-muted`}>
+      <td className={`${cell} whitespace-nowrap text-label text-muted`}>
         {task.priority === "urgent"
           ? "Urgente"
           : task.priority === "high"
@@ -776,7 +776,7 @@ export default function TareasView() {
           event.preventDefault();
           void crearRapido();
         }}
-        className="mt-3 flex flex-wrap items-center gap-2 rounded-soft border border-line-soft bg-surface px-2.5 py-2 shadow-rest"
+        className="mt-3 flex flex-wrap items-center gap-2 rounded-soft bg-surface px-2.5 py-2 shadow-rest"
       >
         <span aria-hidden="true" className="text-title leading-none text-faint">
           +
@@ -861,7 +861,7 @@ export default function TareasView() {
               return (
                 <section key={grupo.key} data-testid={`tareas-grupo-${grupo.key}`}>
                   {agrupacion !== "ninguna" ? (
-                    <h2 className="mb-1.5 flex items-center gap-2 text-label uppercase text-muted">
+                    <h2 className="mb-1.5 flex items-center gap-2 text-label text-muted">
                       {agrupacion === "estado" ? (
                         <StatusPill status={grupo.key as TaskStatus} />
                       ) : (
@@ -872,7 +872,7 @@ export default function TareasView() {
                       </span>
                     </h2>
                   ) : null}
-                  <div className="overflow-x-auto rounded-panel border border-line-soft bg-surface shadow-rest">
+                  <div className="overflow-x-auto rounded-panel bg-surface shadow-rest">
                     <table className="w-full min-w-[58rem] border-collapse text-left">
                       <thead>
                         <tr>
@@ -887,7 +887,7 @@ export default function TareasView() {
                                     : "descending"
                                   : "none"
                               }
-                              className={`border-b border-line px-2.5 py-1.5 text-label uppercase text-muted ${
+                              className={`border-b border-line px-2.5 py-1.5 text-label text-muted ${
                                 columna === "titulo" ? "w-full" : "whitespace-nowrap"
                               }`}
                             >
@@ -895,7 +895,7 @@ export default function TareasView() {
                                 type="button"
                                 data-testid={`tareas-orden-${columna}`}
                                 onClick={() => ordenarPor(columna)}
-                                className="press inline-flex items-center gap-1 uppercase text-muted hover:text-ink-2"
+                                className="press inline-flex items-center gap-1 text-muted hover:text-ink-2"
                               >
                                 {COLUMNA_LABELS[columna]}
                                 {orden.columna === columna ? (

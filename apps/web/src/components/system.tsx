@@ -14,12 +14,12 @@ import { STAGES, type Stage } from "../lib/types";
 export type Tone = "work" | "decide" | "broken" | "done" | "quiet" | "link";
 
 const CHIP_TONES: Record<Tone, string> = {
-  work: "bg-work-bg text-work border-work-line",
-  decide: "bg-decide-bg text-decide border-decide-line",
-  broken: "bg-broken-bg text-broken border-broken-line",
-  done: "bg-done-bg text-done border-done-line",
-  quiet: "bg-transparent text-muted border-line",
-  link: "bg-link-bg text-link border-transparent",
+  work: "bg-work-bg text-work",
+  decide: "bg-decide-bg text-decide",
+  broken: "bg-broken-bg text-broken",
+  done: "bg-done-bg text-done",
+  quiet: "bg-canvas-deep text-ink-2",
+  link: "bg-link-bg text-link",
 };
 
 export function Chip({
@@ -37,7 +37,7 @@ export function Chip({
     <span
       title={title}
       data-tone={tone}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-[6px] border px-2 py-0.5 text-label font-semibold uppercase ${CHIP_TONES[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-label font-medium ${CHIP_TONES[tone]} ${className}`}
     >
       {children}
     </span>
@@ -56,10 +56,7 @@ export function Card({
   "data-testid"?: string;
 }) {
   return (
-    <As
-      data-testid={testId}
-      className={`rounded-panel border border-line-soft bg-surface shadow-rest ${className}`}
-    >
+    <As data-testid={testId} className={`rounded-panel bg-surface shadow-rest ${className}`}>
       {children}
     </As>
   );
@@ -67,12 +64,10 @@ export function Card({
 
 export function SectionHead({ label, count, hint }: { label: string; count?: number; hint?: string }) {
   return (
-    <div className="mb-3 mt-7 flex items-baseline gap-2.5 first:mt-0">
-      <h2 className="text-label uppercase text-muted">{label}</h2>
+    <div className="mb-3 mt-8 flex items-baseline gap-2.5 first:mt-0">
+      <h2 className="text-small font-semibold text-ink">{label}</h2>
       {count !== undefined ? (
-        <span className="rounded-full bg-canvas-deep px-1.5 py-px text-label font-semibold tabular-nums text-muted">
-          {count}
-        </span>
+        <span className="rounded-full bg-canvas-deep px-2 py-px text-label tabular-nums text-muted">{count}</span>
       ) : null}
       {hint ? <span className="text-small text-faint">{hint}</span> : null}
     </div>
@@ -82,9 +77,9 @@ export function SectionHead({ label, count, hint }: { label: string; count?: num
 export function Stat({ value, label, tone }: { value: ReactNode; label: string; tone?: Tone }) {
   const color = tone === "broken" ? "text-broken" : tone === "work" ? "text-work" : "text-ink";
   return (
-    <Card className="px-4 py-3">
+    <Card className="px-5 py-4">
       <p className={`text-display tabular-nums ${color}`}>{value}</p>
-      <p className="mt-0.5 text-small text-muted">{label}</p>
+      <p className="mt-1 text-small text-muted">{label}</p>
     </Card>
   );
 }
@@ -110,10 +105,10 @@ export function ActionButton({
   "data-testid"?: string;
 }) {
   const variants: Record<string, string> = {
-    quiet: "border-line bg-surface text-ink hover:bg-surface-2 shadow-rest",
-    primary: "border-transparent bg-ink text-canvas hover:opacity-90 shadow-rest",
-    gate: "border-work-line bg-work-bg text-work hover:bg-work-bg shadow-rest",
-    danger: "border-broken-line bg-surface text-broken hover:bg-broken-bg shadow-rest",
+    quiet: "bg-canvas-deep text-ink hover:bg-line",
+    primary: "bg-link text-surface hover:brightness-95",
+    gate: "bg-work text-surface",
+    danger: "bg-broken-bg text-broken hover:bg-broken-line",
   };
   return (
     <button
@@ -122,7 +117,7 @@ export function ActionButton({
       disabled={disabled}
       data-testid={testId}
       onClick={onClick}
-      className={`press inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[9px] border px-3.5 py-1.5 text-small font-semibold disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none ${variants[variant]} ${className}`}
+      className={`press inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-small font-semibold disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none ${variants[variant]} ${className}`}
     >
       {children}
     </button>
@@ -183,13 +178,13 @@ export function PhaseChip({ stage, className = "" }: { stage: Stage; className?:
         {STAGES.map((_, i) => (
           <i
             key={i}
-            className={`block h-1 w-4 rounded-[2px] ${
+            className={`block h-1.5 w-4 rounded-full ${
               i < index ? "bg-ink-2" : i === index ? "bg-work" : "bg-line"
             }`}
           />
         ))}
       </span>
-      <span className="text-small font-semibold text-ink-2">{STAGE_LABELS[stage]}</span>
+      <span className="text-small font-medium text-ink-2">{STAGE_LABELS[stage]}</span>
     </span>
   );
 }
@@ -244,26 +239,22 @@ export function GateLock({
 }) {
   const tone = state === "passed" ? "text-done" : state === "ready" ? "text-work" : "text-muted";
   const frame =
-    state === "passed"
-      ? "border-solid border-done-line bg-done-bg"
-      : state === "ready"
-        ? "border-solid border-work-line bg-work-bg shadow-raise"
-        : "border-dashed border-line bg-surface";
+    state === "passed" ? "bg-done-bg" : state === "ready" ? "bg-work-bg shadow-raise" : "bg-canvas-deep/60";
   return (
     <div
       data-testid={`gate-${code}`}
       data-gate-state={state}
-      className={`flex w-full flex-col items-center gap-2 rounded-soft border px-3 py-3 text-center ${frame}`}
+      className={`flex w-full flex-col items-center gap-2 rounded-soft p-4 text-center ${frame}`}
     >
       <LockIcon state={state} />
-      <span className={`text-label uppercase ${tone}`}>{code}</span>
+      <span className={`text-label ${tone}`}>{code}</span>
       {state === "ready" && onApprove ? (
         <button
           type="button"
           disabled={busy}
           onClick={onApprove}
           data-testid={`gate-approve-${code}`}
-          className="press rounded-[7px] bg-work px-3 py-1.5 text-label font-semibold uppercase text-surface disabled:opacity-50"
+          className="press rounded-full bg-work px-3 py-1.5 text-label font-semibold text-surface disabled:opacity-50"
         >
           {busy ? "Aprobando…" : approveLabel}
         </button>
@@ -287,7 +278,7 @@ export function GateLock({
             ) : (
               <li
                 key={item.key}
-                className="flex items-center gap-2 rounded-tight border border-line-soft bg-surface px-2.5 py-1.5 text-small text-ink-2"
+                className="flex items-center gap-2 rounded-tight bg-surface shadow-rest px-2.5 py-1.5 text-small text-ink-2"
               >
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-broken" aria-hidden="true" />
                 <span className="min-w-0 flex-1">{item.text}</span>

@@ -84,14 +84,14 @@ function QueueCard({ label, value, tone }: { label: string; value: number | null
   return (
     <div className={`rounded-panel border p-3 ${tones[tone]}`}>
       <p className="text-display font-bold tabular-nums">{value ?? "—"}</p>
-      <p className="mt-0.5 text-label font-bold uppercase opacity-75">{label}</p>
+      <p className="mt-0.5 text-label font-bold opacity-75">{label}</p>
     </div>
   );
 }
 
 function MeetingRow({ item }: { item: MeetingProcessingItem }) {
   return (
-    <article className="rounded-panel border border-line bg-surface p-3 shadow-rest sm:p-4">
+    <article className="rounded-panel bg-surface p-3 shadow-rest sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h2 className="break-words text-body font-bold text-ink">{item.title}</h2>
@@ -140,10 +140,10 @@ export default function MeetingProcessingView() {
 
   return (
     <div className="space-y-5">
-      <header className="overflow-hidden rounded-panel border border-line-soft bg-surface px-4 py-5 shadow-rest sm:px-6">
+      <header className="overflow-hidden rounded-panel bg-surface px-4 py-5 shadow-rest sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="max-w-2xl">
-            <p className="text-label uppercase text-muted">2brain / WhatsAppHub · lectura operativa</p>
+            <p className="text-label text-muted">2brain / WhatsAppHub · lectura operativa</p>
             <p className="mt-2 text-body leading-relaxed text-muted">La cola real de captura, extracción, revisión humana y evidencia. Esta vista no ejecuta procesamiento ni crea tareas: protege el historial y la compuerta de confirmación del 2brain original.</p>
           </div>
           <button onClick={() => void load()} disabled={loading} className="press min-h-9 rounded-tight border border-line bg-surface px-3.5 py-1.5 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:opacity-60">
@@ -158,10 +158,10 @@ export default function MeetingProcessingView() {
         <QueueCard label="Completas" value={data?.queue.complete ?? null} tone="emerald" />
       </section>
 
-      <section className="rounded-panel border border-line bg-surface p-4 shadow-rest sm:p-5">
+      <section className="rounded-panel bg-surface p-4 shadow-rest sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-label font-bold uppercase text-faint">Puente hacia AgentOS</p>
+            <p className="text-label font-bold text-faint">Puente hacia AgentOS</p>
             <h2 className="mt-1 text-title font-bold text-ink">Historial intacto, contexto explícito</h2>
             <p className="mt-1 text-small text-muted">{data ? `${data.agentos_context.linked} reuniones enlazadas · ${data.agentos_context.ingested} ingeridas como evidencia` : "Se cargará cuando WhatsAppHub responda."}</p>
           </div>
@@ -173,14 +173,14 @@ export default function MeetingProcessingView() {
       <section aria-labelledby="meetings-list-heading" className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-label font-bold uppercase text-faint">Cola de origen</p>
+            <p className="text-label font-bold text-faint">Cola de origen</p>
             <h2 id="meetings-list-heading" className="mt-1 text-title font-bold text-ink">Reuniones observadas {data?.total !== null && data?.total !== undefined ? `· ${data.total}` : ""}</h2>
           </div>
           <div className="flex flex-wrap gap-1" role="group" aria-label="Filtrar reuniones por estado">
             {FILTERS.map((option) => <button key={option.id} onClick={() => setFilter(option.id)} className={`min-h-9 rounded-soft px-3 text-small font-bold ${filter === option.id ? "bg-ink text-surface" : "border border-line bg-surface text-muted hover:bg-surface-2"}`}>{option.label}</button>)}
           </div>
         </div>
-        {loading && !data ? <div className="rounded-panel border border-line bg-surface p-5"><Spinner label="Leyendo la cola de WhatsAppHub…" /></div> : null}
+        {loading && !data ? <div className="rounded-panel bg-surface shadow-rest p-5"><Spinner label="Leyendo la cola de WhatsAppHub…" /></div> : null}
         {error ? <ErrorBox message={error} onRetry={() => void load()} /> : null}
         {!loading && data?.meetings.length === 0 ? <EmptyState title="No hay reuniones para este filtro" hint="La lectura es directa del audit de 2brain; cambia el filtro o actualiza." /> : null}
         <div className="space-y-3">{data?.meetings.map((item) => <MeetingRow key={item.id} item={item} />)}</div>

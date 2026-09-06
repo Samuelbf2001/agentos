@@ -34,8 +34,8 @@ function ConfigTab() {
           : "Agentes activos. Se pausan desde el botón de la cabecera."}
       </p>
 
-      <div className="rounded-soft border border-line bg-surface p-4">
-        <p className="text-small font-bold uppercase text-faint">
+      <div className="rounded-soft bg-surface shadow-rest p-4">
+        <p className="text-small font-bold text-faint">
           app_config (semáforos y presupuestos)
         </p>
         {error ? <ErrorBox message={error} onRetry={() => void load()} /> : null}
@@ -43,7 +43,7 @@ function ConfigTab() {
         {rows && rows.length === 0 ? <p className="mt-2 text-small text-faint">(vacío)</p> : null}
         {rows && rows.length > 0 ? (
           <table className="mt-2 w-full text-left text-small">
-            <thead className="text-label uppercase text-faint">
+            <thead className="text-label text-faint">
               <tr>
                 <th className="py-1 pr-4">Clave</th>
                 <th className="py-1 pr-4">Valor</th>

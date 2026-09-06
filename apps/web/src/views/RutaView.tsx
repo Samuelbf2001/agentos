@@ -60,7 +60,7 @@ function LaunchReceiptPanel({ launch }: { launch: LaunchReceipt }) {
         </span>
       </div>
       <div className="mt-3 border-t border-line-soft pt-3">
-        <p className="mb-1.5 text-label uppercase text-muted">Con qué se disparó</p>
+        <p className="mb-1.5 text-label text-muted">Con qué se disparó</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-small">
           {Object.entries(launch.inputs).map(([k, v]) => (
             <div key={k} className="contents">
@@ -250,7 +250,7 @@ export default function RutaView({ project }: { project: Project }) {
                 data-testid={`cycle-column-${column.stage}`}
               >
                 <div className="flex items-center gap-2">
-                  <h3 className={`text-label uppercase ${isCurrent ? "text-work" : "text-muted"}`}>
+                  <h3 className={`text-label ${isCurrent ? "text-work" : "text-muted"}`}>
                     {STAGE_LABELS[column.stage]}
                   </h3>
                   <span className="ml-auto">
@@ -273,7 +273,7 @@ export default function RutaView({ project }: { project: Project }) {
                   <>
                     {/* Esto sale de tareas por activityType; el cierre oficial (documentos,
                         procesos, artefactos) es el panel de abajo, no esta columna. */}
-                    <p className="mt-3 text-label uppercase text-faint">Trabajo de la fase</p>
+                    <p className="mt-3 text-label text-faint">Trabajo de la fase</p>
                     <ul className="mt-1.5 grid gap-1.5">
                       {column.milestones.map((m) => (
                         <MilestoneRow
@@ -379,7 +379,7 @@ export default function RutaView({ project }: { project: Project }) {
                       ) : (
                         <div
                           data-testid={`missing-${item.kind}`}
-                          className="flex items-center gap-2.5 rounded-tight border border-line-soft bg-surface px-3 py-2 text-small"
+                          className="flex items-center gap-2.5 rounded-tight bg-surface shadow-rest px-3 py-2 text-small"
                         >
                           <span
                             aria-hidden="true"
@@ -404,7 +404,7 @@ export default function RutaView({ project }: { project: Project }) {
 
         <Card className="overflow-hidden">
           <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
-            <h3 className="text-label uppercase text-muted">Trabajando ahora</h3>
+            <h3 className="text-label text-muted">Trabajando ahora</h3>
           </div>
           {workers.length === 0 ? (
             <p className="px-4 py-4 text-small text-muted">

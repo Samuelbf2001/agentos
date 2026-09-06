@@ -60,7 +60,7 @@ function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
   const st = STATE_STYLE[data.state];
   return (
     <div
-      className={`w-52 rounded-panel border border-line bg-surface p-3 shadow-rest ring-2 ${st.ring}`}
+      className={`w-52 rounded-panel bg-surface p-3 shadow-rest ring-2 ${st.ring}`}
       data-testid={`swarm-node-${data.agent.slug}`}
     >
       <Handle type="target" position={Position.Left} className="!bg-line" />

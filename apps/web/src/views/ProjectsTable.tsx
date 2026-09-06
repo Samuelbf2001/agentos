@@ -23,14 +23,14 @@ export function ProjectsTable({ summaries }: { summaries: ProjectSummary[] }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-panel border border-line-soft bg-surface shadow-rest">
+    <div className="overflow-x-auto rounded-panel bg-surface shadow-rest">
       <table className="w-full min-w-[46rem] border-collapse text-left">
         <thead>
           <tr>
             {["Cliente", "Ciclo", "Siguiente hito", "Qué falta", "Vencidas", "Trabajando"].map((h) => (
               <th
                 key={h}
-                className="border-b border-line px-3.5 py-2.5 text-label uppercase text-muted"
+                className="border-b border-line px-3.5 py-2.5 text-label text-muted"
                 scope="col"
               >
                 {h}

@@ -152,7 +152,7 @@ function TaskCard({ task, people, agents }: { task: Task; people: Person[]; agen
           ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 30 }
           : undefined
       }
-      className={`group relative min-w-0 cursor-grab overflow-hidden rounded-soft border border-line bg-surface p-3 pl-4 shadow-rest transition-all hover:-translate-y-px hover:border-line hover:shadow-raise focus:outline-none focus:ring-2 focus:ring-link focus:ring-offset-1 ${
+      className={`group relative min-w-0 cursor-grab overflow-hidden rounded-soft bg-surface p-3 pl-4 shadow-rest transition-all hover:-translate-y-px hover:shadow-raise focus:outline-none focus:ring-2 focus:ring-link focus:ring-offset-1 ${
         isDragging ? "opacity-70 shadow-float" : ""
       }`}
       data-testid={`task-card-${task.id}`}
@@ -204,10 +204,10 @@ function TaskCard({ task, people, agents }: { task: Task; people: Person[]; agen
         </div>
       ) : null}
       <div className="mt-1 flex items-center gap-1 text-label text-faint">
-        {task.requiresApproval ? <span className="rounded bg-decide-bg px-1 py-0.5 text-decide">gate</span> : null}
-        {task.externalEffect ? <span className="rounded bg-work-bg px-1 py-0.5 text-work">efecto externo</span> : null}
+        {task.requiresApproval ? <span className="rounded-full bg-decide-bg px-1 py-0.5 text-decide">gate</span> : null}
+        {task.externalEffect ? <span className="rounded-full bg-work-bg px-1 py-0.5 text-work">efecto externo</span> : null}
         {task.blockedReason ? (
-          <span className="rounded bg-broken-bg px-1 py-0.5 text-broken">
+          <span className="rounded-full bg-broken-bg px-1 py-0.5 text-broken">
             {task.blockedReason === "approval" ? "esperando aprobación" : task.blockedReason}
           </span>
         ) : null}
@@ -255,7 +255,7 @@ function DesktopBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>;
       <div className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 px-2">
         <div />
         {TASK_STATUSES.map((status) => (
-          <p key={status} className="px-1 text-label uppercase text-muted">
+          <p key={status} className="px-1 text-label text-muted">
             {STATUS_LABELS[status]}
           </p>
         ))}
@@ -264,7 +264,7 @@ function DesktopBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>;
         {STAGES.map((stage) => (
           <section key={stage} className="grid grid-cols-[96px_repeat(7,minmax(120px,1fr))] gap-2 rounded-panel border border-line-soft bg-surface/70 p-2 shadow-rest">
             <div className="flex items-start pt-1">
-              <span className="rounded-tight border border-line bg-canvas-deep px-2 py-1 text-label uppercase text-ink-2">
+              <span className="rounded-tight border border-line bg-canvas-deep px-2 py-1 text-label text-ink-2">
                 {STAGE_LABEL[stage]}
               </span>
             </div>
@@ -289,9 +289,9 @@ function MobileBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>; 
   return (
     <div className="space-y-4">
       {STAGES.map((stage) => (
-        <section key={stage} className="overflow-hidden rounded-panel border border-line-soft bg-surface shadow-rest">
+        <section key={stage} className="overflow-hidden rounded-panel bg-surface shadow-rest">
           <div className="flex items-center justify-between border-b border-line-soft bg-canvas-deep px-3 py-2">
-            <span className="text-label uppercase text-ink-2">{STAGE_LABEL[stage]}</span>
+            <span className="text-label text-ink-2">{STAGE_LABEL[stage]}</span>
           </div>
           <div className="divide-y divide-line-soft">
             {TASK_STATUSES.map((status) => {
@@ -299,7 +299,7 @@ function MobileBoard({ byCell, people, agents }: { byCell: Map<string, Task[]>; 
               return (
                 <div key={status} className="p-2">
                   <div className="flex items-center justify-between px-1">
-                    <span className="text-label uppercase text-muted">{STATUS_LABELS[status]}</span>
+                    <span className="text-label text-muted">{STATUS_LABELS[status]}</span>
                     <span className="text-label tabular-nums text-faint">{tasks.length}</span>
                   </div>
                   <Cell stage={stage} status={status} tasks={tasks} people={people} agents={agents} compact />
@@ -403,7 +403,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
   return (
     <div className="min-h-full overflow-x-hidden bg-surface-2 p-3 sm:p-4 lg:overflow-auto">
       <div className="mx-auto flex max-w-[1680px] flex-col gap-3 lg:flex-row lg:items-start">
-        <div className="min-w-0 flex-1 rounded-panel border border-line bg-surface shadow-rest">
+        <div className="min-w-0 flex-1 rounded-panel bg-surface shadow-rest">
           <div className="border-b border-line px-3 py-3 sm:px-4 sm:py-4">
             {/* Sin cabecera duplicada: el nombre del cliente y la fase viven
                 arriba, en la barra del proyecto. Aquí sólo lo operativo. */}
@@ -476,7 +476,7 @@ export default function BoardView({ projectId }: { projectId: string }) {
               <fieldset className="mt-2">
                 <legend className="sr-only">Filtro por etiqueta</legend>
                 <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Filtro por etiqueta">
-                  <span className="text-label font-semibold uppercase text-faint">Etiquetas</span>
+                  <span className="text-label font-semibold text-faint">Etiquetas</span>
                   <button
                     type="button"
                     aria-pressed={boardLabelFilter === null}

@@ -48,9 +48,9 @@ export function AgentsSection() {
   }
 
   return (
-    <div className="overflow-x-auto rounded-soft border border-line bg-surface">
+    <div className="overflow-x-auto rounded-soft bg-surface shadow-rest">
       <table className="w-full text-left text-small">
-        <thead className="bg-surface-2 text-label uppercase text-faint">
+        <thead className="bg-surface-2 text-label text-faint">
           <tr>
             <th className="px-3 py-2">Agente</th>
             <th className="px-3 py-2">Capa</th>
@@ -108,7 +108,7 @@ export function AgentsSection() {
               <td className="px-3 py-2">{a.autonomy}</td>
               <td className="px-3 py-2">
                 <span
-                  className={`rounded px-1.5 py-0.5 text-label font-semibold ${
+                  className={`rounded-full px-1.5 py-0.5 text-label font-semibold ${
                     a.status === "active"
                       ? "bg-done-bg text-done"
                       : a.status === "paused"

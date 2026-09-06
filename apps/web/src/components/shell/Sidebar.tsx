@@ -96,7 +96,7 @@ function NavGroupBlock({
   return (
     <div className="mt-1 first:mt-0">
       {group.label ? (
-        <div className="mt-3 px-2 text-label uppercase text-faint">{group.label}</div>
+        <div className="mt-3 px-2 text-label text-faint">{group.label}</div>
       ) : null}
       <div className="flex flex-col gap-0.5">
         {group.items.map((item) => {

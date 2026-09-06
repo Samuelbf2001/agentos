@@ -34,7 +34,7 @@ export default function SystemTeamView() {
             ].map((group) => (
               <Card key={group.title} className="overflow-hidden">
                 <div className="border-b border-line-soft px-4 py-3">
-                  <h3 className="text-label uppercase text-muted">{group.title}</h3>
+                  <h3 className="text-label text-muted">{group.title}</h3>
                 </div>
                 {group.list.length === 0 ? (
                   <p className="px-4 py-4 text-small text-muted">Nadie por aquí todavía.</p>

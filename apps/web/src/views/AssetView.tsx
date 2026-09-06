@@ -128,7 +128,7 @@ function Methodologies() {
       <Card className="min-w-0 p-4">
         {selected ? (
           <>
-            <p className="text-label uppercase text-muted">
+            <p className="text-label text-muted">
               {selected.slug} · versión {selected.version} · sólo lectura
             </p>
             <div className="mt-2 text-small">

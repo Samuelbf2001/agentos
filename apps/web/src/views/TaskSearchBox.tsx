@@ -26,9 +26,9 @@ export function SearchHitRow({ hit, onOpen }: { hit: TaskSearchHit; onOpen: (id:
         </span>
         <span className="flex flex-wrap items-center gap-1.5 text-label text-muted">
           {hit.project_name ? <span className="truncate">{hit.project_name}</span> : null}
-          <span className="rounded bg-line-soft px-1 py-0.5">{STAGE_LABELS[hit.stage]}</span>
+          <span className="rounded-full bg-line-soft px-1 py-0.5">{STAGE_LABELS[hit.stage]}</span>
           {hit.source === "comment" ? (
-            <span className="rounded bg-decide-bg px-1 py-0.5 text-decide">en un comentario</span>
+            <span className="rounded-full bg-decide-bg px-1 py-0.5 text-decide">en un comentario</span>
           ) : null}
           {(hit.labels ?? []).map((label) => (
             <span key={label} className="rounded-full bg-link-bg px-1.5 py-0.5 text-link">
@@ -100,7 +100,7 @@ export function TaskSearchBox({
       />
       {showPanel ? (
         <div
-          className="absolute left-0 right-0 z-30 mt-1 max-h-80 overflow-y-auto rounded-panel border border-line bg-surface py-1 shadow-float"
+          className="absolute left-0 right-0 z-30 mt-1 max-h-80 overflow-y-auto rounded-panel bg-surface py-1 shadow-float"
           data-testid="task-search-results"
           role="listbox"
           aria-label="Resultados de búsqueda"

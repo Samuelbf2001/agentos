@@ -78,7 +78,7 @@ export default function ChatBody({
                   ? "bg-ink text-surface"
                   : m.meta?.error
                     ? "border border-broken-line bg-broken-bg"
-                    : "border border-line bg-surface"
+                    : "bg-surface shadow-rest"
               }`}
             >
               {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
@@ -106,7 +106,7 @@ export default function ChatBody({
         {/* Streaming en curso */}
         {streams.map(([id, s]) => (
           <div key={id} className="flex justify-start">
-            <div className={`${bubble} rounded-panel border border-line bg-surface px-3 py-2 text-body`}>
+            <div className={`${bubble} rounded-panel bg-surface shadow-rest px-3 py-2 text-body`}>
               <Markdown>{s.text || "…"}</Markdown>
               {!s.done ? (
                 <span className="mt-1 inline-block h-3 w-1.5 animate-pulse bg-faint align-middle" />
