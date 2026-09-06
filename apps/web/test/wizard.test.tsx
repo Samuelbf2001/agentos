@@ -307,6 +307,7 @@ describe("wizard Nuevo proyecto (CA-M2.1)", () => {
 
     await screen.findByLabelText(/Nombre de la empresa/);
     expect(screen.queryByTestId("module-card-consultoria")).toBeNull();
+    expect(await screen.findByText("Consultoría (Assessment 14 días)")).toBeTruthy();
   });
 
   it("con inputs incompletos lista los campos faltantes y deshabilita Continuar", async () => {

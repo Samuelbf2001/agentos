@@ -237,16 +237,23 @@ describe("smoke de vistas", () => {
     expect(screen.getByText(project.name)).toBeTruthy();
   });
 
-  it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro)", async () => {
+  it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro) y la Cola de reuniones", async () => {
     ui(<SystemHealthView />);
     expect(await screen.findByText("AgentOS")).toBeTruthy();
     expect(screen.getByText("Núcleo de trabajo operativo.")).toBeTruthy();
+    expect(screen.getByText("Cola de reuniones")).toBeTruthy();
   });
 
   it("Sistema › Equipo pinta personas y agentes", async () => {
     ui(<SystemTeamView />);
     expect(await screen.findByText("Ana García")).toBeTruthy();
     expect(screen.getByText("Sixteam")).toBeTruthy();
+  });
+
+  it("Sistema › Equipo pinta la tabla de agentes aunque /api/brain/overview falle", async () => {
+    mockFetch(baseRoutes.map((route) => (route.path === "/api/brain/overview" ? { ...route, status: 500 } : route)));
+    ui(<SystemTeamView />);
+    expect(await screen.findByText("Alex")).toBeTruthy();
   });
 
   it("Activo Sixteam pinta módulos de fase y metodologías", async () => {

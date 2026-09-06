@@ -31,6 +31,22 @@ import NewProjectWizard from "./views/NewProjectWizard";
 import SearchOverlay from "./views/SearchOverlay";
 import { TaskDrawer } from "./views/TaskDrawer";
 
+/**
+ * Redirección legacy que conserva la query string: un `?tarea=<id>` (deep
+ * link a una ficha) no puede perderse solo porque la ruta vieja cambió de
+ * sitio.
+ */
+function RedirectKeepSearch({ to }: { to: string }) {
+  const location = useLocation();
+  // `to` puede traer su propia query (p. ej. paths.misTareas() = "/tareas?responsable=yo"):
+  // se combina con la de la URL de origen en vez de descartar una de las dos.
+  const [pathname, toSearch = ""] = to.split("?");
+  const params = new URLSearchParams(location.search);
+  for (const [key, value] of new URLSearchParams(toSearch)) params.set(key, value);
+  const search = params.toString();
+  return <Navigate to={{ pathname, search: search ? `?${search}` : "" }} replace />;
+}
+
 interface NavEntry {
   entry: GlobalEntry;
   to: string;
@@ -273,35 +289,35 @@ function Shell() {
       {/* El side peek empuja el contenido en escritorio ancho (§3.1). */}
       <main className="min-h-0 flex-1 overflow-auto" style={{ paddingRight: "var(--task-peek-inset, 0px)" }}>
         <Routes>
-          <Route path="/" element={<Navigate to={paths.hoy()} replace />} />
+          <Route path="/" element={<RedirectKeepSearch to={paths.hoy()} />} />
           <Route path="/hoy" element={<HoyView />} />
           <Route path="/tareas" element={<TareasView />} />
-          <Route path="/mis-tareas" element={<Navigate to={paths.misTareas()} replace />} />
+          <Route path="/mis-tareas" element={<RedirectKeepSearch to={paths.misTareas()} />} />
           <Route path="/proyectos" element={<ProjectsView />} />
           <Route path="/proyectos/:projectId" element={<ProjectLayout />} />
           <Route path="/proyectos/:projectId/:tab" element={<ProjectLayout />} />
           <Route path="/proyectos/:projectId/:tab/:sub" element={<ProjectLayout />} />
           <Route path="/nuevo-proyecto" element={<NewProjectWizard />} />
-          <Route path="/sistema" element={<Navigate to={paths.sistema("ahora")} replace />} />
+          <Route path="/sistema" element={<RedirectKeepSearch to={paths.sistema("ahora")} />} />
           <Route path="/sistema/actividad/:runId" element={<RunDetailView />} />
-          <Route path="/sistema/salud" element={<Navigate to={paths.sistema("fuentes")} replace />} />
-          <Route path="/sistema/ajustes" element={<Navigate to={paths.sistema("configuracion")} replace />} />
+          <Route path="/sistema/salud" element={<RedirectKeepSearch to={paths.sistema("fuentes")} />} />
+          <Route path="/sistema/ajustes" element={<RedirectKeepSearch to={paths.sistema("configuracion")} />} />
           <Route path="/sistema/:tab" element={<SystemLayout />} />
           <Route path="/activo" element={<AssetView />} />
 
           {/* Rutas anteriores: se conservan como redirección, no como destino. */}
-          <Route path="/waiting" element={<Navigate to="/hoy" replace />} />
-          <Route path="/my-tasks" element={<Navigate to={paths.misTareas()} replace />} />
-          <Route path="/brain" element={<Navigate to={paths.sistema("fuentes")} replace />} />
-          <Route path="/swarm" element={<Navigate to={paths.sistema("ahora")} replace />} />
-          <Route path="/admin" element={<Navigate to={paths.sistema("configuracion")} replace />} />
-          <Route path="/runs" element={<Navigate to={paths.sistema("actividad")} replace />} />
+          <Route path="/waiting" element={<RedirectKeepSearch to="/hoy" />} />
+          <Route path="/my-tasks" element={<RedirectKeepSearch to={paths.misTareas()} />} />
+          <Route path="/brain" element={<RedirectKeepSearch to={paths.sistema("fuentes")} />} />
+          <Route path="/swarm" element={<RedirectKeepSearch to={paths.sistema("ahora")} />} />
+          <Route path="/admin" element={<RedirectKeepSearch to={paths.sistema("configuracion")} />} />
+          <Route path="/runs" element={<RedirectKeepSearch to={paths.sistema("actividad")} />} />
           <Route path="/runs/:runId" element={<LegacyRun />} />
-          <Route path="/board" element={<Navigate to={paths.proyectos()} replace />} />
-          <Route path="/chat" element={<Navigate to={paths.proyectos()} replace />} />
-          <Route path="/context" element={<Navigate to={paths.proyectos()} replace />} />
-          <Route path="/meetings" element={<Navigate to={paths.sistema("fuentes")} replace />} />
-          <Route path="*" element={<Navigate to="/hoy" replace />} />
+          <Route path="/board" element={<RedirectKeepSearch to={paths.proyectos()} />} />
+          <Route path="/chat" element={<RedirectKeepSearch to={paths.proyectos()} />} />
+          <Route path="/context" element={<RedirectKeepSearch to={paths.proyectos()} />} />
+          <Route path="/meetings" element={<RedirectKeepSearch to={paths.sistema("fuentes")} />} />
+          <Route path="*" element={<RedirectKeepSearch to="/hoy" />} />
         </Routes>
       </main>
 

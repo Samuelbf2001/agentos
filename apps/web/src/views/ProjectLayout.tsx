@@ -6,7 +6,7 @@
  * nombre del cliente y el chip de fase; debajo, las cinco pestañas.
  */
 import { useEffect } from "react";
-import { Link, NavLink, Navigate, useParams } from "react-router-dom";
+import { Link, NavLink, Navigate, useLocation, useParams } from "react-router-dom";
 import { useStore } from "../state/store";
 import { EmptyState, Spinner } from "../components/ui";
 import { Chip, PhaseChip } from "../components/system";
@@ -33,6 +33,7 @@ function GateChip({ state }: { state: "pending" | "approved" | "rejected" }) {
 
 export default function ProjectLayout() {
   const { projectId, tab, sub } = useParams<{ projectId: string; tab?: string; sub?: string }>();
+  const location = useLocation();
   const projects = useStore((s) => s.projects);
   const setActiveProject = useStore((s) => s.setActiveProject);
   const bootstrapped = useStore((s) => s.bootstrapped);
@@ -52,27 +53,27 @@ export default function ProjectLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  if (!projectId) return <Navigate to={paths.proyectos()} replace />;
-  if (!tab) return <Navigate to={paths.proyecto(projectId, "ruta")} replace />;
+  if (!projectId) return <Navigate to={{ pathname: paths.proyectos(), search: location.search }} replace />;
+  if (!tab) return <Navigate to={{ pathname: paths.proyecto(projectId, "ruta"), search: location.search }} replace />;
   if (!PROJECT_TABS.includes(tab as ProjectTab)) {
-    return <Navigate to={paths.proyecto(projectId, "ruta")} replace />;
+    return <Navigate to={{ pathname: paths.proyecto(projectId, "ruta"), search: location.search }} replace />;
   }
 
   const current = tab as ProjectTab;
 
   if (!tabs.includes(current)) {
     return tabs.length > 0 ? (
-      <Navigate to={paths.proyecto(projectId, tabs[0])} replace />
+      <Navigate to={{ pathname: paths.proyecto(projectId, tabs[0]), search: location.search }} replace />
     ) : (
-      <Navigate to={paths.proyectos()} replace />
+      <Navigate to={{ pathname: paths.proyectos(), search: location.search }} replace />
     );
   }
 
   if (current !== "contexto" && sub) {
-    return <Navigate to={paths.proyecto(projectId, current)} replace />;
+    return <Navigate to={{ pathname: paths.proyecto(projectId, current), search: location.search }} replace />;
   }
   if (current === "contexto" && sub && !CONTEXT_SUBTABS.includes(sub as ContextSubtab)) {
-    return <Navigate to={paths.contexto(projectId)} replace />;
+    return <Navigate to={{ pathname: paths.contexto(projectId), search: location.search }} replace />;
   }
   const contextSub: ContextSubtab =
     current === "contexto" && sub && CONTEXT_SUBTABS.includes(sub as ContextSubtab)

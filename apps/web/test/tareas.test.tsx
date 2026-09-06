@@ -402,6 +402,13 @@ describe("TareasView (render)", () => {
     expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
   });
 
+  it("no ofrece un botón «Tablero»: Tareas es transversal, no un proyecto", async () => {
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Tablero" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Tablero" })).toBeNull();
+  });
+
   it("cruza dos filtros y deja los chips visibles y borrables", async () => {
     renderTareas();
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());

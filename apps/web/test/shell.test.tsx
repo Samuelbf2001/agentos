@@ -6,10 +6,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import App from "../src/App";
 import { useStore } from "../src/state/store";
 import { agents, makeTask, mockFetch, person, project } from "./helpers";
+
+const locationProbe: { pathname: string; search: string } = { pathname: "", search: "" };
+
+function LocationProbe() {
+  const location = useLocation();
+  locationProbe.pathname = location.pathname;
+  locationProbe.search = location.search;
+  return null;
+}
 
 const routes = [
   { path: "/api/waiting", body: { approvals: [], review_tasks: [] } },
@@ -45,6 +54,7 @@ function renderApp(entry: string) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <App />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -130,6 +140,45 @@ describe("shell y navegación", () => {
   it("una sub-pestaña de Contexto inválida redirige a documentos", async () => {
     renderApp(`/proyectos/${project.id}/contexto/otra`);
     expect(await screen.findByText("Sin documentos")).toBeTruthy();
+  });
+
+  it("/board redirige a /proyectos", async () => {
+    renderApp("/board");
+    expect(await screen.findByRole("heading", { name: "Proyectos" })).toBeTruthy();
+  });
+
+  it("/context redirige a /proyectos", async () => {
+    renderApp("/context");
+    expect(await screen.findByRole("heading", { name: "Proyectos" })).toBeTruthy();
+  });
+
+  it("/meetings redirige a Sistema › Fuentes", async () => {
+    renderApp("/meetings");
+    expect(await screen.findByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
+  });
+
+  it("/sistema/salud redirige a Sistema › Fuentes", async () => {
+    renderApp("/sistema/salud");
+    expect(await screen.findByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
+  });
+
+  it("/sistema/ajustes redirige a Sistema › Configuración", async () => {
+    renderApp("/sistema/ajustes");
+    expect(await screen.findByText("Configuración de la aplicación y estado de los agentes.")).toBeTruthy();
+  });
+
+  it("/admin redirige a Sistema › Configuración", async () => {
+    renderApp("/admin");
+    expect(await screen.findByText("Configuración de la aplicación y estado de los agentes.")).toBeTruthy();
+  });
+
+  it("/?tarea=t1 termina en /hoy conservando la query", async () => {
+    renderApp("/?tarea=t1");
+    await screen.findByRole("heading", { level: 1, name: /decisi/i });
+    await waitFor(() => {
+      expect(locationProbe.pathname).toBe("/hoy");
+      expect(locationProbe.search).toBe("?tarea=t1");
+    });
   });
 
   it("«/» abre el buscador de tareas desde cualquier pantalla y Esc lo cierra", async () => {
