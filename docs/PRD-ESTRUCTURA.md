@@ -93,6 +93,7 @@ Qué existe, qué se exige y en qué orden se construye.
 | `REFERENTES-Puzzle-Wonderful.md` | Qué tomamos de cada referente | III, IV |
 | `MAPA-DE-AGENTES.md` | Ficha estándar y estado de cada agente | IV |
 | `ESTADO-vs-PRD-v1.1.md` | Qué existe hoy en el código | VI |
+| `REFERENTES-Within.md` | Within (ex-Klarity): el referente más parecido; variante de proceso, MCP hacia fuera, velocidad | III, IV, discurso comercial |
 
 Cuando una parte se cierre, su contenido se consolida en el PRD principal y el documento auxiliar queda
 como anexo con el razonamiento. No al revés: el PRD no debe convertirse en un índice de enlaces.
