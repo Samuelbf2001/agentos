@@ -8,7 +8,12 @@ import ChatView from "../src/views/ChatView";
 import SwarmView from "../src/views/SwarmView";
 import RunsView from "../src/views/RunsView";
 import RunDetailView from "../src/views/RunDetailView";
-import WaitingView from "../src/views/WaitingView";
+import HoyView from "../src/views/HoyView";
+import ProjectsView from "../src/views/ProjectsView";
+import TareasView from "../src/views/TareasView";
+import SystemHealthView from "../src/views/SystemHealthView";
+import SystemTeamView from "../src/views/SystemTeamView";
+import AssetView from "../src/views/AssetView";
 import ContextView from "../src/views/ContextView";
 import AdminView from "../src/views/AdminView";
 import LoginView from "../src/views/LoginView";
@@ -20,7 +25,9 @@ import {
   makeTask,
   mockFetch,
   person,
+  personB,
   project,
+  projectB,
   thread,
 } from "./helpers";
 
@@ -50,9 +57,92 @@ const baseRoutes = [
   },
   { path: "/api/knowledge", body: { docs: [] } },
   { path: /^\/api\/projects\/[^/]+\/sources$/, body: { sources: [] } },
+  { path: /^\/api\/projects\/[^/]+\/phase-status$/, body: { status: { launchId: null, complete: false, items: [], reason: "no_launch" } } },
   { path: "/api/processes", body: { processes: [] } },
-  { path: "/api/methodologies", body: { methodologies: [] } },
+  {
+    path: "/api/methodologies",
+    body: {
+      methodologies: [
+        { id: "m-1", slug: "sixteam-core", version: 2, bodyMd: "# Método", changelog: null, createdAt: 1, updatedAt: 1 },
+      ],
+    },
+  },
+  {
+    path: "/api/modules",
+    body: {
+      modules: [
+        {
+          slug: "consultoria",
+          version: 1,
+          name: "Consultoría (Assessment 14 días)",
+          phase: "ENTENDER",
+          project_type: "assessment",
+          status: "active",
+          methodology: { slug: "sixteam-core", version: 2 },
+          templates_count: 9,
+          blueprint_hash: "abc",
+        },
+      ],
+    },
+  },
+  {
+    path: "/api/brain/overview",
+    body: {
+      generated_at: "2026-09-05T10:00:00.000Z",
+      core: {
+        counts: { projects: 3, tasks: 40, people: 2, agents: 2, knowledge_docs: 8, project_sources: 4 },
+        people: [
+          { id: "p-ana", full_name: "Ana García", role: "Dirección", is_internal: true },
+          { id: "p-cli", full_name: "Cliente Demo", role: "Sponsor", is_internal: false },
+        ],
+      },
+      agents: {
+        items: [
+          {
+            id: "a-alex",
+            slug: "alex",
+            name: "Alex",
+            layer: "consultoria",
+            runtime: "ai_sdk",
+            model: "claude-sonnet-4-5",
+            autonomy: "supervised",
+            status: "active",
+          },
+        ],
+        tree: null,
+        health: [],
+      },
+      sources: [
+        {
+          id: "agentos",
+          label: "AgentOS",
+          status: "connected",
+          mode: "local",
+          last_checked_at: "2026-09-05T09:59:00.000Z",
+          counts: { projects: 3 },
+          detail: "Núcleo de trabajo operativo.",
+        },
+      ],
+      modules: [
+        {
+          id: "board",
+          label: "Tablero",
+          description: "Tareas y proyectos como verdad operativa.",
+          source_id: "agentos",
+          status: "available",
+        },
+      ],
+    },
+  },
   { path: "/api/config", body: { config: [] } },
+  { path: "/api/projects", body: { projects: [project, projectB] } },
+  { path: "/api/labels", body: { labels: [] } },
+  {
+    path: "/api/tasks",
+    body: {
+      tasks: [makeTask(), makeTask({ id: "t2", projectId: projectB.id, title: "Cadencia semanal" })],
+    },
+  },
   { path: /^\/api\/tasks\/[^/]+$/, body: { task: makeTask(), events: [], artifacts: [], runs: [] } },
 ];
 
@@ -89,7 +179,7 @@ describe("smoke de vistas", () => {
   it("BoardView pinta carriles, columnas y la tarjeta", () => {
     ui(<BoardView />);
     expect(screen.getByText("Entender")).toBeTruthy();
-    expect(screen.getAllByText("BACKLOG").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Backlog").length).toBeGreaterThan(0);
     expect(screen.getByText("Mapear proceso de ventas")).toBeTruthy();
   });
 
@@ -123,18 +213,45 @@ describe("smoke de vistas", () => {
     expect(screen.getByText("Tokens in / out")).toBeTruthy();
   });
 
-  it("WaitingView pinta la aprobación pendiente con su payload literal", async () => {
-    ui(<WaitingView />);
-    expect(await screen.findByText("email.send")).toBeTruthy();
-    expect(screen.getByText("✓ Aprobar")).toBeTruthy();
+  it("Hoy pinta la aprobación pendiente y el entregable en revisión (antes «Esperando por ti»)", async () => {
+    ui(<HoyView />);
+    // loadApprovals (vía /api/waiting) trae ambas cosas a la misma bandeja.
+    expect(await screen.findByText("Autorizar email.send")).toBeTruthy();
+    expect(screen.getByText("Informe en revisión")).toBeTruthy();
+    expect(screen.getAllByText("Aprobar").length).toBeGreaterThan(0);
   });
 
-  it("WaitingView pinta también los entregables en REVIEW (H10)", async () => {
-    ui(<WaitingView />);
-    // loadApprovals (vía /api/waiting) trae la tarjeta en REVIEW a la bandeja.
-    expect(await screen.findByText("Informe en revisión")).toBeTruthy();
-    expect(screen.getByText("Entregable en REVIEW")).toBeTruthy();
-    expect(screen.getByText("✓ Aprobar → DONE")).toBeTruthy();
+  it("Tareas pinta la base transversal: dos clientes en la misma lista", async () => {
+    useStore.setState({ projects: [project, projectB], people: [person, personB] });
+    ui(<TareasView />, "/tareas");
+    expect(await screen.findByRole("heading", { level: 1, name: "Tareas" })).toBeTruthy();
+    expect(await screen.findByTestId("tarea-fila-t1")).toBeTruthy();
+    expect(screen.getByTestId("tarea-fila-t2")).toBeTruthy();
+    expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
+  });
+
+  it("ProjectsView lista los proyectos con su posición en el ciclo", async () => {
+    ui(<ProjectsView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Proyectos" })).toBeTruthy();
+    expect(screen.getByText(project.name)).toBeTruthy();
+  });
+
+  it("Sistema › Salud pinta contadores y fuentes (lo que era el Cerebro)", async () => {
+    ui(<SystemHealthView />);
+    expect(await screen.findByText("Proyectos")).toBeTruthy();
+    expect(screen.getByText("AgentOS")).toBeTruthy();
+  });
+
+  it("Sistema › Equipo pinta personas y agentes", async () => {
+    ui(<SystemTeamView />);
+    expect(await screen.findByText("Ana García")).toBeTruthy();
+    expect(screen.getByText("Sixteam")).toBeTruthy();
+  });
+
+  it("Activo Sixteam pinta módulos de fase y metodologías", async () => {
+    ui(<AssetView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Activo Sixteam" })).toBeTruthy();
+    expect(await screen.findByTestId("asset-module-consultoria")).toBeTruthy();
   });
 
   it("ContextView pinta pestañas y estado vacío", async () => {

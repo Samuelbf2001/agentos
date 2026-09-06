@@ -6,6 +6,7 @@ import { vi } from "vitest";
 import type {
   Agent,
   Approval,
+  Artifact,
   Message,
   Person,
   Project,
@@ -85,6 +86,26 @@ export const project: Project = {
   createdAt: 1000,
   updatedAt: 1000,
 };
+
+/**
+ * Segundo cliente con su propio proyecto. La base de tareas es transversal por
+ * definición: sin una segunda organización no se puede probar que cruza
+ * clientes y no sólo proyectos del mismo.
+ */
+export const projectB: Project = {
+  id: "proj-2",
+  orgId: "org-2",
+  name: "Beta operación",
+  type: "ops",
+  stage: "OPERAR",
+  gateState: "approved",
+  workspacePath: null,
+  version: 1,
+  createdAt: 1000,
+  updatedAt: 1000,
+};
+
+export const personB: Person = { id: "p-jorge", full_name: "Jorge", role: "Consultor" };
 
 export function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -167,6 +188,22 @@ export function makeApproval(overrides: Partial<Approval> = {}): Approval {
   };
 }
 
+export function makeArtifact(overrides: Partial<Artifact> = {}): Artifact {
+  return {
+    id: "art-1",
+    taskId: "t1",
+    runId: "r1",
+    kind: "note",
+    title: "Notas de la entrevista",
+    content: "Hallazgos de la sesión.",
+    path: null,
+    meta: null,
+    createdBy: "agent:sally",
+    createdAt: 1000,
+    ...overrides,
+  };
+}
+
 export function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     id: "r1",
@@ -191,6 +228,9 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     startedAt: 1000,
     finishedAt: 2000,
     createdAt: 900,
+    // El fixture ignoraba los overrides: sin esto no se puede fabricar un run
+    // ligado a una tarea concreta.
+    ...overrides,
   };
 }
 

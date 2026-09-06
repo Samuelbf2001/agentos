@@ -6,6 +6,7 @@
  * Fase 2 — Fuentes del proyecto: sección para asociar reuniones y conversaciones
  * de WhatsApp de 2brain (WhatsAppHub) e ingerirlas como docs tipados del Hub.
  */
+import MeetingProcessingView from "./MeetingProcessingView";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import type {
@@ -40,9 +41,9 @@ const SOURCE_KIND_LABELS: Record<ProjectSourceKind, string> = {
 };
 
 const SOURCE_STATUS_STYLES: Record<string, string> = {
-  linked: "bg-slate-200 text-slate-700",
-  ingested: "bg-emerald-100 text-emerald-700",
-  error: "bg-rose-100 text-rose-700",
+  linked: "bg-line text-ink-2",
+  ingested: "bg-done-bg text-done",
+  error: "bg-broken-bg text-broken",
 };
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
@@ -115,11 +116,11 @@ function SourcePickerModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-lg border border-slate-200 bg-white p-4 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-soft border border-line bg-surface p-4 shadow-float">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold">Asociar fuente de 2brain</h3>
-          <button onClick={onClose} className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100">
+          <h3 className="text-body font-bold">Asociar fuente de 2brain</h3>
+          <button onClick={onClose} className="rounded px-2 py-1 text-small text-muted hover:bg-line-soft">
             ✕ Cerrar
           </button>
         </div>
@@ -128,8 +129,8 @@ function SourcePickerModal({
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-                tab === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              className={`rounded-tight px-3 py-1.5 text-small font-medium ${
+                tab === k ? "bg-ink text-surface" : "bg-line-soft text-muted hover:bg-line"
               }`}
             >
               {k === "meeting" ? "Reuniones" : "WhatsApp"}
@@ -147,9 +148,9 @@ function SourcePickerModal({
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={tab === "meeting" ? "Buscar reunión (título, cliente)…" : "Buscar contacto…"}
-            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+            className="flex-1 rounded-tight border border-line px-2 py-1.5 text-small"
           />
-          <button className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white">🔍</button>
+          <button className="rounded-tight bg-ink px-2.5 py-1.5 text-small text-surface">🔍</button>
         </form>
         {error ? (
           <div className="mt-2">
@@ -162,17 +163,17 @@ function SourcePickerModal({
             <EmptyState title="Sin resultados" hint="Prueba otro término de búsqueda." />
           </div>
         ) : null}
-        <ul className="mt-2 divide-y divide-slate-100">
+        <ul className="mt-2 divide-y divide-line-soft">
           {(items ?? []).map((item) => (
             <li key={item.id} className="flex items-center gap-2 py-2">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium">{item.title}</p>
-                {item.subtitle ? <p className="truncate text-[10px] text-slate-400">{item.subtitle}</p> : null}
+                <p className="truncate text-small font-medium">{item.title}</p>
+                {item.subtitle ? <p className="truncate text-label text-faint">{item.subtitle}</p> : null}
               </div>
               <button
                 onClick={() => void pick(item)}
                 disabled={busyId !== null}
-                className="shrink-0 rounded-md bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                className="shrink-0 rounded-tight bg-link px-2.5 py-1 text-label font-medium text-surface hover:bg-link disabled:opacity-50"
               >
                 {busyId === item.id ? "Asociando…" : "Asociar e ingerir"}
               </button>
@@ -226,21 +227,21 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
 
   if (!activeProjectId) {
     return (
-      <div className="mb-3 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-xs text-slate-400">
+      <div className="mb-3 rounded-soft border border-dashed border-line bg-surface p-3 text-small text-faint">
         Elige un proyecto (en el tablero) para asociar fuentes de 2brain.
       </div>
     );
   }
 
   return (
-    <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3">
+    <div className="mb-3 rounded-soft border border-line bg-surface p-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+        <h3 className="text-label font-bold uppercase text-muted">
           Fuentes del proyecto (2brain)
         </h3>
         <button
           onClick={() => setPickerOpen(true)}
-          className="rounded-md bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-slate-700"
+          className="rounded-tight bg-ink px-2.5 py-1 text-label font-medium text-surface hover:bg-ink-2"
         >
           + Asociar fuente
         </button>
@@ -248,30 +249,30 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
       {error ? <div className="mt-2"><ErrorBox message={error} onRetry={() => void load()} /></div> : null}
       {sources === null && !error ? <Spinner label="Cargando fuentes…" /> : null}
       {sources !== null && sources.length === 0 ? (
-        <p className="mt-2 text-xs text-slate-400">
+        <p className="mt-2 text-small text-faint">
           Sin fuentes asociadas. Asocia reuniones o conversaciones de WhatsApp y quedarán como
           documentos tipados del Context Hub.
         </p>
       ) : null}
-      <ul className="mt-2 divide-y divide-slate-100">
+      <ul className="mt-2 divide-y divide-line-soft">
         {(sources ?? []).map((s) => (
           <li key={s.id} className="flex items-center gap-2 py-1.5">
-            <span className="shrink-0 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-semibold">
+            <span className="shrink-0 rounded bg-line px-1 py-0.5 text-label font-semibold">
               {SOURCE_KIND_LABELS[s.kind]}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium">{s.externalRef.title}</p>
+              <p className="truncate text-small font-medium">{s.externalRef.title}</p>
               {s.status === "error" && s.lastError ? (
-                <p className="truncate text-[10px] text-rose-600" title={s.lastError}>
+                <p className="truncate text-label text-broken" title={s.lastError}>
                   {s.lastError}
                 </p>
               ) : s.lastIngestedAt ? (
-                <p className="text-[10px] text-slate-400">ingerida {fmtDate(s.lastIngestedAt)}</p>
+                <p className="text-label text-faint">ingerida {fmtDate(s.lastIngestedAt)}</p>
               ) : null}
             </div>
             <span
-              className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ${
-                SOURCE_STATUS_STYLES[s.status] ?? "bg-slate-200 text-slate-700"
+              className={`shrink-0 rounded px-1.5 py-0.5 text-label font-semibold ${
+                SOURCE_STATUS_STYLES[s.status] ?? "bg-line text-ink-2"
               }`}
             >
               {SOURCE_STATUS_LABELS[s.status] ?? s.status}
@@ -279,7 +280,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
             <button
               onClick={() => void reingest(s)}
               disabled={busyId !== null}
-              className="shrink-0 rounded-md border border-slate-300 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              className="shrink-0 rounded-tight border border-line px-2 py-0.5 text-label font-medium text-muted hover:bg-line-soft disabled:opacity-50"
             >
               {busyId === s.id ? "Ingiriendo…" : s.status === "linked" ? "Ingerir" : "Re-ingerir"}
             </button>
@@ -352,9 +353,9 @@ function DocsTab() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar (knowledge.search)…"
-            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+            className="flex-1 rounded-tight border border-line px-2 py-1.5 text-small"
           />
-          <button className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white" disabled={searching}>
+          <button className="rounded-tight bg-ink px-2.5 py-1.5 text-small text-surface" disabled={searching}>
             🔍
           </button>
         </form>
@@ -373,11 +374,11 @@ function DocsTab() {
             <li key={d.id}>
               <button
                 onClick={() => setSelected(d)}
-                className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
-                  selected?.id === d.id ? "bg-slate-200 font-medium" : "hover:bg-slate-100"
+                className={`w-full rounded-tight px-2 py-1.5 text-left text-small ${
+                  selected?.id === d.id ? "bg-line font-medium" : "hover:bg-line-soft"
                 }`}
               >
-                <span className="mr-1 rounded bg-slate-200 px-1 py-0.5 text-[9px] font-semibold">
+                <span className="mr-1 rounded bg-line px-1 py-0.5 text-label font-semibold">
                   {KIND_LABELS[d.kind] ?? d.kind}
                 </span>
                 {d.title}
@@ -388,33 +389,33 @@ function DocsTab() {
       </div>
       <div className="min-w-0 flex-1">
         {selected ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+          <div className="rounded-soft border border-line bg-surface p-4">
+            <p className="text-label uppercase text-faint">
               {KIND_LABELS[selected.kind] ?? selected.kind} · actualizado {fmtDate(selected.updatedAt)}
             </p>
-            <h2 className="text-sm font-bold">{selected.title}</h2>
+            <h2 className="text-body font-bold">{selected.title}</h2>
             {selected.tags && selected.tags.length > 0 ? (
               <p className="mt-1 flex flex-wrap gap-1">
                 {selected.tags.map((t) => (
-                  <span key={t} className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] text-sky-800">
+                  <span key={t} className="rounded bg-link-bg px-1.5 py-0.5 text-label text-link">
                     #{t}
                   </span>
                 ))}
               </p>
             ) : null}
-            <div className="mt-3 text-sm">
+            <div className="mt-3 text-body">
               <Markdown>{selected.bodyMd}</Markdown>
             </div>
-            <div className="mt-4 border-t border-slate-100 pt-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+            <div className="mt-4 border-t border-line-soft pt-2">
+              <p className="text-label font-bold uppercase text-faint">
                 Fuentes (provenance)
               </p>
               {selected.sourceRefs && selected.sourceRefs.length > 0 ? (
-                <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-50 p-2 text-[10px]">
+                <pre className="mt-1 max-h-40 overflow-auto rounded bg-surface-2 p-2 text-label">
                   {JSON.stringify(selected.sourceRefs, null, 2)}
                 </pre>
               ) : (
-                <p className="mt-1 text-xs text-amber-600">Sin fuente registrada — no verificado.</p>
+                <p className="mt-1 text-small text-work">Sin fuente registrada — no verificado.</p>
               )}
             </div>
           </div>
@@ -458,9 +459,9 @@ function ProcessesTab() {
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+      <div className="overflow-x-auto rounded-soft border border-line bg-surface">
+        <table className="w-full text-left text-small">
+          <thead className="bg-surface-2 text-label uppercase text-faint">
             <tr>
               <th className="px-3 py-2">Nombre</th>
               <th className="px-3 py-2">Dueño</th>
@@ -470,22 +471,22 @@ function ProcessesTab() {
               <th className="px-3 py-2">Pasos</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line-soft">
             {processes.map((p) => (
               <tr
                 key={p.id}
                 onClick={() => setSelected(p)}
-                className={`cursor-pointer hover:bg-slate-50 ${selected?.id === p.id ? "bg-sky-50" : ""}`}
+                className={`cursor-pointer hover:bg-surface-2 ${selected?.id === p.id ? "bg-link-bg" : ""}`}
               >
                 <td className="px-3 py-2 font-medium">{p.name}</td>
                 <td className="px-3 py-2">{p.ownerPerson ?? "—"}</td>
                 <td className="px-3 py-2">{p.variant === "as_is" ? "as-is" : "to-be"}</td>
                 <td className="px-3 py-2">
                   <span
-                    className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                    className={`rounded px-1.5 py-0.5 text-label font-semibold ${
                       p.status === "validated"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-700"
+                        ? "bg-done-bg text-done"
+                        : "bg-work-bg text-work"
                     }`}
                   >
                     {p.status === "validated" ? "validado" : "borrador"}
@@ -499,16 +500,16 @@ function ProcessesTab() {
         </table>
       </div>
       {selected ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-bold">
-            {selected.name} <span className="text-xs font-normal text-slate-400">({selected.variant})</span>
+        <div className="rounded-soft border border-line bg-surface p-4">
+          <h3 className="text-body font-bold">
+            {selected.name} <span className="text-small font-normal text-faint">({selected.variant})</span>
           </h3>
           {selected.steps && selected.steps.length > 0 ? (
             <ol className="mt-2 space-y-1">
               {selected.steps.map((s, i) => (
-                <li key={i} className="rounded bg-slate-50 p-2 text-xs">
+                <li key={i} className="rounded bg-surface-2 p-2 text-small">
                   <span className="font-semibold">{i + 1}. {s.step}</span>
-                  <span className="ml-2 text-slate-500">
+                  <span className="ml-2 text-muted">
                     {s.responsible ? `resp: ${s.responsible}` : ""}
                     {s.system ? ` · sistema: ${s.system}` : ""}
                     {s.input ? ` · entrada: ${s.input}` : ""}
@@ -518,12 +519,12 @@ function ProcessesTab() {
               ))}
             </ol>
           ) : (
-            <p className="mt-2 text-xs text-slate-400">(sin pasos registrados)</p>
+            <p className="mt-2 text-small text-faint">(sin pasos registrados)</p>
           )}
           {selected.painPoints && selected.painPoints.length > 0 ? (
             <div className="mt-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">Puntos de dolor</p>
-              <ul className="ml-4 list-disc text-xs text-rose-700">
+              <p className="text-label font-bold uppercase text-faint">Puntos de dolor</p>
+              <ul className="ml-4 list-disc text-small text-broken">
                 {selected.painPoints.map((p, i) => (
                   <li key={i}>{p}</li>
                 ))}
@@ -536,92 +537,35 @@ function ProcessesTab() {
   );
 }
 
-function MethodologiesTab() {
-  const [items, setItems] = useState<Methodology[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Methodology | null>(null);
-
-  async function load() {
-    setError(null);
-    try {
-      const res = await api.methodologies();
-      setItems(res.methodologies);
-    } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Error cargando metodologías");
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
-
-  if (error) return <ErrorBox message={error} onRetry={() => void load()} />;
-  if (items === null) return <Spinner label="Cargando metodologías…" />;
-  if (items.length === 0) {
-    return (
-      <EmptyState
-        title="Sin metodologías"
-        hint="La metodología Sixteam vive como datos versionados que los agentes siguen (seeds en methodologies/*.md)."
-      />
-    );
-  }
-
-  return (
-    <div className="flex gap-4">
-      <ul className="w-64 shrink-0 space-y-1">
-        {items.map((m) => (
-          <li key={m.id}>
-            <button
-              onClick={() => setSelected(m)}
-              className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
-                selected?.id === m.id ? "bg-slate-200 font-medium" : "hover:bg-slate-100"
-              }`}
-            >
-              {m.slug} <span className="text-slate-400">v{m.version}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="min-w-0 flex-1">
-        {selected ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-              {selected.slug} · versión {selected.version} · solo lectura (edición por MCP)
-            </p>
-            <div className="mt-2 text-sm">
-              <Markdown>{selected.bodyMd}</Markdown>
-            </div>
-          </div>
-        ) : (
-          <EmptyState title="Elige una metodología" />
-        )}
-      </div>
-    </div>
-  );
-}
-
+/**
+ * Contexto del proyecto. Las metodologías emigraron a Activo Sixteam, porque
+ * son de Sixteam y no del cliente; a cambio, el panel de reuniones vive aquí,
+ * junto a los documentos que produce.
+ */
 export default function ContextView() {
-  const [tab, setTab] = useState<"docs" | "processes" | "methodologies">("docs");
+  const [tab, setTab] = useState<"docs" | "processes" | "meetings">("docs");
   const tabs = [
     { id: "docs" as const, label: "Documentos" },
     { id: "processes" as const, label: "Procesos" },
-    { id: "methodologies" as const, label: "Metodologías" },
+    { id: "meetings" as const, label: "Reuniones" },
   ];
   return (
-    <div className="p-4">
-      <div className="mb-3 flex gap-1">
+    <div className="density-explorar mx-auto max-w-[1180px] px-4 pb-20 pt-5 sm:px-5">
+      <div className="mb-4 flex gap-0.5">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-              tab === t.id ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+            aria-pressed={tab === t.id}
+            className={`press inline-flex min-h-9 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
+              tab === t.id ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
             }`}
           >
             {t.label}
           </button>
         ))}
       </div>
-      {tab === "docs" ? <DocsTab /> : tab === "processes" ? <ProcessesTab /> : <MethodologiesTab />}
+      {tab === "docs" ? <DocsTab /> : tab === "processes" ? <ProcessesTab /> : <MeetingProcessingView />}
     </div>
   );
 }

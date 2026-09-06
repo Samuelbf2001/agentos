@@ -7,7 +7,7 @@
  * intento (doble click no duplica — CA-M2.6) y navega al tablero creado.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import type {
   ModuleDetail,
@@ -19,6 +19,7 @@ import type {
 } from "../lib/types";
 import { useStore } from "../state/store";
 import { EmptyState, ErrorBox, Spinner } from "../components/ui";
+import { paths } from "../lib/paths";
 
 /** Debounce del preview en vivo (CA-M2.1). Corto para que el test lo espere. */
 const PREVIEW_DEBOUNCE_MS = 350;
@@ -141,12 +142,12 @@ function FieldShell({
 }) {
   return (
     <div>
-      <label htmlFor={`inp-${def.key}`} className="block text-xs font-medium text-slate-700">
+      <label htmlFor={`inp-${def.key}`} className="block text-small font-medium text-ink-2">
         {def.label}
-        {def.required ? <span className="ml-0.5 text-rose-600">*</span> : null}
+        {def.required ? <span className="ml-0.5 text-broken">*</span> : null}
       </label>
       {children}
-      <div className="mt-0.5 flex gap-2 text-[10px] text-slate-400">
+      <div className="mt-0.5 flex gap-2 text-label text-faint">
         {def.min_items ? <span>mínimo {def.min_items}</span> : null}
         {def.max_len ? <span>máx. {def.max_len} caracteres</span> : null}
         {def.sensitive ? <span>se redacta en el recibo</span> : null}
@@ -157,7 +158,7 @@ function FieldShell({
 }
 
 const INPUT_CLS =
-  "mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-slate-500 focus:outline-none";
+  "mt-1 w-full rounded-tight border border-line bg-surface px-2 py-1.5 text-body focus:border-muted focus:outline-none";
 
 function InputField({
   def,
@@ -210,16 +211,16 @@ function InputField({
       const selected = Array.isArray(value) ? value : [];
       return (
         <div>
-          <p className="text-xs font-medium text-slate-700">
+          <p className="text-small font-medium text-ink-2">
             {def.label}
-            {def.required ? <span className="ml-0.5 text-rose-600">*</span> : null}
+            {def.required ? <span className="ml-0.5 text-broken">*</span> : null}
             {def.min_items ? (
-              <span className="ml-1 font-normal text-slate-400">(mínimo {def.min_items})</span>
+              <span className="ml-1 font-normal text-faint">(mínimo {def.min_items})</span>
             ) : null}
           </p>
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
             {(def.options ?? []).map((opt) => (
-              <label key={opt} className="flex items-center gap-1.5 text-sm text-slate-700">
+              <label key={opt} className="flex items-center gap-1.5 text-body text-ink-2">
                 <input
                   type="checkbox"
                   checked={selected.includes(opt)}
@@ -228,7 +229,7 @@ function InputField({
                       e.target.checked ? [...selected, opt] : selected.filter((v) => v !== opt),
                     )
                   }
-                  className="h-3.5 w-3.5 rounded border-slate-300"
+                  className="h-3.5 w-3.5 rounded border-line"
                 />
                 {opt}
               </label>
@@ -283,7 +284,7 @@ function ToggleSwitch({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label htmlFor={id} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+    <label htmlFor={id} className="flex cursor-pointer items-center gap-2 text-body text-ink-2">
       <span className="relative inline-flex">
         <input
           id={id}
@@ -293,11 +294,11 @@ function ToggleSwitch({
           onChange={(e) => onChange(e.target.checked)}
           className="peer sr-only"
         />
-        <span className="h-5 w-9 rounded-full bg-slate-300 transition-colors peer-checked:bg-emerald-500" />
-        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+        <span className="h-5 w-9 rounded-full bg-line transition-colors peer-checked:bg-done" />
+        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-surface shadow-rest transition-transform peer-checked:translate-x-4" />
       </span>
       {label}
-      {hint ? <span className="text-[10px] text-slate-400">{hint}</span> : null}
+      {hint ? <span className="text-label text-faint">{hint}</span> : null}
     </label>
   );
 }
@@ -307,21 +308,21 @@ function ToggleSwitch({
 function StepHeader({ step }: { step: 1 | 2 | 3 }) {
   const items = ["Módulo", "Datos", "Resumen"] as const;
   return (
-    <ol className="flex items-center gap-2 text-xs">
+    <ol className="flex items-center gap-2 text-small">
       {items.map((label, i) => {
         const n = (i + 1) as 1 | 2 | 3;
         const active = n === step;
         const done = n < step;
         return (
           <li key={label} className="flex items-center gap-2">
-            {i > 0 ? <span className="text-slate-300">→</span> : null}
+            {i > 0 ? <span className="text-line">→</span> : null}
             <span
               className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${
                 active
-                  ? "bg-slate-900 text-white"
+                  ? "bg-ink text-surface"
                   : done
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-slate-100 text-slate-400"
+                    ? "bg-done-bg text-done"
+                    : "bg-line-soft text-faint"
               }`}
             >
               <span>{done ? "✓" : n}</span>
@@ -336,6 +337,12 @@ function StepHeader({ step }: { step: 1 | 2 | 3 }) {
 
 export default function NewProjectWizard() {
   const navigate = useNavigate();
+  const [search] = useSearchParams();
+  /** La Ruta manda aqui la fase siguiente: el catalogo se acota a esa fase. */
+  const phaseHint = search.get("fase") as Stage | null;
+  const originProjectId = search.get("proyecto");
+  const projects = useStore((s) => s.projects);
+  const originProject = originProjectId ? projects.find((p) => p.id === originProjectId) : undefined;
   const pushToast = useStore((s) => s.pushToast);
   const loadProjects = useStore((s) => s.loadProjects);
   const setActiveProject = useStore((s) => s.setActiveProject);
@@ -503,7 +510,7 @@ export default function NewProjectWizard() {
       );
       await loadProjects();
       await setActiveProject(res.project.id);
-      navigate("/board");
+      navigate(paths.proyecto(res.project.id, "tablero"));
     } catch (err) {
       setLaunchError(launchErrorMessage(err));
     } finally {
@@ -513,10 +520,18 @@ export default function NewProjectWizard() {
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h1 className="text-base font-bold tracking-tight">Nuevo proyecto</h1>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-title text-ink">
+          {phaseHint ? `Lanzar ${STAGE_LABEL[phaseHint]}` : "Nuevo proyecto"}
+        </h1>
         <StepHeader step={step} />
       </div>
+      {originProject ? (
+        <p className="mb-4 rounded-soft border border-line-soft bg-surface-2 px-3.5 py-2.5 text-small text-muted">
+          Vienes de la ruta de <span className="font-semibold text-ink-2">{originProject.name}</span>: elige el
+          módulo con el que arranca su fase siguiente.
+        </p>
+      ) : null}
 
       {/* ── Paso 1: elegir módulo ─────────────────────────────────────────── */}
       {step === 1 ? (
@@ -531,26 +546,26 @@ export default function NewProjectWizard() {
           />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {modules.map((m) => {
+            {(phaseHint ? modules.filter((m) => m.phase === phaseHint) : modules).map((m) => {
               const excerpt = bodyExcerpt(details[m.slug]?.body_md);
               return (
                 <button
                   key={`${m.slug}@${m.version}`}
                   onClick={() => void selectModule(m)}
                   data-testid={`module-card-${m.slug}`}
-                  className="rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition-shadow hover:border-slate-400 hover:shadow"
+                  className="rounded-soft border border-line bg-surface p-4 text-left shadow-rest transition-shadow hover:border-faint hover:shadow"
                 >
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold">{m.name}</p>
-                    <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+                    <p className="text-body font-semibold">{m.name}</p>
+                    <span className="rounded bg-ink px-1.5 py-0.5 text-label font-bold uppercase text-surface">
                       {STAGE_LABEL[m.phase]}
                     </span>
                   </div>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  <p className="mt-1 text-label text-muted">
                     v{m.version} · {m.templates_count} plantillas · {m.project_type} ·{" "}
                     {m.methodology.slug}
                   </p>
-                  {excerpt ? <p className="mt-2 text-xs text-slate-600">{excerpt}</p> : null}
+                  {excerpt ? <p className="mt-2 text-small text-muted">{excerpt}</p> : null}
                 </button>
               );
             })}
@@ -560,12 +575,12 @@ export default function NewProjectWizard() {
 
       {/* ── Paso 2: formulario generado ───────────────────────────────────── */}
       {step === 2 && selected ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="rounded-soft border border-line bg-surface p-4">
           <div className="mb-3 flex items-center gap-2">
-            <p className="text-sm font-semibold">
-              {selected.name} <span className="text-slate-400">v{selected.version}</span>
+            <p className="text-body font-semibold">
+              {selected.name} <span className="text-faint">v{selected.version}</span>
             </p>
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+            <span className="rounded bg-line-soft px-1.5 py-0.5 text-label text-muted">
               fase {STAGE_LABEL[selected.phase]}
             </span>
           </div>
@@ -582,8 +597,8 @@ export default function NewProjectWizard() {
           </div>
 
           {selected.toggles.length > 0 ? (
-            <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
-              <p className="text-xs font-medium text-slate-500">Opciones del módulo</p>
+            <div className="mt-4 space-y-2 border-t border-line-soft pt-3">
+              <p className="text-small font-medium text-muted">Opciones del módulo</p>
               {selected.toggles.map((t) => (
                 <ToggleSwitch
                   key={t.key}
@@ -598,11 +613,11 @@ export default function NewProjectWizard() {
           ) : null}
 
           {/* Estado de validación en vivo (CA-M2.1) */}
-          <div className="mt-4 border-t border-slate-100 pt-3" aria-live="polite">
+          <div className="mt-4 border-t border-line-soft pt-3" aria-live="polite">
             {previewLoading ? (
-              <p className="text-xs text-slate-400">Validando…</p>
+              <p className="text-small text-faint">Validando…</p>
             ) : preview && !preview.ok ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <div className="rounded-tight border border-work-line bg-work-bg p-3 text-small text-work">
                 {missingLabels.length > 0 ? (
                   <>
                     <p className="font-semibold">Campos faltantes:</p>
@@ -622,7 +637,7 @@ export default function NewProjectWizard() {
                 ) : null}
               </div>
             ) : preview?.ok ? (
-              <p className="text-xs font-medium text-emerald-700">
+              <p className="text-small font-medium text-done">
                 ✓ Listo: se crearán {preview.plan?.tasks.length ?? 0} tareas en «
                 {preview.plan?.projectName}»
               </p>
@@ -636,14 +651,14 @@ export default function NewProjectWizard() {
                 setPreview(null);
                 setStep(1);
               }}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              className="rounded-tight border border-line px-3 py-1.5 text-small font-medium text-muted hover:bg-surface-2"
             >
               ← Volver
             </button>
             <button
               onClick={goToSummary}
               disabled={!canContinue}
-              className="rounded-md bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-tight bg-ink px-4 py-1.5 text-small font-semibold text-surface enabled:hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Continuar →
             </button>
@@ -654,21 +669,21 @@ export default function NewProjectWizard() {
       {/* ── Paso 3: resumen del preview + Disparar ────────────────────────── */}
       {step === 3 && selected && preview?.ok && preview.plan ? (
         <div className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <p className="text-sm font-semibold">{preview.plan.projectName}</p>
-            <p className="mt-0.5 text-[11px] text-slate-500">
+          <div className="rounded-soft border border-line bg-surface p-4">
+            <p className="text-body font-semibold">{preview.plan.projectName}</p>
+            <p className="mt-0.5 text-label text-muted">
               {selected.name} v{selected.version} · fase {STAGE_LABEL[selected.phase]} · workspace{" "}
-              <code className="rounded bg-slate-100 px-1">{preview.plan.workspacePath}</code>
+              <code className="rounded bg-line-soft px-1">{preview.plan.workspacePath}</code>
             </p>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+          <div className="rounded-soft border border-line bg-surface p-4">
+            <p className="mb-2 text-small font-bold uppercase text-faint">
               Tareas que se crearán ({preview.plan.tasks.length})
             </p>
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-small">
               <thead>
-                <tr className="text-[10px] uppercase text-slate-400">
+                <tr className="text-label uppercase text-faint">
                   <th className="py-1 pr-2 font-semibold">Tarea</th>
                   <th className="py-1 pr-2 font-semibold">Asignado</th>
                   <th className="py-1 pr-2 font-semibold">Prioridad</th>
@@ -679,29 +694,29 @@ export default function NewProjectWizard() {
               </thead>
               <tbody>
                 {preview.plan.tasks.map((t) => (
-                  <tr key={t.key} className="border-t border-slate-100">
+                  <tr key={t.key} className="border-t border-line-soft">
                     <td className="py-1.5 pr-2">
                       <span className="font-medium">{t.title}</span>
                       {t.gate ? (
-                        <span className="ml-1 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold text-violet-700">
+                        <span className="ml-1 rounded bg-decide-bg px-1 py-0.5 text-label font-semibold text-decide">
                           gate {t.gate}
                         </span>
                       ) : null}
                     </td>
-                    <td className="py-1.5 pr-2 text-slate-600">{t.assigneeAgentSlug}</td>
-                    <td className="py-1.5 pr-2 text-slate-600">{t.priority}</td>
-                    <td className="py-1.5 pr-2 text-slate-500">
+                    <td className="py-1.5 pr-2 text-muted">{t.assigneeAgentSlug}</td>
+                    <td className="py-1.5 pr-2 text-muted">{t.priority}</td>
+                    <td className="py-1.5 pr-2 text-muted">
                       {t.dependsOn.length > 0 ? t.dependsOn.join(", ") : "—"}
                     </td>
-                    <td className="py-1.5 pr-2 text-slate-500">
+                    <td className="py-1.5 pr-2 text-muted">
                       {t.dueAt ? new Date(t.dueAt).toLocaleDateString("es") : "—"}
                     </td>
                     <td className="py-1.5">
                       <span
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                        className={`rounded px-1.5 py-0.5 text-label font-semibold ${
                           t.status === "READY"
-                            ? "bg-sky-100 text-sky-800"
-                            : "bg-slate-200 text-slate-600"
+                            ? "bg-link-bg text-link"
+                            : "bg-line text-muted"
                         }`}
                       >
                         {t.status}
@@ -714,12 +729,12 @@ export default function NewProjectWizard() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Gates</p>
+            <div className="rounded-soft border border-line bg-surface p-4">
+              <p className="mb-2 text-small font-bold uppercase text-faint">Gates</p>
               {preview.plan.gates.length === 0 ? (
-                <p className="text-xs text-slate-400">Sin gates</p>
+                <p className="text-small text-faint">Sin gates</p>
               ) : (
-                <ul className="space-y-1 text-xs text-slate-600">
+                <ul className="space-y-1 text-small text-muted">
                   {preview.plan.gates.map((g) => (
                     <li key={g.name}>
                       <span className="font-medium">{g.name}</span> ·{" "}
@@ -730,14 +745,14 @@ export default function NewProjectWizard() {
                 </ul>
               )}
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+            <div className="rounded-soft border border-line bg-surface p-4">
+              <p className="mb-2 text-small font-bold uppercase text-faint">
                 Entregables de cierre
               </p>
               {preview.plan.deliverables.length === 0 ? (
-                <p className="text-xs text-slate-400">Sin entregables de cierre</p>
+                <p className="text-small text-faint">Sin entregables de cierre</p>
               ) : (
-                <ul className="space-y-1 text-xs text-slate-600">
+                <ul className="space-y-1 text-small text-muted">
                   {preview.plan.deliverables.map((d) => (
                     <li key={`${d.kind}:${d.source}`}>
                       <span className="font-medium">{d.kind}</span> · mín. {d.min}
@@ -749,16 +764,16 @@ export default function NewProjectWizard() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+          <div className="rounded-soft border border-line bg-surface p-4">
+            <p className="mb-2 text-small font-bold uppercase text-faint">
               Presupuesto y metodología
             </p>
-            <p className="text-xs text-slate-600">
+            <p className="text-small text-muted">
               Fase <span className="font-semibold">${preview.plan.budget.phaseUsd}</span> · por run{" "}
               <span className="font-semibold">${preview.plan.budget.perRunUsd}</span> · avisos al{" "}
               {preview.plan.budget.warningThresholdsPct.map((p) => `${p}%`).join(", ")}
             </p>
-            <p className="mt-1 text-xs text-slate-600">
+            <p className="mt-1 text-small text-muted">
               Metodología{" "}
               <span className="font-semibold">
                 {preview.plan.methodology.slug}
@@ -773,11 +788,11 @@ export default function NewProjectWizard() {
           </div>
 
           {preview.plan.cadenceProposals.length > 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
-              <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-400">
+            <div className="rounded-soft border border-dashed border-line bg-surface-2 p-4">
+              <p className="mb-1 text-small font-bold uppercase text-faint">
                 Cadencia (se confirmará al disparar)
               </p>
-              <ul className="space-y-1 text-xs text-slate-600">
+              <ul className="space-y-1 text-small text-muted">
                 {preview.plan.cadenceProposals.map((c) => (
                   <li key={c.key}>
                     <label className="flex cursor-pointer items-center gap-1.5">
@@ -785,14 +800,14 @@ export default function NewProjectWizard() {
                         type="checkbox"
                         checked={confirmedCadences.has(c.key)}
                         onChange={(e) => toggleCadence(c.key, e.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-slate-300"
+                        className="h-3.5 w-3.5 rounded border-line"
                       />
                       {c.title} — cada {c.periodDays} días
                     </label>
                   </li>
                 ))}
               </ul>
-              <p className="mt-1.5 text-[10px] text-slate-400">
+              <p className="mt-1.5 text-label text-faint">
                 El módulo propone estas plantillas recurrentes: solo se crea la primera instancia
                 de las que confirmes (consent-first).
               </p>
@@ -805,14 +820,14 @@ export default function NewProjectWizard() {
             <button
               onClick={() => setStep(2)}
               disabled={launching}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              className="rounded-tight border border-line px-3 py-1.5 text-small font-medium text-muted hover:bg-surface-2 disabled:opacity-40"
             >
               ← Volver
             </button>
             <button
               onClick={() => void fire()}
               disabled={!preview.ok || launching}
-              className="rounded-md bg-emerald-600 px-5 py-2 text-xs font-bold text-white enabled:hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-tight bg-done px-5 py-2 text-small font-bold text-surface enabled:hover:bg-done disabled:cursor-not-allowed disabled:opacity-40"
             >
               {launching ? "Disparando…" : "🚀 Disparar"}
             </button>

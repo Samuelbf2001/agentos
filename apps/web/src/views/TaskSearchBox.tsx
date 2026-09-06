@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { StatusPill } from "../components/ui";
+import { STAGE_LABELS } from "../components/system";
 import type { TaskSearchHit } from "../lib/types";
 
 export const SEARCH_DEBOUNCE_MS = 250;
@@ -17,26 +18,26 @@ export function SearchHitRow({ hit, onOpen }: { hit: TaskSearchHit; onOpen: (id:
         type="button"
         data-testid={`search-hit-${hit.id}`}
         onClick={() => onOpen(hit.id)}
-        className="flex w-full flex-col gap-1 rounded-lg px-3 py-2 text-left hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+        className="flex w-full flex-col gap-1 rounded-soft px-3 py-2 text-left hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-link"
       >
         <span className="flex flex-wrap items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800">{hit.title}</span>
+          <span className="min-w-0 flex-1 truncate text-small font-semibold text-ink">{hit.title}</span>
           <StatusPill status={hit.status} />
         </span>
-        <span className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+        <span className="flex flex-wrap items-center gap-1.5 text-label text-muted">
           {hit.project_name ? <span className="truncate">{hit.project_name}</span> : null}
-          <span className="rounded bg-slate-100 px-1 py-0.5">{hit.stage}</span>
+          <span className="rounded bg-line-soft px-1 py-0.5">{STAGE_LABELS[hit.stage]}</span>
           {hit.source === "comment" ? (
-            <span className="rounded bg-violet-50 px-1 py-0.5 text-violet-700">en un comentario</span>
+            <span className="rounded bg-decide-bg px-1 py-0.5 text-decide">en un comentario</span>
           ) : null}
           {(hit.labels ?? []).map((label) => (
-            <span key={label} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-sky-800">
+            <span key={label} className="rounded-full bg-link-bg px-1.5 py-0.5 text-link">
               {label}
             </span>
           ))}
         </span>
         {hit.snippet ? (
-          <span className="line-clamp-2 text-[11px] text-slate-500">{hit.snippet}</span>
+          <span className="line-clamp-2 text-label text-muted">{hit.snippet}</span>
         ) : null}
       </button>
     </li>
@@ -95,23 +96,23 @@ export function TaskSearchBox({
         value={value}
         onChange={(event) => setValue(event.target.value)}
         placeholder={placeholder}
-        className="min-h-9 w-full rounded-full border border-slate-300 bg-white px-3.5 py-1.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        className="min-h-9 w-full rounded-full border border-line bg-surface px-3.5 py-1.5 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
       />
       {showPanel ? (
         <div
-          className="absolute left-0 right-0 z-30 mt-1 max-h-80 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+          className="absolute left-0 right-0 z-30 mt-1 max-h-80 overflow-y-auto rounded-panel border border-line bg-surface py-1 shadow-float"
           data-testid="task-search-results"
           role="listbox"
           aria-label="Resultados de búsqueda"
         >
-          {loading ? <p className="px-3 py-2 text-xs text-slate-400">Buscando…</p> : null}
+          {loading ? <p className="px-3 py-2 text-small text-faint">Buscando…</p> : null}
           {!loading && error ? (
-            <p className="px-3 py-2 text-xs text-rose-700" role="alert">
+            <p className="px-3 py-2 text-small text-broken" role="alert">
               {error}
             </p>
           ) : null}
           {!loading && !error && results.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-slate-400">Sin resultados para «{value.trim()}».</p>
+            <p className="px-3 py-2 text-small text-faint">Sin resultados para «{value.trim()}».</p>
           ) : null}
           <ul>
             {results.map((hit) => (

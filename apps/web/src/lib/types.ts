@@ -38,6 +38,29 @@ export const TASK_STATUSES: TaskStatus[] = [
   "DONE",
   "CANCELLED",
 ];
+
+/** Estados de los que ya no se sale (espeja TERMINAL en packages/core/src/board/state-machine.ts). */
+const TERMINAL_STATUSES: readonly TaskStatus[] = ["DONE", "CANCELLED"];
+
+export function isTerminalStatus(status: TaskStatus): boolean {
+  return TERMINAL_STATUSES.includes(status);
+}
+
+/**
+ * Destinos válidos para el actor humano por estado de origen. Espeja
+ * `MATRIX.human` + la regla "cualquiera no-terminal → CANCELLED sólo humano"
+ * de packages/core/src/board/state-machine.ts (isTransitionAllowed). apps/web
+ * no depende de @agentos/*, así que esto se mantiene a mano en paralelo.
+ */
+export const HUMAN_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  BACKLOG: ["READY", "CANCELLED"],
+  READY: ["BACKLOG", "IN_PROGRESS", "CANCELLED"],
+  IN_PROGRESS: ["BLOCKED", "REVIEW", "DONE", "CANCELLED"],
+  BLOCKED: ["READY", "CANCELLED"],
+  REVIEW: ["DONE", "IN_PROGRESS", "CANCELLED"],
+  DONE: [],
+  CANCELLED: [],
+};
 export const STAGES: Stage[] = ["ENTENDER", "CONSTRUIR", "OPERAR"];
 
 export interface Person {

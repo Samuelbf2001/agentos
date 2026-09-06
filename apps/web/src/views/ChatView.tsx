@@ -12,26 +12,26 @@ import type { ToolCallChip } from "../state/reducer";
 function ToolChip({ chip }: { chip: ToolCallChip }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="my-1 rounded-md border border-slate-200 bg-slate-50 text-xs">
+    <div className="my-1 rounded-tight border border-line bg-surface-2 text-small">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
       >
         <span
           className={`inline-block h-2 w-2 rounded-full ${
-            !chip.done ? "animate-pulse bg-amber-400" : chip.isError ? "bg-rose-500" : "bg-emerald-500"
+            !chip.done ? "animate-pulse bg-work" : chip.isError ? "bg-broken" : "bg-done"
           }`}
         />
         <span className="font-mono font-medium">{chip.name}</span>
-        <span className="text-slate-400">{chip.done ? (chip.isError ? "error" : "ok") : "ejecutando…"}</span>
-        <span className="ml-auto text-slate-400">{open ? "▾" : "▸"}</span>
+        <span className="text-faint">{chip.done ? (chip.isError ? "error" : "ok") : "ejecutando…"}</span>
+        <span className="ml-auto text-faint">{open ? "▾" : "▸"}</span>
       </button>
       {open ? (
-        <div className="space-y-1 border-t border-slate-200 p-2">
-          <p className="font-semibold text-slate-500">Argumentos</p>
-          <pre className="max-h-40 overflow-auto rounded bg-white p-2">{chip.args || "(vacío)"}</pre>
-          <p className="font-semibold text-slate-500">Resultado{chip.synthetic ? " (sintético)" : ""}</p>
-          <pre className="max-h-40 overflow-auto rounded bg-white p-2">
+        <div className="space-y-1 border-t border-line p-2">
+          <p className="font-semibold text-muted">Argumentos</p>
+          <pre className="max-h-40 overflow-auto rounded bg-surface p-2">{chip.args || "(vacío)"}</pre>
+          <p className="font-semibold text-muted">Resultado{chip.synthetic ? " (sintético)" : ""}</p>
+          <pre className="max-h-40 overflow-auto rounded bg-surface p-2">
             {chip.result ?? "(pendiente)"}
           </pre>
         </div>
@@ -84,18 +84,18 @@ export default function ChatView() {
   return (
     <div className="flex h-full">
       {/* Selector de hilo */}
-      <aside className="w-60 shrink-0 overflow-auto border-r border-slate-200 bg-white p-2">
+      <aside className="w-60 shrink-0 overflow-auto border-r border-line bg-surface p-2">
         <button
           onClick={() => void openThread(null)}
-          className={`w-full rounded-md px-3 py-2 text-left text-sm font-medium ${
-            chat.threadId === null ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200"
+          className={`w-full rounded-tight px-3 py-2 text-left text-body font-medium ${
+            chat.threadId === null ? "bg-ink text-surface" : "bg-line-soft hover:bg-line"
           }`}
         >
           ＋ Nuevo hilo
         </button>
         <div className="mt-2 space-y-1">
           {threads.length === 0 ? (
-            <p className="px-2 py-4 text-xs text-slate-400">
+            <p className="px-2 py-4 text-small text-faint">
               Sin hilos todavía. Escribe tu primer mensaje.
             </p>
           ) : null}
@@ -103,13 +103,13 @@ export default function ChatView() {
             <button
               key={t.id}
               onClick={() => void openThread(t.id)}
-              className={`block w-full truncate rounded-md px-3 py-2 text-left text-xs ${
-                chat.threadId === t.id ? "bg-slate-200 font-medium" : "hover:bg-slate-100"
+              className={`block w-full truncate rounded-tight px-3 py-2 text-left text-small ${
+                chat.threadId === t.id ? "bg-line font-medium" : "hover:bg-line-soft"
               }`}
               title={t.sessionKey}
             >
               {t.title ?? `Hilo ${t.id.slice(0, 8)}`}
-              <span className="block text-[10px] text-slate-400">{timeAgo(t.updatedAt)}</span>
+              <span className="block text-label text-faint">{timeAgo(t.updatedAt)}</span>
             </button>
           ))}
         </div>
@@ -127,12 +127,12 @@ export default function ChatView() {
           {chat.messages.map((m) => (
             <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
               <div
-                className={`max-w-[75%] rounded-xl px-3 py-2 text-sm ${
+                className={`max-w-[75%] rounded-panel px-3 py-2 text-body ${
                   m.role === "user"
-                    ? "bg-slate-900 text-white"
+                    ? "bg-ink text-surface"
                     : m.meta?.error
-                      ? "border border-rose-200 bg-rose-50"
-                      : "border border-slate-200 bg-white"
+                      ? "border border-broken-line bg-broken-bg"
+                      : "border border-line bg-surface"
                 }`}
               >
                 {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
@@ -147,9 +147,9 @@ export default function ChatView() {
                         <button
                           key={t.taskId}
                           onClick={() => void openTask(t.taskId)}
-                          className="mt-1 mr-1 inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-xs text-sky-800 hover:bg-sky-100"
+                          className="mt-1 mr-1 inline-flex items-center gap-1 rounded-tight border border-link bg-link-bg px-2 py-1 text-small text-link hover:bg-link-bg"
                         >
-                          🗂️ {task ? task.title : `Tarjeta ${t.taskId.slice(0, 8)}`}
+                          {task ? task.title : `Tarjeta ${t.taskId.slice(0, 8)}`}
                         </button>
                       );
                     })}
@@ -162,10 +162,10 @@ export default function ChatView() {
           {/* Streaming en curso */}
           {streams.map(([id, s]) => (
             <div key={id} className="flex justify-start">
-              <div className="max-w-[75%] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+              <div className="max-w-[75%] rounded-panel border border-line bg-surface px-3 py-2 text-body">
                 <Markdown>{s.text || "…"}</Markdown>
                 {!s.done ? (
-                  <span className="mt-1 inline-block h-3 w-1.5 animate-pulse bg-slate-400 align-middle" />
+                  <span className="mt-1 inline-block h-3 w-1.5 animate-pulse bg-faint align-middle" />
                 ) : null}
                 {chipsForRun(s.runId).map((c) => (
                   <ToolChip key={c.id} chip={c} />
@@ -179,19 +179,19 @@ export default function ChatView() {
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={onSend} className="flex gap-2 border-t border-slate-200 bg-white p-3">
+        <form onSubmit={onSend} className="flex gap-2 border-t border-line bg-surface p-3">
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder={
               chat.threadId ? "Escribe un mensaje…" : "Escribe para empezar un hilo nuevo…"
             }
-            className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className="flex-1 rounded-tight border border-line px-3 py-2 text-body"
           />
           <button
             type="submit"
             disabled={chatSending || !draft.trim()}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-40"
+            className="rounded-tight bg-ink px-4 py-2 text-body font-medium text-surface hover:bg-ink-2 disabled:opacity-40"
           >
             Enviar
           </button>

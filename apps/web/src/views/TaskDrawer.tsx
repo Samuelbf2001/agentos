@@ -19,6 +19,8 @@ import {
   StatusPill,
   STATUS_LABELS,
 } from "../components/ui";
+import { paths } from "../lib/paths";
+import { STAGE_LABELS } from "../components/system";
 import { getTaskAssignees, getTaskLabels, taskAssigneeIsPrimary, taskAssigneePersonId, taskDueTimestamp, taskDueState, type KnowledgeDoc, type LabelUsage, type Person, type Project, type ProjectSource, type Task, type TaskPriority } from "../lib/types";
 import type { Artifact } from "../lib/types";
 
@@ -142,14 +144,14 @@ export function TaskDescriptionEditor({
   }
 
   return (
-    <section className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/50 p-3.5" aria-labelledby="task-description-title">
+    <section className="mt-4 rounded-panel border border-link-bg bg-link-bg/50 p-3.5" aria-labelledby="task-description-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 id="task-description-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-600">Descripción</h3>
-          <p className="mt-0.5 text-[11px] text-slate-500">Contexto, enlaces e imágenes de esta tarea.</p>
+          <h3 id="task-description-title" className="text-small font-bold uppercase text-muted">Descripción</h3>
+          <p className="mt-0.5 text-label text-muted">Contexto, enlaces e imágenes de esta tarea.</p>
         </div>
         {!editing ? (
-          <button type="button" onClick={() => setEditing(true)} className="min-h-9 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-800 shadow-sm hover:border-sky-400 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-500">
+          <button type="button" onClick={() => setEditing(true)} className="min-h-9 rounded-soft border border-link bg-surface px-3 py-1.5 text-small font-semibold text-link shadow-rest hover:border-link hover:bg-link-bg focus:outline-none focus:ring-2 focus:ring-link">
             Editar
           </button>
         ) : null}
@@ -157,38 +159,38 @@ export function TaskDescriptionEditor({
 
       {!editing ? (
         value ? (
-          <div className="mt-3 rounded-xl border border-white bg-white px-3 py-2 text-sm shadow-sm"><Markdown>{value}</Markdown></div>
+          <div className="mt-3 rounded-panel border border-surface bg-surface px-3 py-2 text-body shadow-rest"><Markdown>{value}</Markdown></div>
         ) : (
-          <button type="button" onClick={() => setEditing(true)} className="mt-3 w-full rounded-xl border border-dashed border-sky-200 bg-white px-3 py-4 text-left text-xs text-slate-400 hover:border-sky-400 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500">
+          <button type="button" onClick={() => setEditing(true)} className="mt-3 w-full rounded-panel border border-dashed border-link bg-surface px-3 py-4 text-left text-small text-faint hover:border-link hover:text-muted focus:outline-none focus:ring-2 focus:ring-link">
             + Añadir una descripción, enlace o imagen
           </button>
         )
       ) : (
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap gap-2" aria-label="Insertar contenido en descripción">
-            <button type="button" onClick={() => openInsert("link")} className="min-h-9 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:text-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-500">↗ Enlace</button>
-            <button type="button" onClick={() => openInsert("image")} className="min-h-9 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:text-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-500">▧ Imagen</button>
-            <span className="self-center text-[10px] text-slate-400">Markdown sencillo · vista previa en vivo</span>
+            <button type="button" onClick={() => openInsert("link")} className="min-h-9 rounded-soft border border-line bg-surface px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link">↗ Enlace</button>
+            <button type="button" onClick={() => openInsert("image")} className="min-h-9 rounded-soft border border-line bg-surface px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link">▧ Imagen</button>
+            <span className="self-center text-label text-faint">Markdown sencillo · vista previa en vivo</span>
           </div>
 
           {insertKind ? (
-            <fieldset className="rounded-xl border border-sky-200 bg-white p-3">
-              <legend className="px-1 text-xs font-semibold text-sky-900">{insertKind === "image" ? "Añadir imagen por URL" : "Añadir enlace"}</legend>
-              <label className="block text-[11px] font-medium text-slate-600" htmlFor="description-insert-label">{insertKind === "image" ? "Texto alternativo" : "Texto visible"}</label>
-              <input id="description-insert-label" value={insertLabel} onChange={(event) => setInsertLabel(event.target.value)} placeholder={insertKind === "image" ? "Ej. Boceto de flujo" : "Ej. Documento de referencia"} className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300" />
-              <label className="mt-2 block text-[11px] font-medium text-slate-600" htmlFor="description-insert-url">URL</label>
-              <input id="description-insert-url" value={insertUrl} onChange={(event) => { setInsertUrl(event.target.value); setInsertError(null); }} placeholder="https://…" inputMode="url" className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300" />
-              {insertError ? <p className="mt-1 text-[11px] text-rose-700" role="alert">{insertError}</p> : null}
+            <fieldset className="rounded-panel border border-link bg-surface p-3">
+              <legend className="px-1 text-small font-semibold text-link">{insertKind === "image" ? "Añadir imagen por URL" : "Añadir enlace"}</legend>
+              <label className="block text-label font-medium text-muted" htmlFor="description-insert-label">{insertKind === "image" ? "Texto alternativo" : "Texto visible"}</label>
+              <input id="description-insert-label" value={insertLabel} onChange={(event) => setInsertLabel(event.target.value)} placeholder={insertKind === "image" ? "Ej. Boceto de flujo" : "Ej. Documento de referencia"} className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link" />
+              <label className="mt-2 block text-label font-medium text-muted" htmlFor="description-insert-url">URL</label>
+              <input id="description-insert-url" value={insertUrl} onChange={(event) => { setInsertUrl(event.target.value); setInsertError(null); }} placeholder="https://…" inputMode="url" className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link" />
+              {insertError ? <p className="mt-1 text-label text-broken" role="alert">{insertError}</p> : null}
               <div className="mt-3 flex gap-2">
-                <button type="button" onClick={addInsert} className="min-h-9 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500">Insertar</button>
-                <button type="button" onClick={() => { setInsertKind(null); setInsertError(null); }} className="min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500">Cancelar</button>
+                <button type="button" onClick={addInsert} className="min-h-9 rounded-soft bg-ink px-3 py-1.5 text-small font-semibold text-surface hover:bg-ink-2 focus:outline-none focus:ring-2 focus:ring-link">Insertar</button>
+                <button type="button" onClick={() => { setInsertKind(null); setInsertError(null); }} className="min-h-9 rounded-soft px-3 py-1.5 text-small font-semibold text-muted hover:bg-line-soft focus:outline-none focus:ring-2 focus:ring-link">Cancelar</button>
               </div>
             </fieldset>
           ) : null}
 
           <div className="grid gap-3">
             <div>
-              <label htmlFor="task-description-editor" className="text-[11px] font-semibold text-slate-600">Edición rápida</label>
+              <label htmlFor="task-description-editor" className="text-label font-semibold text-muted">Edición rápida</label>
               <textarea
                 ref={textareaRef}
                 id="task-description-editor"
@@ -201,18 +203,18 @@ export function TaskDescriptionEditor({
                   }
                 }}
                 placeholder="Explica el objetivo, pega enlaces o añade una imagen…"
-                className="mt-1 min-h-32 w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm leading-relaxed shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="mt-1 min-h-32 w-full resize-y rounded-panel border border-line bg-surface px-3 py-2.5 text-body leading-relaxed shadow-rest focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
               />
             </div>
-            <div className="rounded-xl border border-white bg-white p-3 shadow-sm" aria-live="polite">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Vista previa</p>
-              {draft.trim() ? <div className="mt-1 text-sm"><Markdown>{draft}</Markdown></div> : <p className="mt-2 text-xs text-slate-400">Tu contenido se verá aquí.</p>}
+            <div className="rounded-panel border border-surface bg-surface p-3 shadow-rest" aria-live="polite">
+              <p className="text-label font-bold uppercase text-faint">Vista previa</p>
+              {draft.trim() ? <div className="mt-1 text-body"><Markdown>{draft}</Markdown></div> : <p className="mt-2 text-small text-faint">Tu contenido se verá aquí.</p>}
             </div>
           </div>
 
-          <div className="flex flex-wrap justify-end gap-2 border-t border-sky-100 pt-3">
-            <button type="button" onClick={cancelEditing} disabled={saving} className="min-h-10 rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-sky-500">Cancelar</button>
-            <button type="button" disabled={!dirty || saving} onClick={() => void saveDescription()} className="min-h-10 rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-sky-500">{saving ? "Guardando…" : "Guardar descripción"}</button>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-link-bg pt-3">
+            <button type="button" onClick={cancelEditing} disabled={saving} className="min-h-10 rounded-soft px-3 py-2 text-small font-semibold text-muted hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-link">Cancelar</button>
+            <button type="button" disabled={!dirty || saving} onClick={() => void saveDescription()} className="min-h-10 rounded-soft bg-link px-3 py-2 text-small font-semibold text-surface shadow-rest hover:bg-link disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-link">{saving ? "Guardando…" : "Guardar descripción"}</button>
           </div>
         </div>
       )}
@@ -224,19 +226,19 @@ export function ArtifactBlock({ artifact }: { artifact: Artifact }) {
   const [open, setOpen] = useState(true);
   const isDiff = artifact.kind === "diff" || /\.(diff|patch)$/.test(artifact.title);
   return (
-    <div className="rounded-md border border-slate-200">
+    <div className="rounded-tight border border-line">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex min-h-10 w-full items-center gap-2 bg-slate-50 px-3 py-2 text-left text-xs focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-inset"
+        className="flex min-h-10 w-full items-center gap-2 bg-surface-2 px-3 py-2 text-left text-small focus:outline-none focus:ring-2 focus:ring-link focus:ring-inset"
       >
-        <span className="rounded bg-slate-200 px-1 py-0.5 font-mono text-[10px]">{artifact.kind}</span>
+        <span className="rounded bg-line px-1 py-0.5 font-mono text-label">{artifact.kind}</span>
         <span className="min-w-0 flex-1 truncate font-medium">{artifact.title}</span>
-        <span className="text-slate-400" aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <span className="text-faint" aria-hidden="true">{open ? "▾" : "▸"}</span>
       </button>
       {open ? (
-        <div className="p-3 text-sm">
+        <div className="p-3 text-body">
           {artifact.content ? (
             isDiff ? (
               <CodeBlock code={artifact.content} lang="diff" />
@@ -244,11 +246,11 @@ export function ArtifactBlock({ artifact }: { artifact: Artifact }) {
               <Markdown>{artifact.content}</Markdown>
             )
           ) : artifact.path ? (
-            <p className="break-words text-xs text-slate-500">
-              Archivo en workspace: <code className="rounded bg-slate-100 px-1">{artifact.path}</code>
+            <p className="break-words text-small text-muted">
+              Archivo en workspace: <code className="rounded bg-line-soft px-1">{artifact.path}</code>
             </p>
           ) : (
-            <p className="text-xs text-slate-400">(sin contenido)</p>
+            <p className="text-small text-faint">(sin contenido)</p>
           )}
         </div>
       ) : null}
@@ -284,51 +286,51 @@ function ContextStrip({ task, detailProject, sources, documents, onOpenContext }
   const contextSources = sources ?? [];
   const contextDocuments = documents ?? [];
   return (
-    <section className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3" aria-labelledby="task-context-title">
+    <section className="mt-4 rounded-panel border border-line bg-surface-2 p-3" aria-labelledby="task-context-title">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="task-context-title" className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Contexto operativo</h3>
-        <Link to="/context" onClick={onOpenContext} className="text-[10px] font-semibold text-sky-700 underline underline-offset-2">abrir contexto</Link>
+        <h3 id="task-context-title" className="text-label font-bold uppercase text-muted">Contexto operativo</h3>
+        <Link to="/context" onClick={onOpenContext} className="text-label font-semibold text-link underline underline-offset-2">abrir contexto</Link>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-small">
         {detailProject ? (
-          <Link to="/board" onClick={onOpenContext} className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:border-slate-400">
+          <Link to="/board" onClick={onOpenContext} className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface px-2 py-1 font-semibold text-ink-2 hover:border-faint">
             <span aria-hidden="true">⌂</span>
             <span className="max-w-[14rem] truncate">{detailProject.name}</span>
           </Link>
         ) : (
-          <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-500">Proyecto no disponible</span>
+          <span className="rounded-full border border-line bg-surface px-2 py-1 text-muted">Proyecto no disponible</span>
         )}
-        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-500">{task.stage}</span>
-        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-500">{contextSources.length} fuentes</span>
-        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-500">{contextDocuments.length} documentos</span>
+        <span className="rounded-full border border-line bg-surface px-2 py-1 text-label text-muted">{STAGE_LABELS[task.stage]}</span>
+        <span className="rounded-full border border-line bg-surface px-2 py-1 text-label text-muted">{contextSources.length} fuentes</span>
+        <span className="rounded-full border border-line bg-surface px-2 py-1 text-label text-muted">{contextDocuments.length} documentos</span>
       </div>
       {contextSources.length > 0 || contextDocuments.length > 0 ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Fuentes vinculadas</p>
+            <p className="text-label font-semibold uppercase text-faint">Fuentes vinculadas</p>
             <ul className="mt-1 space-y-1">
               {contextSources.slice(0, 3).map((source) => (
-                <li key={source.id} className="truncate text-xs text-slate-600" title={source.externalRef.title}>
-                  <span className="mr-1 text-slate-400" aria-hidden="true">↗</span>{source.externalRef.title}
+                <li key={source.id} className="truncate text-small text-muted" title={source.externalRef.title}>
+                  <span className="mr-1 text-faint" aria-hidden="true">↗</span>{source.externalRef.title}
                 </li>
               ))}
-              {contextSources.length > 3 ? <li className="text-[10px] text-slate-400">+{contextSources.length - 3} más</li> : null}
+              {contextSources.length > 3 ? <li className="text-label text-faint">+{contextSources.length - 3} más</li> : null}
             </ul>
           </div>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Documentos del proyecto</p>
+            <p className="text-label font-semibold uppercase text-faint">Documentos del proyecto</p>
             <ul className="mt-1 space-y-1">
               {contextDocuments.slice(0, 3).map((document) => (
-                <li key={document.id} className="truncate text-xs text-slate-600" title={document.title}>
-                  <span className="mr-1 text-slate-400" aria-hidden="true">▤</span>{document.title}
+                <li key={document.id} className="truncate text-small text-muted" title={document.title}>
+                  <span className="mr-1 text-faint" aria-hidden="true">▤</span>{document.title}
                 </li>
               ))}
-              {contextDocuments.length > 3 ? <li className="text-[10px] text-slate-400">+{contextDocuments.length - 3} más</li> : null}
+              {contextDocuments.length > 3 ? <li className="text-label text-faint">+{contextDocuments.length - 3} más</li> : null}
             </ul>
           </div>
         </div>
       ) : (
-        <p className="mt-2 text-[11px] text-slate-400">No hay fuentes ni documentos vinculados en este proyecto.</p>
+        <p className="mt-2 text-label text-faint">No hay fuentes ni documentos vinculados en este proyecto.</p>
       )}
     </section>
   );
@@ -380,9 +382,9 @@ export function TaskFieldsEditor({
   }
 
   return (
-    <section className="mt-4 rounded-xl border border-slate-200 bg-white p-3" aria-labelledby="task-fields-title">
+    <section className="mt-4 rounded-panel border border-line bg-surface p-3" aria-labelledby="task-fields-title">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="task-fields-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+        <h3 id="task-fields-title" className="text-small font-bold uppercase text-muted">
           Ficha
         </h3>
         {!editing ? (
@@ -390,7 +392,7 @@ export function TaskFieldsEditor({
             type="button"
             data-testid="edit-title"
             onClick={() => setEditing(true)}
-            className="min-h-9 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-400 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="min-h-9 rounded-soft border border-line px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:bg-link-bg focus:outline-none focus:ring-2 focus:ring-link"
           >
             Editar título
           </button>
@@ -399,7 +401,7 @@ export function TaskFieldsEditor({
 
       {editing ? (
         <div className="mt-2">
-          <label htmlFor="task-title-input" className="text-[11px] font-semibold text-slate-600">
+          <label htmlFor="task-title-input" className="text-label font-semibold text-muted">
             Título
           </label>
           <input
@@ -408,10 +410,10 @@ export function TaskFieldsEditor({
             value={draftTitle}
             onChange={(event) => setDraftTitle(event.target.value)}
             aria-invalid={Boolean(titleError)}
-            className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+            className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
           />
           {titleError ? (
-            <p className="mt-1 text-[11px] text-rose-700" role="alert">
+            <p className="mt-1 text-label text-broken" role="alert">
               {titleError}
             </p>
           ) : null}
@@ -421,7 +423,7 @@ export function TaskFieldsEditor({
               data-testid="save-title"
               disabled={Boolean(titleError) || !dirty || saving}
               onClick={() => void saveTitle()}
-              className="min-h-9 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="min-h-9 rounded-soft bg-ink px-3 py-1.5 text-small font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-40"
             >
               {saving ? "Guardando…" : "Guardar título"}
             </button>
@@ -431,18 +433,18 @@ export function TaskFieldsEditor({
                 setDraftTitle(title);
                 setEditing(false);
               }}
-              className="min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              className="min-h-9 rounded-soft px-3 py-1.5 text-small font-semibold text-muted hover:bg-line-soft"
             >
               Cancelar
             </button>
           </div>
         </div>
       ) : (
-        <p className="mt-2 break-words text-sm font-medium text-slate-800">{title}</p>
+        <p className="mt-2 break-words text-body font-medium text-ink">{title}</p>
       )}
 
-      <div className="mt-3 border-t border-slate-100 pt-3">
-        <label htmlFor="task-priority" className="text-[11px] font-semibold text-slate-600">
+      <div className="mt-3 border-t border-line-soft pt-3">
+        <label htmlFor="task-priority" className="text-label font-semibold text-muted">
           Prioridad
         </label>
         <select
@@ -451,7 +453,7 @@ export function TaskFieldsEditor({
           value={priority}
           disabled={saving}
           onChange={(event) => void onSave({ priority: event.target.value as TaskPriority })}
-          className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:bg-slate-50"
+          className="mt-1 min-h-10 w-full rounded-soft border border-line bg-surface px-2 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link disabled:bg-surface-2"
         >
           {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((value) => (
             <option key={value} value={value}>
@@ -493,7 +495,7 @@ export function DefinitionOfDoneEditor({
   return (
     <section className="mt-4" aria-labelledby="task-dod-title">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="task-dod-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+        <h3 id="task-dod-title" className="text-small font-bold uppercase text-muted">
           Definición de terminado
         </h3>
         {!editing ? (
@@ -501,7 +503,7 @@ export function DefinitionOfDoneEditor({
             type="button"
             data-testid="edit-dod"
             onClick={() => setEditing(true)}
-            className="min-h-9 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-emerald-400 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="min-h-9 rounded-soft border border-line px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-done hover:bg-done-bg focus:outline-none focus:ring-2 focus:ring-done"
           >
             {value ? "Editar definición" : "Añadir definición"}
           </button>
@@ -519,7 +521,7 @@ export function DefinitionOfDoneEditor({
             onChange={(event) => setDraft(event.target.value)}
             rows={3}
             placeholder="Qué tiene que existir para dar la tarea por cerrada"
-            className="mt-1 w-full resize-y rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="mt-1 w-full resize-y rounded-soft border border-line px-2.5 py-2 text-body focus:border-done focus:outline-none focus:ring-2 focus:ring-done"
           />
           <div className="mt-2 flex gap-2">
             <button
@@ -527,7 +529,7 @@ export function DefinitionOfDoneEditor({
               data-testid="save-dod"
               disabled={saving || draft.trim() === value.trim()}
               onClick={() => void save()}
-              className="min-h-9 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="min-h-9 rounded-soft bg-done px-3 py-1.5 text-small font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-40"
             >
               {saving ? "Guardando…" : "Guardar DoD"}
             </button>
@@ -537,18 +539,18 @@ export function DefinitionOfDoneEditor({
                 setDraft(value);
                 setEditing(false);
               }}
-              className="min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              className="min-h-9 rounded-soft px-3 py-1.5 text-small font-semibold text-muted hover:bg-line-soft"
             >
               Cancelar
             </button>
           </div>
         </div>
       ) : value ? (
-        <div className="mt-1 rounded-md bg-emerald-50 p-2 text-sm">
+        <div className="mt-1 rounded-tight bg-done-bg p-2 text-body">
           <Markdown>{value}</Markdown>
         </div>
       ) : (
-        <p className="mt-1 text-xs text-amber-700" data-testid="dod-missing">
+        <p className="mt-1 text-small text-work" data-testid="dod-missing">
           ⚠ Sin definición de terminado: la tarea no podrá pasar a READY.
         </p>
       )}
@@ -589,23 +591,23 @@ export function TaskLabelsEditor({
   }
 
   return (
-    <section className="mt-4 rounded-xl border border-slate-200 bg-white p-3" aria-labelledby="task-labels-title">
-      <h3 id="task-labels-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+    <section className="mt-4 rounded-panel border border-line bg-surface p-3" aria-labelledby="task-labels-title">
+      <h3 id="task-labels-title" className="text-small font-bold uppercase text-muted">
         Etiquetas
       </h3>
       <div className="mt-2 flex flex-wrap gap-1.5" data-testid="task-labels">
-        {draft.length === 0 ? <span className="text-xs text-slate-400">Sin etiquetas.</span> : null}
+        {draft.length === 0 ? <span className="text-small text-faint">Sin etiquetas.</span> : null}
         {draft.map((label) => (
           <span
             key={label}
-            className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700"
+            className="inline-flex items-center gap-1 rounded-full bg-line-soft px-2 py-0.5 text-label font-medium text-ink-2"
           >
             {label}
             <button
               type="button"
               aria-label={`Quitar etiqueta ${label}`}
               onClick={() => setDraft(draft.filter((item) => item !== label))}
-              className="text-slate-400 hover:text-rose-600"
+              className="text-faint hover:text-broken"
             >
               ×
             </button>
@@ -629,7 +631,7 @@ export function TaskLabelsEditor({
             }
           }}
           placeholder="cliente, urgente…"
-          className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-300 px-2.5 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          className="min-h-10 min-w-0 flex-1 rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
         />
         <datalist id="task-label-catalog">
           {catalog.map((usage) => (
@@ -640,7 +642,7 @@ export function TaskLabelsEditor({
           type="button"
           onClick={() => add(input)}
           disabled={!input.trim()}
-          className="min-h-10 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="min-h-10 rounded-soft border border-line px-3 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Añadir
         </button>
@@ -650,7 +652,7 @@ export function TaskLabelsEditor({
         data-testid="save-labels"
         disabled={!dirty || saving}
         onClick={() => void onSave(draft)}
-        className="mt-2 min-h-10 w-full rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+        className="mt-2 min-h-10 w-full rounded-soft bg-ink px-3 py-2 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {saving && dirty ? "Guardando etiquetas…" : "Guardar etiquetas"}
       </button>
@@ -711,7 +713,7 @@ export function ArtifactAttacher({
   }
 
   return (
-    <div className="mt-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3" data-testid="artifact-attacher">
+    <div className="mt-2 rounded-panel border border-dashed border-line bg-surface-2 p-3" data-testid="artifact-attacher">
       <div className="flex gap-1.5" role="tablist" aria-label="Tipo de artefacto">
         {(["file", "link"] as const).map((value) => (
           <button
@@ -724,8 +726,8 @@ export function ArtifactAttacher({
               setMode(value);
               setError(null);
             }}
-            className={`min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold ${
-              mode === value ? "bg-slate-900 text-white" : "border border-slate-300 bg-white text-slate-600"
+            className={`min-h-9 rounded-soft px-3 py-1.5 text-small font-semibold ${
+              mode === value ? "bg-ink text-surface" : "border border-line bg-surface text-muted"
             }`}
           >
             {value === "file" ? "Archivo" : "Enlace"}
@@ -735,7 +737,7 @@ export function ArtifactAttacher({
 
       {mode === "file" ? (
         <div className="mt-2">
-          <label htmlFor="artifact-file" className="text-[11px] font-semibold text-slate-600">
+          <label htmlFor="artifact-file" className="text-label font-semibold text-muted">
             Archivo del entregable
           </label>
           <input
@@ -747,12 +749,12 @@ export function ArtifactAttacher({
               setFile(event.target.files?.[0] ?? null);
               setError(null);
             }}
-            className="mt-1 block w-full text-xs text-slate-600 file:mr-2 file:min-h-9 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+            className="mt-1 block w-full text-small text-muted file:mr-2 file:min-h-9 file:rounded-soft file:border-0 file:bg-ink file:px-3 file:py-2 file:text-small file:font-semibold file:text-surface"
           />
         </div>
       ) : (
         <div className="mt-2">
-          <label htmlFor="artifact-url" className="text-[11px] font-semibold text-slate-600">
+          <label htmlFor="artifact-url" className="text-label font-semibold text-muted">
             URL del entregable
           </label>
           <input
@@ -765,17 +767,17 @@ export function ArtifactAttacher({
               setError(null);
             }}
             placeholder="https://…"
-            className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+            className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
           />
           {urlError ? (
-            <p className="mt-1 text-[11px] text-rose-700" role="alert">
+            <p className="mt-1 text-label text-broken" role="alert">
               {urlError}
             </p>
           ) : null}
         </div>
       )}
 
-      <label htmlFor="artifact-title" className="mt-2 block text-[11px] font-semibold text-slate-600">
+      <label htmlFor="artifact-title" className="mt-2 block text-label font-semibold text-muted">
         Título (opcional)
       </label>
       <input
@@ -784,11 +786,11 @@ export function ArtifactAttacher({
         value={title}
         onChange={(event) => setTitle(event.target.value)}
         placeholder="Ej. Informe de diagnóstico v2"
-        className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
       />
 
       {error ? (
-        <p className="mt-2 text-[11px] text-rose-700" role="alert">
+        <p className="mt-2 text-label text-broken" role="alert">
           {error}
         </p>
       ) : null}
@@ -798,7 +800,7 @@ export function ArtifactAttacher({
         data-testid="artifact-submit"
         disabled={saving || Boolean(urlError)}
         onClick={() => void submit()}
-        className="mt-2 min-h-10 w-full rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-40"
+        className="mt-2 min-h-10 w-full rounded-soft bg-link px-3 py-2 text-small font-semibold text-surface hover:bg-link disabled:cursor-not-allowed disabled:opacity-40"
       >
         {saving ? "Adjuntando…" : "Adjuntar artefacto"}
       </button>
@@ -820,13 +822,13 @@ export function BlockedMoveNotice({
 }) {
   return (
     <div
-      className="mb-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900"
+      className="mb-3 rounded-soft border border-broken bg-broken-bg p-3 text-small text-broken"
       role="alert"
       data-testid="blocked-move"
     >
       <p className="font-semibold">No se pudo mover la tarea a {blocked.to}.</p>
       <p className="mt-1 break-words">{blocked.message}</p>
-      <p className="mt-1 text-[11px] text-rose-800">
+      <p className="mt-1 text-label text-broken">
         Adjunta el entregable (archivo o enlace) abajo y vuelve a intentarlo.
       </p>
       <div className="mt-2 flex flex-wrap gap-2">
@@ -835,14 +837,14 @@ export function BlockedMoveNotice({
           data-testid="blocked-move-retry"
           disabled={retrying}
           onClick={onRetry}
-          className="min-h-9 rounded-md bg-rose-700 px-3 py-1.5 font-semibold text-white hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-40"
+          className="min-h-9 rounded-tight bg-broken px-3 py-1.5 font-semibold text-surface hover:bg-broken disabled:cursor-not-allowed disabled:opacity-40"
         >
           {retrying ? "Reintentando…" : `Reintentar mover a ${blocked.to}`}
         </button>
         <button
           type="button"
           onClick={onDismiss}
-          className="min-h-9 rounded-md border border-rose-300 bg-white px-3 py-1.5 font-semibold text-rose-700 hover:bg-rose-100"
+          className="min-h-9 rounded-tight border border-broken bg-surface px-3 py-1.5 font-semibold text-broken hover:bg-broken-bg"
         >
           Descartar aviso
         </button>
@@ -966,23 +968,23 @@ export function TaskDrawer() {
   return (
     <Dialog.Root open={open} onOpenChange={(value) => !value && closeTask()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-[1px]" />
-        <Dialog.Content className="fixed inset-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl focus:outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:w-[480px] sm:max-w-[100vw]" aria-describedby="task-drawer-description">
-          <div className="flex shrink-0 items-start gap-3 border-b border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5">
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-[1px]" />
+        <Dialog.Content className="fixed inset-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-surface shadow-float focus:outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:w-[480px] sm:max-w-[100vw]" aria-describedby="task-drawer-description">
+          <div className="flex shrink-0 items-start gap-3 border-b border-line bg-surface px-4 py-3 shadow-rest sm:px-5">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Ficha de operación</p>
-              <Dialog.Title className="mt-1 truncate text-base font-semibold leading-snug text-slate-900">{task?.title ?? "Detalle de tarea"}</Dialog.Title>
+              <p className="text-label font-bold uppercase text-faint">Ficha de operación</p>
+              <Dialog.Title className="mt-1 truncate text-title font-semibold leading-snug text-ink">{task?.title ?? "Detalle de tarea"}</Dialog.Title>
               <Dialog.Description id="task-drawer-description" className="sr-only">Detalle, responsables, vencimiento y evidencia de la tarea.</Dialog.Description>
               {task ? (
-                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-small text-muted">
                   <StatusPill status={task.status} />
-                  <span>{task.stage}</span>
-                  <span className="text-slate-300">·</span>
+                  <span>{STAGE_LABELS[task.stage]}</span>
+                  <span className="text-line">·</span>
                   <DuePill task={task} />
                 </div>
               ) : null}
             </div>
-            <Dialog.Close className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500" aria-label="Cerrar ficha">×</Dialog.Close>
+            <Dialog.Close className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-soft text-title text-faint hover:bg-line-soft hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link" aria-label="Cerrar ficha">×</Dialog.Close>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 sm:px-5">
@@ -991,10 +993,10 @@ export function TaskDrawer() {
             {!loading && !detailError && task ? (
               <>
                 {mutationError ? (
-                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900" role="alert" data-testid="task-conflict">
+                  <div className="rounded-soft border border-work bg-work-bg p-3 text-small text-work" role="alert" data-testid="task-conflict">
                     <p className="font-semibold">La tarea cambió mientras la editabas.</p>
                     <p className="mt-1 break-words">{mutationError}</p>
-                    <button type="button" onClick={() => void retryTaskDetail()} className="mt-2 min-h-9 rounded-md border border-amber-400 bg-white px-3 py-1.5 font-semibold hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500">Recargar tarea</button>
+                    <button type="button" onClick={() => void retryTaskDetail()} className="mt-2 min-h-9 rounded-tight border border-work bg-surface px-3 py-1.5 font-semibold hover:bg-work-bg focus:outline-none focus:ring-2 focus:ring-work">Recargar tarea</button>
                   </div>
                 ) : null}
 
@@ -1027,78 +1029,78 @@ export function TaskDrawer() {
                 />
 
                 {task.status === "REVIEW" ? (
-                  <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3" aria-labelledby="review-decision-title">
-                    <p id="review-decision-title" className="text-xs font-semibold text-violet-900">En revisión: decide tú <span className="font-normal">(REVIEW → DONE solo humano)</span></p>
+                  <section className="mt-4 rounded-panel border border-decide-line bg-decide-bg p-3" aria-labelledby="review-decision-title">
+                    <p id="review-decision-title" className="text-small font-semibold text-decide">En revisión: decide tú <span className="font-normal">(REVIEW → DONE solo humano)</span></p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => void approveTaskReview(task.id)} className="min-h-10 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">✓ Aprobar</button>
-                      <button type="button" onClick={() => setRejecting((value) => !value)} className="min-h-10 rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-500">✕ Rechazar</button>
+                      <button type="button" onClick={() => void approveTaskReview(task.id)} className="min-h-10 rounded-tight bg-done px-3 py-2 text-small font-semibold text-surface hover:bg-done focus:outline-none focus:ring-2 focus:ring-done">✓ Aprobar</button>
+                      <button type="button" onClick={() => setRejecting((value) => !value)} className="min-h-10 rounded-tight border border-broken bg-surface px-3 py-2 text-small font-semibold text-broken hover:bg-broken-bg focus:outline-none focus:ring-2 focus:ring-broken">✕ Rechazar</button>
                     </div>
                     {rejecting ? (
                       <div className="mt-2">
                         <label htmlFor="reject-note" className="sr-only">Nota de rechazo</label>
-                        <textarea id="reject-note" value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} placeholder="Nota de rechazo (obligatoria): el agente la recibe como input" className="w-full rounded-md border border-slate-300 p-2 text-xs focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-300" rows={3} />
-                        <button type="button" disabled={!rejectNote.trim()} onClick={() => { void rejectTaskReview(task.id, rejectNote.trim()); setRejecting(false); setRejectNote(""); }} className="mt-2 min-h-9 rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Confirmar rechazo</button>
+                        <textarea id="reject-note" value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} placeholder="Nota de rechazo (obligatoria): el agente la recibe como input" className="w-full rounded-tight border border-line p-2 text-small focus:border-broken focus:outline-none focus:ring-2 focus:ring-broken" rows={3} />
+                        <button type="button" disabled={!rejectNote.trim()} onClick={() => { void rejectTaskReview(task.id, rejectNote.trim()); setRejecting(false); setRejectNote(""); }} className="mt-2 min-h-9 rounded-tight bg-broken px-3 py-1.5 text-small font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-40">Confirmar rechazo</button>
                       </div>
                     ) : null}
                   </section>
                 ) : null}
 
-                <section className="mt-4 rounded-xl border border-slate-200 bg-white p-3" aria-labelledby="task-people-title">
+                <section className="mt-4 rounded-panel border border-line bg-surface p-3" aria-labelledby="task-people-title">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 id="task-people-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Responsables humanos</h3>
-                    {taskSaving && assignmentDirty ? <span className="text-[10px] text-slate-400">Guardando…</span> : null}
+                    <h3 id="task-people-title" className="text-small font-bold uppercase text-muted">Responsables humanos</h3>
+                    {taskSaving && assignmentDirty ? <span className="text-label text-faint">Guardando…</span> : null}
                   </div>
                   <fieldset className="mt-2">
-                    <legend className="text-[11px] text-slate-500">Selecciona una o más personas</legend>
-                    {peopleLoading ? <p className="mt-2 text-xs text-slate-400">Cargando equipo…</p> : null}
+                    <legend className="text-label text-muted">Selecciona una o más personas</legend>
+                    {peopleLoading ? <p className="mt-2 text-small text-faint">Cargando equipo…</p> : null}
                     {peopleError ? (
-                      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800" role="alert">
+                      <div className="mt-2 rounded-tight border border-work-line bg-work-bg p-2 text-label text-work" role="alert">
                         <p>{peopleError}</p>
                         <button type="button" onClick={() => void loadPeople()} className="mt-1 font-semibold underline">Reintentar roster</button>
                       </div>
                     ) : null}
-                    {!peopleLoading && peopleOptions.length === 0 ? <p className="mt-2 text-xs text-amber-700" data-testid="no-project-people">La organización de este proyecto no tiene personas registradas: una tarea sólo admite responsables de la organización dueña del proyecto.</p> : null}
+                    {!peopleLoading && peopleOptions.length === 0 ? <p className="mt-2 text-small text-work" data-testid="no-project-people">La organización de este proyecto no tiene personas registradas: una tarea sólo admite responsables de la organización dueña del proyecto.</p> : null}
                     <div className="mt-2 space-y-1">
                       {peopleOptions.map((person) => {
                         const checked = assigneeIds.includes(person.id);
                         return (
-                          <label key={person.id} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-slate-50 focus-within:bg-slate-50">
-                            <input type="checkbox" checked={checked} onChange={(event) => { const next = event.target.checked ? [...assigneeIds, person.id] : assigneeIds.filter((id) => id !== person.id); setAssigneeIds(next); setPrimaryAssigneeId((current) => (next.includes(current) ? current : next[0] ?? "")); setAssignmentDirty(true); }} className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-sky-500" />
+                          <label key={person.id} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-tight px-2 py-1.5 hover:bg-surface-2 focus-within:bg-surface-2">
+                            <input type="checkbox" checked={checked} onChange={(event) => { const next = event.target.checked ? [...assigneeIds, person.id] : assigneeIds.filter((id) => id !== person.id); setAssigneeIds(next); setPrimaryAssigneeId((current) => (next.includes(current) ? current : next[0] ?? "")); setAssignmentDirty(true); }} className="h-4 w-4 rounded border-line text-ink focus:ring-link" />
                             <PersonAvatar name={displayPersonName(person)} size={5} />
-                            <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{displayPersonName(person)}</span>
-                            {primaryAssigneeId === person.id ? <span className="text-[10px] font-semibold text-sky-700">principal</span> : null}
+                            <span className="min-w-0 flex-1 truncate text-small font-medium text-ink-2">{displayPersonName(person)}</span>
+                            {primaryAssigneeId === person.id ? <span className="text-label font-semibold text-link">principal</span> : null}
                           </label>
                         );
                       })}
                     </div>
                   </fieldset>
-                  <div className="mt-3 border-t border-slate-100 pt-3">
-                    <label htmlFor="primary-assignee" className="text-[11px] font-semibold text-slate-600">Persona principal</label>
-                    <select id="primary-assignee" value={primaryAssigneeId} disabled={assigneeIds.length === 0 || taskSaving} onChange={(event) => { setPrimaryAssigneeId(event.target.value); setAssignmentDirty(true); }} className="mt-1 min-h-10 w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:bg-slate-50">
+                  <div className="mt-3 border-t border-line-soft pt-3">
+                    <label htmlFor="primary-assignee" className="text-label font-semibold text-muted">Persona principal</label>
+                    <select id="primary-assignee" value={primaryAssigneeId} disabled={assigneeIds.length === 0 || taskSaving} onChange={(event) => { setPrimaryAssigneeId(event.target.value); setAssignmentDirty(true); }} className="mt-1 min-h-10 w-full rounded-tight border border-line bg-surface px-2 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link disabled:bg-surface-2">
                       <option value="">Sin persona principal</option>
                       {peopleOptions.filter((person) => assigneeIds.includes(person.id)).map((person) => <option key={person.id} value={person.id}>{displayPersonName(person)}</option>)}
                     </select>
                   </div>
-                  <button type="button" disabled={!assignmentDirty || taskSaving || peopleLoading} onClick={() => void saveAssignment()} className="mt-3 min-h-10 w-full rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-sky-500">{taskSaving && assignmentDirty ? "Guardando responsables…" : "Guardar responsables"}</button>
+                  <button type="button" disabled={!assignmentDirty || taskSaving || peopleLoading} onClick={() => void saveAssignment()} className="mt-3 min-h-10 w-full rounded-tight bg-ink px-3 py-2 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-link">{taskSaving && assignmentDirty ? "Guardando responsables…" : "Guardar responsables"}</button>
                 </section>
 
-                <section className="mt-4 rounded-xl border border-slate-200 bg-white p-3" aria-labelledby="task-due-title">
+                <section className="mt-4 rounded-panel border border-line bg-surface p-3" aria-labelledby="task-due-title">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 id="task-due-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Vencimiento</h3>
+                    <h3 id="task-due-title" className="text-small font-bold uppercase text-muted">Vencimiento</h3>
                     <DuePill task={task} />
                   </div>
-                  <label htmlFor="task-due-at" className="mt-2 block text-[11px] text-slate-500">Fecha y hora local</label>
-                  <input id="task-due-at" data-testid="task-due-at" type="datetime-local" value={dueInput} onChange={(event) => { setDueInput(event.target.value); setDueDirty(true); }} className="mt-1 min-h-10 w-full rounded-md border border-slate-300 px-2 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                  <label htmlFor="task-due-at" className="mt-2 block text-label text-muted">Fecha y hora local</label>
+                  <input id="task-due-at" data-testid="task-due-at" type="datetime-local" value={dueInput} onChange={(event) => { setDueInput(event.target.value); setDueDirty(true); }} className="mt-1 min-h-10 w-full rounded-tight border border-line px-2 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link" />
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <button type="button" disabled={!dueInput || taskSaving} onClick={() => { setDueInput(""); setDueDirty(true); }} className="min-h-9 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Quitar fecha</button>
-                    <button type="button" disabled={!dueDirty || taskSaving} onClick={() => void saveDueDate()} className="min-h-9 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">{taskSaving && dueDirty ? "Guardando…" : "Guardar fecha"}</button>
-                    <span className="text-[10px] text-slate-400">{taskDueState(task) === "none" ? "Sin vencimiento" : dueLabel(task)}</span>
+                    <button type="button" disabled={!dueInput || taskSaving} onClick={() => { setDueInput(""); setDueDirty(true); }} className="min-h-9 rounded-tight border border-line px-3 py-1.5 text-small font-semibold text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40">Quitar fecha</button>
+                    <button type="button" disabled={!dueDirty || taskSaving} onClick={() => void saveDueDate()} className="min-h-9 rounded-tight bg-ink px-3 py-1.5 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40">{taskSaving && dueDirty ? "Guardando…" : "Guardar fecha"}</button>
+                    <span className="text-label text-faint">{taskDueState(task) === "none" ? "Sin vencimiento" : dueLabel(task)}</span>
                   </div>
                 </section>
 
-                <section className="mt-4 rounded-xl border border-slate-200 bg-white p-3" aria-labelledby="task-agent-title">
-                  <h3 id="task-agent-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Agente asignado</h3>
-                  {agent ? <div className="mt-2 flex items-center gap-2"><span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-800 text-[10px] font-bold text-white">{agent.name.slice(0, 2).toUpperCase()}</span><span className="text-xs font-medium text-slate-700">{agent.name}</span><span className="text-[10px] text-slate-400">proyección de ejecución</span></div> : <p className="mt-2 text-xs text-slate-400">Sin agente asignado.</p>}
+                <section className="mt-4 rounded-panel border border-line bg-surface p-3" aria-labelledby="task-agent-title">
+                  <h3 id="task-agent-title" className="text-small font-bold uppercase text-muted">Agente asignado</h3>
+                  {agent ? <div className="mt-2 flex items-center gap-2"><span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-ink text-label font-bold text-surface">{agent.name.slice(0, 2).toUpperCase()}</span><span className="text-small font-medium text-ink-2">{agent.name}</span><span className="text-label text-faint">proyección de ejecución</span></div> : <p className="mt-2 text-small text-faint">Sin agente asignado.</p>}
                 </section>
 
                 <TaskDescriptionEditor
@@ -1114,8 +1116,8 @@ export function TaskDrawer() {
                 />
 
                 <section className="mt-4" aria-labelledby="task-artifacts-title">
-                  <h3 id="task-artifacts-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Artefactos ({detail.artifacts.length})</h3>
-                  <div className="mt-1 space-y-2">{detail.artifacts.length === 0 ? <p className="text-xs text-slate-400">Sin artefactos. Nada llega a REVIEW/DONE sin evidencia.</p> : detail.artifacts.map((artifact) => <ArtifactBlock key={artifact.id} artifact={artifact} />)}</div>
+                  <h3 id="task-artifacts-title" className="text-small font-bold uppercase text-muted">Artefactos ({detail.artifacts.length})</h3>
+                  <div className="mt-1 space-y-2">{detail.artifacts.length === 0 ? <p className="text-small text-faint">Sin artefactos. Nada llega a REVIEW/DONE sin evidencia.</p> : detail.artifacts.map((artifact) => <ArtifactBlock key={artifact.id} artifact={artifact} />)}</div>
                   <ArtifactAttacher
                     saving={taskSaving}
                     onUpload={(file, artifactTitle) => uploadTaskArtifact(task.id, file, artifactTitle)}
@@ -1124,17 +1126,17 @@ export function TaskDrawer() {
                 </section>
 
                 <section className="mt-4" aria-labelledby="task-timeline-title">
-                  <h3 id="task-timeline-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Timeline</h3>
-                  <ol className="mt-2 space-y-2">{timeline.map((event) => <li key={event.id} className="flex items-start gap-2 text-xs"><span className="w-24 shrink-0 pt-0.5 text-[10px] text-slate-400">{fmtDate(event.createdAt)}</span><span className="min-w-0 flex-1"><span className="font-medium">{event.kind}</span>{event.fromStatus || event.toStatus ? <span className="text-slate-500"> {event.fromStatus ?? "·"} → {event.toStatus ?? "·"}</span> : null}<span className="text-slate-400"> · {actorLabel(event.actor)}</span>{event.runId ? <><span className="text-slate-400"> · </span><Link to={`/runs/${event.runId}`} onClick={closeTask} className="text-sky-700 underline">run</Link></> : null}</span></li>)}{timeline.length === 0 ? <li className="text-xs text-slate-400">(sin eventos)</li> : null}</ol>
+                  <h3 id="task-timeline-title" className="text-small font-bold uppercase text-muted">Timeline</h3>
+                  <ol className="mt-2 space-y-2">{timeline.map((event) => <li key={event.id} className="flex items-start gap-2 text-small"><span className="w-24 shrink-0 pt-0.5 text-label text-faint">{fmtDate(event.createdAt)}</span><span className="min-w-0 flex-1"><span className="font-medium">{event.kind}</span>{event.fromStatus || event.toStatus ? <span className="text-muted"> {event.fromStatus ?? "·"} → {event.toStatus ?? "·"}</span> : null}<span className="text-faint"> · {actorLabel(event.actor)}</span>{event.runId ? <><span className="text-faint"> · </span><Link to={paths.run(event.runId)} onClick={closeTask} className="text-link underline">run</Link></> : null}</span></li>)}{timeline.length === 0 ? <li className="text-small text-faint">(sin eventos)</li> : null}</ol>
                 </section>
 
                 <section className="mt-4" aria-labelledby="task-comments-title">
-                  <h3 id="task-comments-title" className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Comentarios ({comments.length})</h3>
-                  <div className="mt-2 space-y-2">{comments.map((event) => <div key={event.id} className="rounded-md bg-slate-50 p-2 text-xs"><p className="text-[10px] text-slate-400">{actorLabel(event.actor)} · {fmtDate(event.createdAt)}</p><p className="mt-0.5 break-words">{String((event.payload as { body?: string })?.body ?? "")}</p></div>)}</div>
-                  <div className="mt-2 flex gap-2"><label htmlFor="task-comment" className="sr-only">Comentario</label><input id="task-comment" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Comentar…" className="min-h-10 min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-2 text-xs focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300" /><button type="button" disabled={!comment.trim()} onClick={() => { void commentOnTask(task.id, comment.trim()); setComment(""); }} className="min-h-10 rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Enviar</button></div>
+                  <h3 id="task-comments-title" className="text-small font-bold uppercase text-muted">Comentarios ({comments.length})</h3>
+                  <div className="mt-2 space-y-2">{comments.map((event) => <div key={event.id} className="rounded-tight bg-surface-2 p-2 text-small"><p className="text-label text-faint">{actorLabel(event.actor)} · {fmtDate(event.createdAt)}</p><p className="mt-0.5 break-words">{String((event.payload as { body?: string })?.body ?? "")}</p></div>)}</div>
+                  <div className="mt-2 flex gap-2"><label htmlFor="task-comment" className="sr-only">Comentario</label><input id="task-comment" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Comentar…" className="min-h-10 min-w-0 flex-1 rounded-tight border border-line px-2 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link" /><button type="button" disabled={!comment.trim()} onClick={() => { void commentOnTask(task.id, comment.trim()); setComment(""); }} className="min-h-10 rounded-tight bg-ink px-3 py-2 text-small font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-40">Enviar</button></div>
                 </section>
 
-                <section className="mt-5 border-t border-slate-100 pt-3 text-[10px] text-slate-400"><p className="break-words">id {task.id} · v{task.version} · intentos {task.attempts}{task.leaseUntil ? ` · lease hasta ${fmtDate(task.leaseUntil)}` : ""}</p>{detail.runs.length > 0 ? <p className="mt-1">Runs: {detail.runs.map((run, index) => <span key={run.id}>{index > 0 ? ", " : ""}<Link to={`/runs/${run.id}`} onClick={closeTask} className="text-sky-700 underline">{run.id.slice(0, 8)} ({run.status})</Link></span>)}</p> : null}</section>
+                <section className="mt-5 border-t border-line-soft pt-3 text-label text-faint"><p className="break-words">id {task.id} · v{task.version} · intentos {task.attempts}{task.leaseUntil ? ` · lease hasta ${fmtDate(task.leaseUntil)}` : ""}</p>{detail.runs.length > 0 ? <p className="mt-1 text-small text-muted">La trabajaron {detail.runs.map((run, index) => <span key={run.id}>{index > 0 ? ", " : ""}<Link to={paths.run(run.id)} onClick={closeTask} className="text-link underline">una ejecución {run.status}</Link></span>)}. <Link to={`${paths.sistema("actividad")}?tarea=${task.id}`} onClick={closeTask} className="text-link underline">Ver todas</Link></p> : null}</section>
               </>
             ) : null}
           </div>

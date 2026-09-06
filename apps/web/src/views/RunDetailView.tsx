@@ -10,6 +10,7 @@ import { api, ApiError } from "../lib/api";
 import type { Run, Span, TopicEvent } from "../lib/types";
 import { useStore } from "../state/store";
 import { Markdown } from "../components/Markdown";
+import { paths } from "../lib/paths";
 import {
   AgentAvatar,
   ErrorBox,
@@ -26,17 +27,17 @@ function SpanNode({ span, all, depth }: { span: Span; all: Span[]; depth: number
   const kindIcon = span.kind === "llm" ? "🧠" : span.kind === "tool" ? "🔧" : span.kind === "subrun" ? "🪆" : "·";
   return (
     <div style={{ marginLeft: depth * 16 }}>
-      <div className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-slate-50">
+      <div className="flex items-center gap-2 rounded px-2 py-1 text-small hover:bg-surface-2">
         <span aria-hidden>{kindIcon}</span>
         <span className="font-mono font-medium">{span.name}</span>
-        <span className="text-slate-400">{span.kind}</span>
-        <span className="text-slate-400">{duration}</span>
+        <span className="text-faint">{span.kind}</span>
+        <span className="text-faint">{duration}</span>
         {span.status ? (
           <span
-            className={`rounded px-1 py-0.5 text-[9px] font-semibold ${
+            className={`rounded px-1 py-0.5 text-label font-semibold ${
               span.status === "ok" || span.status === "succeeded"
-                ? "bg-emerald-100 text-emerald-700"
-                : "bg-rose-100 text-rose-700"
+                ? "bg-done-bg text-done"
+                : "bg-broken-bg text-broken"
             }`}
           >
             {span.status}
@@ -133,11 +134,11 @@ function Replay({ runId }: { runId: string }) {
   if (!events) return <Spinner label="Leyendo eventos persistidos…" />;
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="flex items-center gap-2 text-xs">
+    <div className="rounded-soft border border-line bg-surface p-3">
+      <div className="flex items-center gap-2 text-small">
         <button
           onClick={() => setPlaying((v) => !v)}
-          className="rounded bg-slate-900 px-2 py-1 font-medium text-white"
+          className="rounded bg-ink px-2 py-1 font-medium text-surface"
         >
           {playing ? "⏸ Pausa" : "▶ Reproducir"}
         </button>
@@ -146,7 +147,7 @@ function Replay({ runId }: { runId: string }) {
             setCursor(0);
             setPlaying(true);
           }}
-          className="rounded border border-slate-300 px-2 py-1"
+          className="rounded border border-line px-2 py-1"
         >
           ⟲ Desde el inicio
         </button>
@@ -158,37 +159,37 @@ function Replay({ runId }: { runId: string }) {
           onChange={(e) => setCursor(Number(e.target.value))}
           className="flex-1"
         />
-        <span className="w-20 text-right text-slate-400">
+        <span className="w-20 text-right text-faint">
           {cursor}/{events.length}
         </span>
       </div>
-      <div className="mt-3 space-y-2 text-sm">
+      <div className="mt-3 space-y-2 text-body">
         {painted.lines.map((l, i) => (
-          <p key={i} className="text-xs text-slate-400">
+          <p key={i} className="text-small text-faint">
             {l}
           </p>
         ))}
         {painted.tools.map((t, i) => (
           <span
             key={i}
-            className={`mr-1 inline-block rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+            className={`mr-1 inline-block rounded border px-1.5 py-0.5 font-mono text-label ${
               !t.done
-                ? "border-amber-300 bg-amber-50"
+                ? "border-work bg-work-bg"
                 : t.isError
-                  ? "border-rose-300 bg-rose-50"
-                  : "border-emerald-300 bg-emerald-50"
+                  ? "border-broken bg-broken-bg"
+                  : "border-done bg-done-bg"
             }`}
           >
             🔧 {t.name}
           </span>
         ))}
         {painted.text ? (
-          <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
+          <div className="rounded-tight border border-line-soft bg-surface-2 p-2">
             <Markdown>{painted.text}</Markdown>
           </div>
         ) : null}
         {events.length === 0 ? (
-          <p className="text-xs text-slate-400">Este run no dejó eventos en su topic.</p>
+          <p className="text-small text-faint">Este run no dejó eventos en su topic.</p>
         ) : null}
       </div>
     </div>
@@ -198,6 +199,9 @@ function Replay({ runId }: { runId: string }) {
 export default function RunDetailView() {
   const { runId } = useParams<{ runId: string }>();
   const agents = useStore((s) => s.agents);
+  const projects = useStore((s) => s.projects);
+  const boardTasks = useStore((s) => s.board.tasks);
+  const openTask = useStore((s) => s.openTask);
   const [data, setData] = useState<{ run: Run; spans: Span[]; tree: Run[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showReplay, setShowReplay] = useState(false);
@@ -236,19 +240,58 @@ export default function RunDetailView() {
   const roots = spans.filter((s) => !s.parentSpanId);
   const children = tree.filter((r) => r.parentRunId === run.id);
   const parent = run.parentRunId ? tree.find((r) => r.id === run.parentRunId) : null;
+  const project = run.projectId ? projects.find((p) => p.id === run.projectId) : null;
+  const taskTitle = run.taskId ? (boardTasks[run.taskId]?.title ?? null) : null;
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
+    <div className="mx-auto max-w-[1180px] space-y-4 px-4 pb-20 pt-5 sm:px-5">
+      {/* Miga de pan: desde una ejecución siempre se vuelve a su trabajo. */}
+      <nav aria-label="Dónde estás" className="flex flex-wrap items-center gap-2 text-small text-muted">
+        <Link to={paths.sistema("actividad")} className="press hover:text-ink-2">
+          Actividad
+        </Link>
+        {run.projectId ? (
+          <>
+            <span aria-hidden="true" className="text-faint">
+              ›
+            </span>
+            <Link to={paths.proyecto(run.projectId, "ruta")} className="press text-link hover:underline">
+              {project?.name ?? "Proyecto"}
+            </Link>
+          </>
+        ) : null}
+        {run.taskId ? (
+          <>
+            <span aria-hidden="true" className="text-faint">
+              ›
+            </span>
+            <button
+              onClick={() => void openTask(run.taskId!)}
+              className="press text-link hover:underline"
+              data-testid="run-breadcrumb-task"
+            >
+              {taskTitle ?? "Su tarjeta"}
+            </button>
+          </>
+        ) : null}
+        <span aria-hidden="true" className="text-faint">
+          ›
+        </span>
+        <span className="font-mono text-ink-2">{run.id.slice(0, 8)}</span>
+      </nav>
+
+      <div className="rounded-panel border border-line-soft bg-surface p-4 shadow-rest">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-mono text-sm font-bold">run {run.id.slice(0, 8)}</h1>
+          <h1 className="text-title text-ink">
+            Ejecución <span className="font-mono text-body">{run.id.slice(0, 8)}</span>
+          </h1>
           <RunStatusPill status={run.status} />
           {agent ? (
-            <span className="flex items-center gap-1.5 text-xs">
+            <span className="flex items-center gap-1.5 text-small">
               <AgentAvatar name={agent.name} slug={agent.slug} size={5} /> {agent.name}
             </span>
           ) : null}
-          <span className="text-xs text-slate-400">
+          <span className="text-small text-faint">
             trigger {run.trigger} · runtime {run.runtime} · modelo {run.model ?? "no reportado"}
           </span>
           <div className="ml-auto flex gap-2">
@@ -267,75 +310,82 @@ export default function RunDetailView() {
                     setCancelling(false);
                   }
                 }}
-                className="rounded-md border border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                className="rounded-tight border border-broken px-2.5 py-1 text-small font-medium text-broken hover:bg-broken-bg"
               >
                 Cancelar run
               </button>
             ) : null}
             <button
               onClick={() => setShowReplay((v) => !v)}
-              className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700"
+              className="rounded-tight bg-ink px-2.5 py-1 text-small font-medium text-surface hover:bg-ink-2"
             >
               {showReplay ? "Ocultar reproducción" : "▶ Reproducir"}
             </button>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-          <div className="rounded bg-slate-50 p-2">
-            <p className="text-slate-400">Tokens in / out</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-small sm:grid-cols-4">
+          <div className="rounded bg-surface-2 p-2">
+            <p className="text-faint">Tokens in / out</p>
             <p className="font-medium">
               {fmtTokens(run.tokensIn)} / {fmtTokens(run.tokensOut)}
             </p>
           </div>
-          <div className="rounded bg-slate-50 p-2">
-            <p className="text-slate-400">Cache read / write</p>
+          <div className="rounded bg-surface-2 p-2">
+            <p className="text-faint">Cache read / write</p>
             <p className="font-medium">
               {fmtTokens(run.tokensCacheRead)} / {fmtTokens(run.tokensCacheWrite)}
             </p>
           </div>
-          <div className="rounded bg-slate-50 p-2">
-            <p className="text-slate-400">Coste USD</p>
+          <div className="rounded bg-surface-2 p-2">
+            <p className="text-faint">Coste USD</p>
             <p className="font-medium">{fmtCost(run.costUsd)}</p>
           </div>
-          <div className="rounded bg-slate-50 p-2">
-            <p className="text-slate-400">Inicio / fin</p>
+          <div className="rounded bg-surface-2 p-2">
+            <p className="text-faint">Inicio / fin</p>
             <p className="font-medium">
               {fmtDate(run.startedAt)} → {fmtDate(run.finishedAt)}
             </p>
           </div>
         </div>
         {run.error ? (
-          <p className="mt-2 rounded bg-rose-50 p-2 text-xs text-rose-700">{run.error}</p>
+          <p className="mt-2 rounded bg-broken-bg p-2 text-small text-broken">{run.error}</p>
         ) : null}
-        <div className="mt-2 flex flex-wrap gap-3 text-xs">
+        <div className="mt-2 flex flex-wrap gap-3 text-small">
           {parent ? (
-            <Link to={`/runs/${parent.id}`} className="text-sky-700 underline">
-              ↑ padre {parent.id.slice(0, 8)}
+            <Link to={paths.run(parent.id)} className="press text-link hover:underline">
+              Ejecución que la lanzó
             </Link>
           ) : null}
           {run.resumeOfRunId ? (
-            <Link to={`/runs/${run.resumeOfRunId}`} className="text-sky-700 underline">
-              ⟳ reanuda a {run.resumeOfRunId.slice(0, 8)}
+            <Link to={paths.run(run.resumeOfRunId)} className="press text-link hover:underline">
+              Reanuda una anterior
             </Link>
           ) : null}
           {children.map((c) => (
-            <Link key={c.id} to={`/runs/${c.id}`} className="text-sky-700 underline">
-              ↓ hijo {c.id.slice(0, 8)} ({c.status})
+            <Link key={c.id} to={paths.run(c.id)} className="press text-link hover:underline">
+              Ejecución hija ({c.status})
             </Link>
           ))}
-          {run.taskId ? <span className="text-slate-400">tarea {run.taskId.slice(0, 8)}</span> : null}
+          {run.taskId ? (
+            <button
+              onClick={() => void openTask(run.taskId!)}
+              className="press text-link hover:underline"
+            >
+              Abrir la tarjeta que trabajó
+            </button>
+          ) : null}
         </div>
       </div>
 
       {showReplay && runId ? <Replay runId={runId} /> : null}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+      <div className="rounded-soft border border-line bg-surface p-4">
+        <h2 className="text-small font-bold uppercase text-faint">
           Árbol de spans ({spans.length})
         </h2>
         <div className="mt-2">
           {roots.length === 0 ? (
-            <p className="text-xs text-slate-400">Este run no registró spans.</p>
+            <p className="text-small text-faint">Este run no registró spans.</p>
           ) : (
             roots.map((s) => <SpanNode key={s.id} span={s} all={spans} depth={0} />)
           )}

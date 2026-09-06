@@ -28,8 +28,8 @@ function readableDate(value: string | null): string {
 }
 
 function stageClass(done: boolean, problem = false): string {
-  if (problem) return "border-rose-200 bg-rose-50 text-rose-800";
-  return done ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500";
+  if (problem) return "border-broken-line bg-broken-bg text-broken";
+  return done ? "border-done-line bg-done-bg text-done" : "border-line bg-surface-2 text-muted";
 }
 
 function associationLabel(status: string): string {
@@ -65,7 +65,7 @@ function ProcessRail({ item }: { item: MeetingProcessingItem }) {
   return (
     <ol className="grid grid-cols-2 gap-1.5 sm:grid-cols-4" aria-label={`Etapas de ${item.title}`}>
       {stages.map((stage, index) => (
-        <li key={stage.label} className={`rounded-lg border px-2 py-1.5 text-[10px] font-semibold ${stageClass(stage.done, hasError && index === 1)}`}>
+        <li key={stage.label} className={`rounded-soft border px-2 py-1.5 text-label font-semibold ${stageClass(stage.done, hasError && index === 1)}`}>
           <span className="mr-1" aria-hidden>{stage.done ? "✓" : index + 1}</span>
           {stage.label}
         </li>
@@ -76,42 +76,42 @@ function ProcessRail({ item }: { item: MeetingProcessingItem }) {
 
 function QueueCard({ label, value, tone }: { label: string; value: number | null; tone: "amber" | "rose" | "emerald" }) {
   const tones = {
-    amber: "border-amber-200 bg-amber-50 text-amber-900",
-    rose: "border-rose-200 bg-rose-50 text-rose-900",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    amber: "border-work-line bg-work-bg text-work",
+    rose: "border-broken-line bg-broken-bg text-broken",
+    emerald: "border-done-line bg-done-bg text-done",
   };
   return (
-    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
-      <p className="text-xl font-bold tabular-nums">{value ?? "—"}</p>
-      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">{label}</p>
+    <div className={`rounded-panel border p-3 ${tones[tone]}`}>
+      <p className="text-display font-bold tabular-nums">{value ?? "—"}</p>
+      <p className="mt-0.5 text-label font-bold uppercase opacity-75">{label}</p>
     </div>
   );
 }
 
 function MeetingRow({ item }: { item: MeetingProcessingItem }) {
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+    <article className="rounded-panel border border-line bg-surface p-3 shadow-rest sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h2 className="break-words text-sm font-bold text-slate-900">{item.title}</h2>
-          <p className="mt-1 text-[11px] text-slate-500">
+          <h2 className="break-words text-body font-bold text-ink">{item.title}</h2>
+          <p className="mt-1 text-label text-muted">
             {item.source ?? "Fuente no reportada"} · {readableDate(item.meeting_date ?? item.created_at)}
           </p>
         </div>
         <div className="flex flex-wrap gap-1">
-          <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.processing_error ? "bg-rose-100 text-rose-800" : "bg-sky-100 text-sky-800"}`}>
+          <span className={`rounded-full px-2 py-1 text-label font-bold ${item.processing_error ? "bg-broken-bg text-broken" : "bg-link-bg text-link"}`}>
             {item.processing_error ? "requiere atención" : associationLabel(item.association_status)}
           </span>
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{taskLabel(item.task_status)}</span>
+          <span className="rounded-full bg-line-soft px-2 py-1 text-label font-semibold text-muted">{taskLabel(item.task_status)}</span>
         </div>
       </div>
       <div className="mt-3"><ProcessRail item={item} /></div>
-      <div className="mt-3 grid gap-2 text-[11px] text-slate-600 sm:grid-cols-3">
-        <p><span className="font-semibold text-slate-800">Extracción:</span> {item.extracted_at ? readableDate(item.extracted_at) : `${item.extract_attempts ?? 0} intentos`}</p>
-        <p><span className="font-semibold text-slate-800">Notion histórico:</span> {item.notion_synced_at ? "sincronizado" : "sin escritura"}</p>
-        <p><span className="font-semibold text-slate-800">Wiki:</span> {item.wiki_exported ? "exportada" : "pendiente"}</p>
+      <div className="mt-3 grid gap-2 text-label text-muted sm:grid-cols-3">
+        <p><span className="font-semibold text-ink">Extracción:</span> {item.extracted_at ? readableDate(item.extracted_at) : `${item.extract_attempts ?? 0} intentos`}</p>
+        <p><span className="font-semibold text-ink">Notion histórico:</span> {item.notion_synced_at ? "sincronizado" : "sin escritura"}</p>
+        <p><span className="font-semibold text-ink">Wiki:</span> {item.wiki_exported ? "exportada" : "pendiente"}</p>
       </div>
-      {item.processing_error ? <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800">{item.processing_error}</p> : null}
+      {item.processing_error ? <p role="alert" className="mt-3 rounded-soft border border-broken-line bg-broken-bg px-3 py-2 text-small leading-relaxed text-broken">{item.processing_error}</p> : null}
     </article>
   );
 }
@@ -138,16 +138,17 @@ export default function MeetingProcessingView() {
   useEffect(() => { void load(filter); }, [filter]);
 
   return (
-    <div className="min-h-full bg-slate-100 p-3 sm:p-5 lg:p-6">
+    <div className="min-h-full bg-line-soft p-3 sm:p-5 lg:p-6">
       <div className="mx-auto max-w-6xl space-y-5">
-        <header className="overflow-hidden rounded-2xl bg-slate-950 px-4 py-5 text-white shadow-sm sm:px-6">
+        {/* Sin cabecera oscura por vista: el fondo es el mismo en todo el producto. */}
+        <header className="overflow-hidden rounded-panel border border-line-soft bg-surface px-4 py-5 shadow-rest sm:px-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div className="max-w-2xl">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">2brain / WhatsAppHub · lectura operativa</p>
-              <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">Procesamiento de reuniones</h1>
-              <p className="mt-2 text-sm leading-relaxed text-slate-300">La cola real de captura, extracción, revisión humana y evidencia. Esta vista no ejecuta procesamiento ni crea tareas: protege el historial y la compuerta de confirmación del 2brain original.</p>
+              <p className="text-label uppercase text-muted">2brain / WhatsAppHub · lectura operativa</p>
+              <h1 className="mt-2 text-display text-ink">Procesamiento de reuniones</h1>
+              <p className="mt-2 text-body leading-relaxed text-muted">La cola real de captura, extracción, revisión humana y evidencia. Esta vista no ejecuta procesamiento ni crea tareas: protege el historial y la compuerta de confirmación del 2brain original.</p>
             </div>
-            <button onClick={() => void load()} disabled={loading} className="min-h-11 rounded-lg border border-white/20 bg-white/10 px-4 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-60">
+            <button onClick={() => void load()} disabled={loading} className="press min-h-9 rounded-tight border border-line bg-surface px-3.5 py-1.5 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:opacity-60">
               {loading ? "Actualizando…" : "Actualizar lectura"}
             </button>
           </div>
@@ -159,29 +160,29 @@ export default function MeetingProcessingView() {
           <QueueCard label="Completas" value={data?.queue.complete ?? null} tone="emerald" />
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <section className="rounded-panel border border-line bg-surface p-4 shadow-rest sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Puente hacia AgentOS</p>
-              <h2 className="mt-1 text-base font-bold text-slate-900">Historial intacto, contexto explícito</h2>
-              <p className="mt-1 text-xs text-slate-500">{data ? `${data.agentos_context.linked} reuniones enlazadas · ${data.agentos_context.ingested} ingeridas como evidencia` : "Se cargará cuando WhatsAppHub responda."}</p>
+              <p className="text-label font-bold uppercase text-faint">Puente hacia AgentOS</p>
+              <h2 className="mt-1 text-title font-bold text-ink">Historial intacto, contexto explícito</h2>
+              <p className="mt-1 text-small text-muted">{data ? `${data.agentos_context.linked} reuniones enlazadas · ${data.agentos_context.ingested} ingeridas como evidencia` : "Se cargará cuando WhatsAppHub responda."}</p>
             </div>
-            <Link to="/context" className="inline-flex min-h-10 items-center rounded-lg border border-sky-200 bg-sky-50 px-3 text-xs font-bold text-sky-800 hover:border-sky-400 hover:bg-sky-100">Asociar al contexto de un proyecto</Link>
+            <Link to="/context" className="inline-flex min-h-10 items-center rounded-soft border border-link bg-link-bg px-3 text-small font-bold text-link hover:border-link hover:bg-link-bg">Asociar al contexto de un proyecto</Link>
           </div>
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">Las tareas candidatas siguen siendo candidatas. Solo el flujo de revisión autorizado en WhatsAppHub puede confirmarlas o crear tareas históricas en Notion.</p>
+          <p className="mt-3 rounded-soft border border-work-line bg-work-bg px-3 py-2 text-small leading-relaxed text-work">Las tareas candidatas siguen siendo candidatas. Solo el flujo de revisión autorizado en WhatsAppHub puede confirmarlas o crear tareas históricas en Notion.</p>
         </section>
 
         <section aria-labelledby="meetings-list-heading" className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Cola de origen</p>
-              <h2 id="meetings-list-heading" className="mt-1 text-lg font-bold text-slate-900">Reuniones observadas {data?.total !== null && data?.total !== undefined ? `· ${data.total}` : ""}</h2>
+              <p className="text-label font-bold uppercase text-faint">Cola de origen</p>
+              <h2 id="meetings-list-heading" className="mt-1 text-title font-bold text-ink">Reuniones observadas {data?.total !== null && data?.total !== undefined ? `· ${data.total}` : ""}</h2>
             </div>
             <div className="flex flex-wrap gap-1" role="group" aria-label="Filtrar reuniones por estado">
-              {FILTERS.map((option) => <button key={option.id} onClick={() => setFilter(option.id)} className={`min-h-9 rounded-lg px-3 text-xs font-bold ${filter === option.id ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{option.label}</button>)}
+              {FILTERS.map((option) => <button key={option.id} onClick={() => setFilter(option.id)} className={`min-h-9 rounded-soft px-3 text-small font-bold ${filter === option.id ? "bg-ink text-surface" : "border border-line bg-surface text-muted hover:bg-surface-2"}`}>{option.label}</button>)}
             </div>
           </div>
-          {loading && !data ? <div className="rounded-xl border border-slate-200 bg-white p-5"><Spinner label="Leyendo la cola de WhatsAppHub…" /></div> : null}
+          {loading && !data ? <div className="rounded-panel border border-line bg-surface p-5"><Spinner label="Leyendo la cola de WhatsAppHub…" /></div> : null}
           {error ? <ErrorBox message={error} onRetry={() => void load()} /> : null}
           {!loading && data?.meetings.length === 0 ? <EmptyState title="No hay reuniones para este filtro" hint="La lectura es directa del audit de 2brain; cambia el filtro o actualiza." /> : null}
           <div className="space-y-3">{data?.meetings.map((item) => <MeetingRow key={item.id} item={item} />)}</div>

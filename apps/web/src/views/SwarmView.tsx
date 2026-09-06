@@ -21,16 +21,21 @@ import type { Agent, AgentLayer } from "../lib/types";
 import { useStore } from "../state/store";
 import type { AgentPhase, RunLive } from "../state/reducer";
 import { AgentAvatar, EmptyState, fmtCost } from "../components/ui";
+import { paths } from "../lib/paths";
 
 type SwarmState = "idle" | "pensando" | "usando_tool" | "bloqueado" | "pausado" | "esperando_turno";
 
+/**
+ * Un estado, un tono, y el pulso SIEMPRE en el punto: hacer latir el nodo
+ * entero dejaba el texto ilegible (DIRECCION-VISUAL §9).
+ */
 const STATE_STYLE: Record<SwarmState, { ring: string; label: string; pulse: boolean }> = {
-  idle: { ring: "ring-slate-200", label: "idle", pulse: false },
-  pensando: { ring: "ring-amber-400", label: "pensando", pulse: true },
-  usando_tool: { ring: "ring-sky-500", label: "usando tool", pulse: true },
-  bloqueado: { ring: "ring-rose-500", label: "bloqueado", pulse: false },
-  pausado: { ring: "ring-slate-400", label: "pausado", pulse: false },
-  esperando_turno: { ring: "ring-violet-400", label: "esperando turno", pulse: true },
+  idle: { ring: "ring-line", label: "en reposo", pulse: false },
+  pensando: { ring: "ring-work", label: "pensando", pulse: true },
+  usando_tool: { ring: "ring-work", label: "usando una herramienta", pulse: true },
+  bloqueado: { ring: "ring-broken", label: "bloqueado", pulse: false },
+  pausado: { ring: "ring-line", label: "pausado", pulse: false },
+  esperando_turno: { ring: "ring-decide", label: "esperando turno", pulse: false },
 };
 
 const LAYER_ORDER: AgentLayer[] = ["consultoria", "implementacion", "operacion", "meta"];
@@ -55,34 +60,33 @@ function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
   const st = STATE_STYLE[data.state];
   return (
     <div
-      className={`w-52 rounded-xl border border-slate-200 bg-white p-3 shadow-sm ring-2 ${st.ring} ${
-        st.pulse ? "animate-pulse" : ""
-      }`}
+      className={`w-52 rounded-panel border border-line bg-surface p-3 shadow-rest ring-2 ${st.ring}`}
       data-testid={`swarm-node-${data.agent.slug}`}
     >
-      <Handle type="target" position={Position.Left} className="!bg-slate-300" />
+      <Handle type="target" position={Position.Left} className="!bg-line" />
       <div className="flex items-center gap-2">
         <AgentAvatar name={data.agent.name} slug={data.agent.slug} size={8} />
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold">{data.agent.name}</p>
-          <p className="text-[10px] text-slate-400">{LAYER_LABEL[data.agent.layer]}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-body font-bold">{data.agent.name}</p>
+          <p className="text-label text-faint">{LAYER_LABEL[data.agent.layer]}</p>
         </div>
+        {st.pulse ? <span className="pip" aria-hidden="true" /> : null}
       </div>
-      <p className="mt-2 text-[11px] font-medium text-slate-600">
+      <p className="mt-2 text-label font-medium text-muted">
         {st.label}
-        {data.currentTool ? <span className="font-mono text-sky-700"> · {data.currentTool}</span> : null}
+        {data.currentTool ? <span className="font-mono text-ink-2"> · {data.currentTool}</span> : null}
       </p>
       {data.taskTitle ? (
-        <p className="mt-1 truncate text-[10px] text-slate-500" title={data.taskTitle}>
-          🗂️ {data.taskTitle}
+        <p className="mt-1 truncate text-label text-muted" title={data.taskTitle}>
+          {data.taskTitle}
         </p>
       ) : null}
-      <p className="mt-1 text-[10px] text-slate-400">
+      <p className="mt-1 text-label text-faint">
         {data.tokens === null ? "tokens: no reportado" : `${data.tokens.toLocaleString("es")} tokens`}
         {" · "}
         {data.cost === null ? "coste: no reportado" : fmtCost(data.cost)}
       </p>
-      <Handle type="source" position={Position.Right} className="!bg-slate-300" />
+      <Handle type="source" position={Position.Right} className="!bg-line" />
     </div>
   );
 }
@@ -198,7 +202,7 @@ export default function SwarmView() {
         animated: true,
         label: "delega",
         data: { taskId: e.taskId },
-        style: { stroke: "#0ea5e9", strokeWidth: 2 },
+        style: { stroke: "var(--color-work)", strokeWidth: 2 },
       }))
       .filter((e) => e.source !== e.target);
 
@@ -214,7 +218,7 @@ export default function SwarmView() {
   }
 
   return (
-    <div className="h-full" data-testid="swarm-canvas">
+    <div className="h-[calc(100vh-13rem)] min-h-[26rem]" data-testid="swarm-canvas">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -225,7 +229,7 @@ export default function SwarmView() {
         elementsSelectable
         onNodeClick={(_, node) => {
           const runId = (node.data as AgentNodeData).activeRunId;
-          if (runId) navigate(`/runs/${runId}`);
+          if (runId) navigate(paths.run(runId));
         }}
         onEdgeClick={(_, edge) => {
           const taskId = (edge.data as { taskId?: string } | undefined)?.taskId;
@@ -233,7 +237,7 @@ export default function SwarmView() {
         }}
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={24} color="#e2e8f0" />
+        <Background gap={24} color="var(--color-line)" />
       </ReactFlow>
     </div>
   );
