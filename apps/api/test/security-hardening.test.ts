@@ -295,6 +295,43 @@ describe("CORS", () => {
     }
   });
 
+  it("el preflight expone PATCH y PUT al origen permitido, y nada al no permitido", async () => {
+    setEnv({
+      NODE_ENV: "production",
+      AGENTOS_SHARED_PASSWORD: "contraseña-real-del-despliegue",
+      AGENTOS_SESSION_SECRET: "secreto-de-sesion-largo-y-aleatorio",
+      AGENTOS_WEB_ORIGIN: "https://app.example",
+    });
+
+    let api: Api | undefined;
+    try {
+      api = await buildApi({ ...MINIMAL });
+      const preflight = await api.app.inject({
+        method: "OPTIONS",
+        url: "/api/tasks/abc",
+        headers: {
+          origin: "https://app.example",
+          "access-control-request-method": "PATCH",
+        },
+      });
+      expect(preflight.headers["access-control-allow-methods"]).toContain("PATCH");
+      expect(preflight.headers["access-control-allow-methods"]).toContain("PUT");
+      expect(preflight.headers["access-control-allow-origin"]).toBe("https://app.example");
+
+      const intruso = await api.app.inject({
+        method: "OPTIONS",
+        url: "/api/tasks/abc",
+        headers: {
+          origin: "https://malicioso.example",
+          "access-control-request-method": "PATCH",
+        },
+      });
+      expect(intruso.headers["access-control-allow-methods"]).toBeUndefined();
+    } finally {
+      await api?.close();
+    }
+  });
+
   it("rechaza '*' y exige la variable en producción", () => {
     setEnv({ NODE_ENV: "production", AGENTOS_WEB_ORIGIN: undefined });
     expect(() => resolveCorsOrigin()).toThrow(/AGENTOS_WEB_ORIGIN/);

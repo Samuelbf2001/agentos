@@ -54,6 +54,27 @@ describe("REST", () => {
     expect((me.json() as { session: { personId: string } }).session.personId).toBe(fx.person.id);
   });
 
+  it("GET /api/projects y /api/projects/:id incluyen el nombre de la organización", async () => {
+    const list = await fx.api.app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: fx.authHeaders,
+    });
+    expect(list.statusCode).toBe(200);
+    const { projects } = list.json() as { projects: Array<{ id: string; orgName: string | null }> };
+    const listed = projects.find((p) => p.id === fx.project.id);
+    expect(listed?.orgName).toBe(fx.org.name);
+
+    const single = await fx.api.app.inject({
+      method: "GET",
+      url: `/api/projects/${fx.project.id}`,
+      headers: fx.authHeaders,
+    });
+    expect(single.statusCode).toBe(200);
+    const { project } = single.json() as { project: { orgName: string | null } };
+    expect(project.orgName).toBe(fx.org.name);
+  });
+
   it("movimiento ilegal → 422 invalid_transition (error de dominio con código)", async () => {
     const task = await createTask(fx.db, {
       projectId: fx.project.id,
