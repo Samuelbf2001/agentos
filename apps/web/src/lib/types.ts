@@ -101,6 +101,8 @@ export interface TaskAssignee {
 export interface Project {
   id: string;
   orgId: string;
+  /** Nombre real del cliente (tabla orgs), cuando la API lo enriquece. */
+  orgName?: string | null;
   name: string;
   type: "assessment" | "transform" | "ops";
   stage: Stage;

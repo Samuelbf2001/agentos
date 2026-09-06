@@ -1,6 +1,6 @@
 /**
  * Shell por capacidades (PLAN-v1.5 §Shell por capacidades). Con las
- * capacidades por defecto (rol único, hoy) el menú muestra las cinco
+ * capacidades por defecto (rol único, hoy) el menú lateral muestra todas las
  * entradas; con un conjunto reducido, las entradas ausentes desaparecen del
  * menú y las rutas que dependen de ellas redirigen en vez de romperse.
  */
@@ -67,21 +67,20 @@ describe("shell por capacidades", () => {
     if (realUseCapabilities) vi.mocked(useCapabilities).mockImplementation(realUseCapabilities);
   });
 
-  it("con las capacidades por defecto el menú muestra las cinco entradas", async () => {
+  it("con las capacidades por defecto el menú lateral muestra todas las entradas", async () => {
     const { container } = renderApp("/hoy");
     const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
-    const labels = within(nav)
-      .getAllByRole("link")
-      .map((a) => a.textContent?.trim());
-    expect(labels).toEqual(["Hoy", "Tareas", "Proyectos", "Sistema", "Activo Sixteam"]);
+    for (const label of ["Hoy", "Tareas", "Clientes", "Método", "Equipo", "Configuración"]) {
+      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    }
     expect(container.textContent).toContain("Pausar agentes");
   });
 
-  it("sin nav:sistema, agentes:pausar ni proyecto:conversacion se ocultan y la ruta redirige", async () => {
+  it("sin sistema:configuracion, agentes:pausar ni proyecto:conversacion se ocultan y la ruta redirige", async () => {
     const reduced = new Set(
       [...ALL_CAPABILITIES].filter(
         (c): c is Capability =>
-          c !== "nav:sistema" && c !== "agentes:pausar" && c !== "proyecto:conversacion",
+          c !== "sistema:configuracion" && c !== "agentes:pausar" && c !== "proyecto:conversacion",
       ),
     );
     vi.mocked(useCapabilities).mockReturnValue(reduced);
@@ -89,15 +88,14 @@ describe("shell por capacidades", () => {
     renderApp(`/proyectos/${project.id}/conversacion`);
 
     const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
-    expect(within(nav).queryByText("Sistema")).toBeNull();
+    expect(within(nav).queryByText("Configuración")).toBeNull();
     expect(screen.queryByText("Pausar agentes")).toBeNull();
     expect(screen.queryByText("Reanudar agentes")).toBeNull();
 
     // /proyectos/:id/conversacion redirige a la primera pestaña disponible (Ruta).
     expect(await screen.findByRole("heading", { name: project.name })).toBeTruthy();
-    const tabs = await screen.findByRole("navigation", { name: "Secciones del proyecto" });
-    expect(within(tabs).queryByText("Conversación")).toBeNull();
-    const rutaLink = within(tabs).getByText("Ruta").closest("a");
-    expect(rutaLink?.className).toContain("bg-canvas-deep");
+    expect(within(nav).queryByText("Conversación")).toBeNull();
+    const rutaLink = within(nav).getByRole("link", { name: "Resumen" });
+    expect(rutaLink.className).toContain("bg-link-bg");
   });
 });

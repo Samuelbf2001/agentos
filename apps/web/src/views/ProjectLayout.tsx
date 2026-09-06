@@ -2,17 +2,17 @@
  * Espacio de trabajo de un proyecto (PLAN-v1.5 §Navegación nueva).
  *
  * El proyecto es el contexto, así que el selector del header desaparece: la
- * URL manda y el store se sincroniza con ella. En la barra viven siempre el
- * nombre del cliente y el chip de fase; debajo, las cinco pestañas.
+ * URL manda y el store se sincroniza con ella. Las pestañas se mudaron al
+ * menú lateral (`lib/nav.ts` → `clientNav`); aquí sólo queda la cabecera de
+ * página con el nombre, la fase y el gate.
  */
 import { useEffect } from "react";
-import { Link, NavLink, Navigate, useLocation, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useStore } from "../state/store";
 import { EmptyState, Spinner } from "../components/ui";
 import { Chip, PhaseChip } from "../components/system";
 import {
   CONTEXT_SUBTABS,
-  PROJECT_TAB_LABELS,
   PROJECT_TABS,
   paths,
   type ContextSubtab,
@@ -104,46 +104,10 @@ export default function ProjectLayout() {
 
   return (
     <div className="density-operar flex min-h-full flex-col">
-      <div className="border-b border-line-soft bg-surface/70">
-        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3 sm:px-5">
-          <Link to={paths.proyectos()} className="press text-small text-muted hover:text-ink-2">
-            Proyectos
-          </Link>
-          <span className="text-faint" aria-hidden="true">
-            ›
-          </span>
-          <h1 className="text-title text-ink">{project.name}</h1>
-          <PhaseChip stage={project.stage} />
-          <GateChip state={project.gateState} />
-          <Link
-            to={paths.hoy(project.id)}
-            className="press ml-auto text-small font-semibold text-link hover:underline"
-          >
-            Decisiones de este proyecto
-          </Link>
-        </div>
-        <nav
-          aria-label="Secciones del proyecto"
-          className="mx-auto flex max-w-[1180px] gap-0.5 overflow-x-auto px-4 pb-2 pt-2 sm:px-5"
-        >
-          {tabs.map((entry) => (
-            <NavLink
-              key={entry}
-              to={entry === "contexto" ? paths.contexto(project.id) : paths.proyecto(project.id, entry)}
-              className={() =>
-                // El isActive de NavLink compara contra el "to" resuelto: para
-                // Contexto eso incluiría el subtab por defecto y dejaría de
-                // marcarse activo en /contexto/procesos. `current` ya sabe qué
-                // pestaña vive en la URL, subtabs incluidos.
-                `press inline-flex min-h-9 shrink-0 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
-                  entry === current ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
-                }`
-              }
-            >
-              {PROJECT_TAB_LABELS[entry]}
-            </NavLink>
-          ))}
-        </nav>
+      <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-4 pb-2 sm:px-5">
+        <h1 className="text-title text-ink">{project.name}</h1>
+        <PhaseChip stage={project.stage} />
+        <GateChip state={project.gateState} />
       </div>
 
       <div className="min-h-0 flex-1">

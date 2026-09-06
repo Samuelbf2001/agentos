@@ -1,8 +1,8 @@
 /**
- * El shell (PLAN-v1.5 §2). El proyecto es el objeto raíz cuando se trabaja
- * dentro de un cliente, pero la puerta del trabajo diario es Hoy más Tareas:
- * cinco entradas globales, cinco pestañas dentro del proyecto, y ni un emoji de
- * navegación ni la ruta del navegador impresa en pantalla.
+ * El shell (menú lateral + cambio de perspectiva). El proyecto es el objeto
+ * raíz cuando se trabaja dentro de un cliente, pero la puerta del trabajo
+ * diario es Hoy más Tareas: el lateral pinta agencia o cliente según la URL,
+ * y ni un emoji de navegación ni la ruta del navegador impresa en pantalla.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -68,25 +68,27 @@ describe("shell y navegación", () => {
     localStorage.clear();
   });
 
-  it("tiene exactamente cinco entradas globales, sin emoji ni ruta impresa", async () => {
+  it("el menú lateral pinta las entradas de agencia, sin emoji ni ruta impresa", async () => {
     const { container } = renderApp("/hoy");
     const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
-    const labels = within(nav)
-      .getAllByRole("link")
-      .map((a) => a.textContent?.trim());
-    expect(labels).toEqual(["Hoy", "Tareas", "Proyectos", "Sistema", "Activo Sixteam"]);
+    for (const label of [
+      "Hoy",
+      "Tareas",
+      "Clientes",
+      "Reuniones",
+      "Método",
+      "Equipo",
+      "Ahora mismo",
+      "Actividad",
+      "Fuentes",
+      "Configuración",
+    ]) {
+      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    }
 
     // Los destinos hermanos que se desmontaron ya no son entradas de menú.
     // "Mis tareas" tampoco: ahora es un filtro dentro de Tareas.
-    for (const gone of [
-      "Chat",
-      "Cerebro",
-      "Enjambre",
-      "Esperando por ti",
-      "Admin",
-      "Reuniones",
-      "Mis tareas",
-    ]) {
+    for (const gone of ["Chat", "Cerebro", "Enjambre", "Esperando por ti", "Admin", "Mis tareas"]) {
       expect(within(nav).queryByText(gone)).toBeNull();
     }
     expect(container.textContent).not.toContain("/hoy");
@@ -97,23 +99,21 @@ describe("shell y navegación", () => {
     expect(await screen.findByRole("heading", { level: 1, name: /decisi/i })).toBeTruthy();
   });
 
-  it("dentro del proyecto muestra cliente, fase y las cinco pestañas", async () => {
+  it("dentro del proyecto muestra cliente, fase y el menú de cliente en el lateral", async () => {
     renderApp(`/proyectos/${project.id}/ruta`);
     expect(await screen.findByRole("heading", { name: project.name })).toBeTruthy();
-    const tabs = await screen.findByRole("navigation", { name: "Secciones del proyecto" });
-    expect(
-      within(tabs)
-        .getAllByRole("link")
-        .map((a) => a.textContent?.trim()),
-    ).toEqual(["Ruta", "Tablero", "Contexto", "Conversación", "Actividad"]);
-    // El chip de fase vive en la barra, siempre visible.
-    expect(screen.getByTitle("Fase Entender")).toBeTruthy();
+    const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+    for (const label of ["Resumen", "Tablero", "Contexto", "Conversación", "Actividad", "Decisiones"]) {
+      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    }
+    // El chip de fase vive en la cabecera de la página y en la miga de pan.
+    expect(screen.getAllByTitle("Fase Entender").length).toBeGreaterThan(0);
     expect(screen.getByText("Gate pendiente")).toBeTruthy();
   });
 
   it("las rutas viejas redirigen a su nuevo sitio en vez de romperse", async () => {
     renderApp("/brain");
-    expect(await screen.findByRole("heading", { name: "Sistema" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Fuentes" })).toBeTruthy();
     expect(screen.getByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
   });
 
@@ -122,19 +122,22 @@ describe("shell y navegación", () => {
     expect(await screen.findByText("Quién está trabajando en este segundo y con qué herramienta.")).toBeTruthy();
   });
 
-  it("la barra superior flota con desenfoque y el contenido pasa por debajo", async () => {
+  it("el shell pinta el menú lateral y la barra superior con la miga de pan", async () => {
     const { container } = renderApp("/hoy");
     await screen.findByRole("navigation", { name: "Navegación principal" });
-    expect(container.querySelector("header.chrome")).toBeTruthy();
-    expect(container.querySelector(".scroll-edge")).toBeTruthy();
+    expect(container.querySelector("aside")).toBeTruthy();
+    expect(container.querySelector("header")).toBeTruthy();
+    expect(screen.getAllByText("Sixteam").length).toBeGreaterThan(0);
   });
 
-  it("la sub-pestaña de Contexto vive en la URL", async () => {
+  it("la sub-pestaña de Contexto vive en la URL y el lateral la refleja", async () => {
     renderApp(`/proyectos/${project.id}/contexto/procesos`);
-    const tabs = await screen.findByRole("navigation", { name: "Secciones del proyecto" });
-    const contextoLink = within(tabs).getByText("Contexto").closest("a");
-    expect(contextoLink?.className).toContain("bg-canvas-deep");
-    expect(await screen.findByText("Procesos")).toBeTruthy();
+    const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+    const contextoLink = within(nav).getByRole("link", { name: "Contexto" });
+    expect(contextoLink.className).toContain("bg-link-bg");
+    // El hijo del lateral sólo se pinta con el padre activo.
+    expect(within(nav).getByRole("link", { name: "Procesos" })).toBeTruthy();
+    expect(await screen.findByText("Sin procesos mapeados")).toBeTruthy();
   });
 
   it("una sub-pestaña de Contexto inválida redirige a documentos", async () => {
