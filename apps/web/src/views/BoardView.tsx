@@ -382,14 +382,7 @@ export default function BoardView() {
   }
 
   if (!activeProjectId) {
-    return (
-      <div className="p-4 sm:p-6">
-        <EmptyState
-          title="Entra por un proyecto"
-          hint="El tablero es una lente sobre un proyecto: ábrelo desde la lista de Proyectos y vuelve aquí."
-        />
-      </div>
-    );
+    return null;
   }
   if (boardLoading) return <Spinner label="Cargando tablero…" />;
   if (boardError) {

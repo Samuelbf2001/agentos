@@ -164,11 +164,12 @@ describe("Fuentes del proyecto (vista Contexto)", () => {
     });
   });
 
-  it("sin proyecto activo pide elegir proyecto (no llama a la API de fuentes)", async () => {
+  it("sin proyecto activo no muestra la sección de fuentes ni llama a su API", async () => {
     useStore.setState({ activeProjectId: null });
     const { calls } = mockFetch([{ path: "/api/knowledge", body: { docs: [] } }]);
     render(<ContextView />);
-    expect(await screen.findByText(/Elige un proyecto/)).toBeTruthy();
+    await screen.findByText("Sin documentos");
+    expect(screen.queryByText("Fuentes del proyecto (2brain)")).toBeNull();
     expect(calls.some((c) => c.url.includes("/sources"))).toBe(false);
   });
 });

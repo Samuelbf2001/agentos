@@ -225,11 +225,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
   }
 
   if (!activeProjectId) {
-    return (
-      <div className="mb-3 rounded-soft border border-dashed border-line bg-surface p-3 text-small text-faint">
-        Elige un proyecto (en el tablero) para asociar fuentes de 2brain.
-      </div>
-    );
+    return null;
   }
 
   return (
