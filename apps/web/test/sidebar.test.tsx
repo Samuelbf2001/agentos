@@ -116,6 +116,19 @@ describe("sidebar y cambio de perspectiva", () => {
     }
   });
 
+  it("en /hoy?proyecto=<id> el lateral es el de cliente y Decisiones queda activo", async () => {
+    const { container } = renderApp(`/hoy?proyecto=${project.id}`);
+    await screen.findByRole("navigation", { name: "Navegación principal" });
+    const aside = container.querySelector("aside");
+    const sidebar = within(aside as HTMLElement);
+
+    expect(sidebar.getByRole("link", { name: /Volver a Sixteam/ })).toBeTruthy();
+    expect(sidebar.getByRole("link", { name: "Resumen" })).toBeTruthy();
+    expect(sidebar.queryByText("2brain")).toBeNull();
+    const decisiones = sidebar.getByRole("link", { name: "Decisiones" });
+    expect(decisiones.getAttribute("aria-current")).toBe("page");
+  });
+
   it("el popover del selector lista los clientes y al elegir uno navega a su Ruta", async () => {
     const { container } = renderApp("/hoy");
     await screen.findByRole("navigation", { name: "Navegación principal" });

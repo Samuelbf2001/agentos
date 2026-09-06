@@ -147,7 +147,10 @@ function Shell() {
     [decisionsCount, failedRuns],
   );
 
-  const perspective = useMemo(() => perspectiveFor(location.pathname), [location.pathname]);
+  const perspective = useMemo(
+    () => perspectiveFor(location.pathname, location.search),
+    [location.pathname, location.search],
+  );
   const groups = useMemo(() => {
     const raw = perspective.kind === "client" ? clientNav(perspective.projectId) : agencyNav();
     return raw

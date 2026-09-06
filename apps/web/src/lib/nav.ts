@@ -266,11 +266,17 @@ export type Perspective = { kind: "agency" } | { kind: "client"; projectId: stri
 
 /**
  * Perspectiva actual según la URL: dentro de un proyecto
- * (`/proyectos/<id>/...`) es "cliente"; `/proyectos` a secas y
- * `/nuevo-proyecto` (y todo lo demás) son "agencia".
+ * (`/proyectos/<id>/...`) es "cliente"; `/hoy?proyecto=<id>` (Decisiones de un
+ * cliente concreto) también lo es, para no perder la perspectiva al navegar
+ * ahí desde el lateral de cliente; `/proyectos` a secas y `/nuevo-proyecto`
+ * (y todo lo demás) son "agencia".
  */
-export function perspectiveFor(pathname: string): Perspective {
+export function perspectiveFor(pathname: string, search = ""): Perspective {
   const match = /^\/proyectos\/([^/]+)\/.+/.exec(pathname);
   if (match?.[1]) return { kind: "client", projectId: match[1] };
+  if (pathname.startsWith("/hoy")) {
+    const projectId = new URLSearchParams(search).get("proyecto");
+    if (projectId) return { kind: "client", projectId };
+  }
   return { kind: "agency" };
 }
