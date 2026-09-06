@@ -5,6 +5,7 @@
  */
 import { NavLink, Navigate, useParams } from "react-router-dom";
 import { SYSTEM_TAB_LABELS, SYSTEM_TABS, paths, type SystemTab } from "../lib/paths";
+import { useCapabilities } from "../lib/capabilities";
 import AdminView from "./AdminView";
 import RunsView from "./RunsView";
 import SwarmView from "./SwarmView";
@@ -21,10 +22,20 @@ const TAB_SUBTITLES: Record<SystemTab, string> = {
 
 export default function SystemLayout() {
   const { tab } = useParams<{ tab?: string }>();
+  const caps = useCapabilities();
+  const tabs = SYSTEM_TABS.filter((t) => caps.has(`sistema:${t}`));
   if (!tab || !SYSTEM_TABS.includes(tab as SystemTab)) {
     return <Navigate to={paths.sistema("ahora")} replace />;
   }
   const current = tab as SystemTab;
+
+  if (!tabs.includes(current)) {
+    return tabs.length > 0 ? (
+      <Navigate to={paths.sistema(tabs[0])} replace />
+    ) : (
+      <Navigate to={paths.hoy()} replace />
+    );
+  }
 
   return (
     <div className="flex min-h-full flex-col">
@@ -37,7 +48,7 @@ export default function SystemLayout() {
           aria-label="Secciones del sistema"
           className="mx-auto flex max-w-[1180px] gap-0.5 overflow-x-auto px-4 pb-2 pt-2 sm:px-5"
         >
-          {SYSTEM_TABS.map((entry) => (
+          {tabs.map((entry) => (
             <NavLink
               key={entry}
               to={paths.sistema(entry)}

@@ -18,6 +18,7 @@ import { NavLink, Navigate, Route, Routes, useLocation, useParams } from "react-
 import { useStore } from "./state/store";
 import { Spinner, Toasts } from "./components/ui";
 import { paths } from "./lib/paths";
+import { useCapabilities, type GlobalEntry } from "./lib/capabilities";
 import LoginView from "./views/LoginView";
 import HoyView from "./views/HoyView";
 import TareasView from "./views/TareasView";
@@ -31,6 +32,7 @@ import SearchOverlay from "./views/SearchOverlay";
 import { TaskDrawer } from "./views/TaskDrawer";
 
 interface NavEntry {
+  entry: GlobalEntry;
   to: string;
   label: string;
   isActive: (pathname: string) => boolean;
@@ -39,19 +41,27 @@ interface NavEntry {
 
 const GLOBAL_NAV: NavEntry[] = [
   {
-    to: "/hoy",
+    entry: "hoy",
+    to: paths.hoy(),
     label: "Hoy",
     isActive: (p) => p === "/" || p.startsWith("/hoy"),
     badge: "decisions",
   },
-  { to: "/tareas", label: "Tareas", isActive: (p) => p.startsWith("/tareas") },
+  { entry: "tareas", to: paths.tareas(), label: "Tareas", isActive: (p) => p.startsWith("/tareas") },
   {
-    to: "/proyectos",
+    entry: "proyectos",
+    to: paths.proyectos(),
     label: "Proyectos",
     isActive: (p) => p.startsWith("/proyectos") || p.startsWith("/nuevo-proyecto"),
   },
-  { to: "/sistema", label: "Sistema", isActive: (p) => p.startsWith("/sistema"), badge: "failed" },
-  { to: "/activo", label: "Activo Sixteam", isActive: (p) => p.startsWith("/activo") },
+  {
+    entry: "sistema",
+    to: paths.sistema(),
+    label: "Sistema",
+    isActive: (p) => p.startsWith("/sistema"),
+    badge: "failed",
+  },
+  { entry: "activo", to: paths.activo(), label: "Activo Sixteam", isActive: (p) => p.startsWith("/activo") },
 ];
 
 function NavBadge({ count, tone }: { count: number; tone: "decide" | "broken" }) {
@@ -85,6 +95,7 @@ function Shell() {
   const logout = useStore((s) => s.logout);
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
+  const caps = useCapabilities();
 
   useEffect(() => {
     const t = setInterval(() => void refreshBadges(), 15_000);
@@ -95,17 +106,21 @@ function Shell() {
   // escribe en un campo.
   const pathnameRef = useRef(location.pathname);
   pathnameRef.current = location.pathname;
-  const onKeyDown = useCallback((event: KeyboardEvent) => {
-    if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-    const target = event.target as HTMLElement | null;
-    const tag = target?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
-    // En Tareas la búsqueda ya está integrada en la vista: abrir el overlay
-    // encima sería una segunda caja para lo mismo.
-    if (pathnameRef.current.startsWith("/tareas")) return;
-    event.preventDefault();
-    setSearchOpen(true);
-  }, []);
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!caps.has("buscar")) return;
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      // En Tareas la búsqueda ya está integrada en la vista: abrir el overlay
+      // encima sería una segunda caja para lo mismo.
+      if (pathnameRef.current.startsWith("/tareas")) return;
+      event.preventDefault();
+      setSearchOpen(true);
+    },
+    [caps],
+  );
 
   useEffect(() => {
     window.addEventListener("keydown", onKeyDown);
@@ -135,7 +150,7 @@ function Shell() {
             AgentOS
           </span>
           <nav aria-label="Navegación principal" className="flex gap-0.5 rounded-[11px] bg-canvas-deep p-[3px]">
-            {GLOBAL_NAV.map((item) => {
+            {GLOBAL_NAV.filter((item) => caps.has(`nav:${item.entry}`)).map((item) => {
               const active = item.isActive(location.pathname);
               return (
                 <NavLink
@@ -158,28 +173,32 @@ function Shell() {
             })}
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => setSearchOpen(true)}
-              className="press hidden min-h-8 items-center gap-2 rounded-tight border border-line bg-surface px-2.5 py-1 text-small text-muted sm:inline-flex"
-            >
-              Buscar tareas
-              <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">/</kbd>
-            </button>
-            {killSwitch ? (
+            {caps.has("buscar") ? (
               <button
-                onClick={() => void setKillSwitch(false)}
-                className="press min-h-8 rounded-tight border border-done-line bg-done-bg px-2.5 py-1 text-small font-semibold text-done"
+                onClick={() => setSearchOpen(true)}
+                className="press hidden min-h-8 items-center gap-2 rounded-tight border border-line bg-surface px-2.5 py-1 text-small text-muted sm:inline-flex"
               >
-                Reanudar agentes
+                Buscar tareas
+                <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">/</kbd>
               </button>
-            ) : (
-              <button
-                onClick={() => void setKillSwitch(true)}
-                className="press min-h-8 rounded-tight border border-line bg-surface px-2.5 py-1 text-small font-semibold text-muted"
-              >
-                Pausar agentes
-              </button>
-            )}
+            ) : null}
+            {caps.has("agentes:pausar") ? (
+              killSwitch ? (
+                <button
+                  onClick={() => void setKillSwitch(false)}
+                  className="press min-h-8 rounded-tight border border-done-line bg-done-bg px-2.5 py-1 text-small font-semibold text-done"
+                >
+                  Reanudar agentes
+                </button>
+              ) : (
+                <button
+                  onClick={() => void setKillSwitch(true)}
+                  className="press min-h-8 rounded-tight border border-line bg-surface px-2.5 py-1 text-small font-semibold text-muted"
+                >
+                  Pausar agentes
+                </button>
+              )
+            ) : null}
             <span className="hidden items-center gap-2 border-l border-line pl-3 text-small text-muted lg:flex">
               <span
                 title={
@@ -205,7 +224,7 @@ function Shell() {
 
       <main className="min-h-0 flex-1 overflow-auto">
         <Routes>
-          <Route path="/" element={<Navigate to="/hoy" replace />} />
+          <Route path="/" element={<Navigate to={paths.hoy()} replace />} />
           <Route path="/hoy" element={<HoyView />} />
           <Route path="/tareas" element={<TareasView />} />
           <Route path="/mis-tareas" element={<Navigate to={paths.misTareas()} replace />} />

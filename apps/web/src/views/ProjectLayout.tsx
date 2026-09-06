@@ -18,6 +18,7 @@ import {
   type ContextSubtab,
   type ProjectTab,
 } from "../lib/paths";
+import { useCapabilities } from "../lib/capabilities";
 import BoardView from "./BoardView";
 import ChatView from "./ChatView";
 import ContextView from "./ContextView";
@@ -36,6 +37,8 @@ export default function ProjectLayout() {
   const activeProjectId = useStore((s) => s.activeProjectId);
   const setActiveProject = useStore((s) => s.setActiveProject);
   const bootstrapped = useStore((s) => s.bootstrapped);
+  const caps = useCapabilities();
+  const tabs = PROJECT_TABS.filter((t) => caps.has(`proyecto:${t}`));
 
   // La URL es la fuente de verdad del proyecto activo.
   useEffect(() => {
@@ -49,6 +52,14 @@ export default function ProjectLayout() {
   }
 
   const current = tab as ProjectTab;
+
+  if (!tabs.includes(current)) {
+    return tabs.length > 0 ? (
+      <Navigate to={paths.proyecto(projectId, tabs[0])} replace />
+    ) : (
+      <Navigate to={paths.proyectos()} replace />
+    );
+  }
 
   if (current !== "contexto" && sub) {
     return <Navigate to={paths.proyecto(projectId, current)} replace />;
@@ -107,7 +118,7 @@ export default function ProjectLayout() {
           aria-label="Secciones del proyecto"
           className="mx-auto flex max-w-[1180px] gap-0.5 overflow-x-auto px-4 pb-2 pt-2 sm:px-5"
         >
-          {PROJECT_TABS.map((entry) => (
+          {tabs.map((entry) => (
             <NavLink
               key={entry}
               to={paths.proyecto(project.id, entry)}
