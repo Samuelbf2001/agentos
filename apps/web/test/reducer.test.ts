@@ -129,6 +129,27 @@ describe("reductor — eventos de dominio del tablero", () => {
     expect(effects).toContainEqual({ kind: "refetch_task", taskId: "t1" });
   });
 
+  it("task.updated sustituye la tarjeta entera en el tablero montado y pide refetch de la ficha", () => {
+    const base = emptyEventState();
+    base.board = { projectId: "proj-1", tasks: { t1: makeTask({ title: "Vieja", priority: "low", version: 1 }) } };
+    const nueva = makeTask({ title: "Nueva", priority: "high", version: 2 });
+    const { state, effects } = run(base, [
+      domainEvent("board:proj-1", 1, "task.updated", { task: nueva, actor: "person:ernesto" }),
+    ]);
+    expect(state.board.tasks["t1"]).toEqual(nueva);
+    expect(effects).toContainEqual({ kind: "refetch_task", taskId: "t1" });
+  });
+
+  it("task.updated de una tarjeta que no está en el tablero montado no la añade pero sí relee la ficha", () => {
+    const base = emptyEventState();
+    base.board = { projectId: "proj-1", tasks: {} };
+    const { state, effects } = run(base, [
+      domainEvent("board:proj-2", 1, "task.updated", { task: makeTask({ id: "t-ajena" }) }),
+    ]);
+    expect(state.board.tasks["t-ajena"]).toBeUndefined();
+    expect(effects).toContainEqual({ kind: "refetch_task", taskId: "t-ajena" });
+  });
+
   it("task.created queda ligada a su run (enlace en el chat) y task.delegated crea arista", () => {
     const { state, effects } = run(emptyEventState(), [
       domainEvent("board:proj-1", 1, "task.created", { taskId: "t-nueva", status: "BACKLOG", actor: "agent:alex" }, "r-chat"),

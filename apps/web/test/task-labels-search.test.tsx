@@ -3,11 +3,13 @@
  * búsqueda de tareas con antirrebote.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { useStore } from "../src/state/store";
 import BoardView from "../src/views/BoardView";
-import { TaskDrawer, TaskLabelsEditor } from "../src/views/TaskDrawer";
+import { TaskDrawer } from "../src/views/TaskDrawer";
+import { LabelsEditor } from "../src/views/task/LabelsPicker";
 import { SearchHitRow, TaskSearchBox } from "../src/views/TaskSearchBox";
 import type { TaskSearchHit } from "../src/lib/types";
 import { makeTask, mockFetch, person, project } from "./helpers";
@@ -38,14 +40,29 @@ function baseState() {
   });
 }
 
-describe("TaskLabelsEditor aislado", () => {
+/** El editor es controlado: quien lo abre guarda al cerrar el popover. */
+function ControlledLabels({ onChange }: { onChange: (labels: string[]) => void }) {
+  const [value, setValue] = useState(["cliente"]);
+  return (
+    <LabelsEditor
+      value={value}
+      catalog={[]}
+      onChange={(labels) => {
+        setValue(labels);
+        onChange(labels);
+      }}
+    />
+  );
+}
+
+describe("LabelsEditor aislado", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("añade con Enter normalizando a minúsculas y sin duplicados, y permite quitar", async () => {
-    const onSave = vi.fn().mockResolvedValue(true);
-    render(<TaskLabelsEditor labels={["cliente"]} catalog={[]} saving={false} onSave={onSave} />);
+  it("añade con Enter normalizando a minúsculas y sin duplicados, y permite quitar", () => {
+    const onChange = vi.fn();
+    render(<ControlledLabels onChange={onChange} />);
 
     const input = screen.getByTestId("task-label-input");
     fireEvent.change(input, { target: { value: "  URGENTE  " } });
@@ -58,9 +75,9 @@ describe("TaskLabelsEditor aislado", () => {
     expect(screen.getAllByText("cliente")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Quitar etiqueta cliente" }));
-    fireEvent.click(screen.getByTestId("save-labels"));
 
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(["urgente"]));
+    expect(onChange).toHaveBeenLastCalledWith(["urgente"]);
+    expect(screen.queryByTestId("save-labels")).toBeNull();
   });
 });
 
@@ -77,10 +94,11 @@ describe("Etiquetas en el drawer completo", () => {
     const task = makeTask({ id: "t1", version: 3, labels: ["cliente"] });
     useStore.setState({ taskDetail: { task, events: [], artifacts: [], runs: [], project } });
     const { calls } = mockFetch([
+      { path: "/api/projects/proj-1/people", body: { org_id: "org-1", people: [person] } },
       {
         method: "PUT",
         path: "/api/tasks/t1/labels",
-        body: { task, labels: ["cliente", "urgente"] },
+        body: { task: { ...task, labels: ["cliente", "urgente"] }, labels: ["cliente", "urgente"] },
       },
     ]);
 
@@ -90,10 +108,14 @@ describe("Etiquetas en el drawer completo", () => {
       </MemoryRouter>,
     );
 
-    const input = screen.getByTestId("task-label-input");
+    // Etiquetas va plegada tras "N más propiedades"; el popover guarda al cerrar.
+    fireEvent.click(screen.getByTestId("task-more-properties"));
+    fireEvent.click(screen.getByTestId("prop-labels"));
+    const input = await screen.findByTestId("task-label-input");
     fireEvent.change(input, { target: { value: "urgente" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.click(screen.getByTestId("save-labels"));
+    expect(screen.queryByTestId("save-labels")).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 
     await waitFor(() => {
       const call = calls.find((c) => c.method === "PUT" && c.url.endsWith("/api/tasks/t1/labels"));

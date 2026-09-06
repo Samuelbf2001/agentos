@@ -14,7 +14,7 @@
  * `prefers-reduced-motion` cambia el desplazamiento por un fundido.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { useStore } from "./state/store";
 import { Spinner, Toasts } from "./components/ui";
 import { paths } from "./lib/paths";
@@ -77,6 +77,51 @@ function NavBadge({ count, tone }: { count: number; tone: "decide" | "broken" })
   );
 }
 
+/**
+ * La ficha de tarea vive en la URL como query global `?tarea=<id>` (§4.1):
+ * funciona desde las ocho vistas sin reescribir rutas. URL → store al montar
+ * o al navegar (Atrás cierra, recargar reabre); store → URL al abrir o cerrar
+ * desde la interfaz, con `replace:false` para que Atrás deshaga cada paso.
+ */
+export function useTaskDeepLink(): void {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const taskDetailId = useStore((s) => s.taskDetailId);
+  const openTask = useStore((s) => s.openTask);
+  const closeTask = useStore((s) => s.closeTask);
+  const urlTask = searchParams.get("tarea");
+  const lastUrlTask = useRef<string | null>(null);
+  const lastStoreTask = useRef<string | null>(null);
+
+  // Un solo efecto que decide quién manda según qué lado cambió: dos efectos
+  // separados se pisaban con closures viejas y entraban en bucle.
+  useEffect(() => {
+    const urlChanged = urlTask !== lastUrlTask.current;
+    const storeChanged = taskDetailId !== lastStoreTask.current;
+    lastUrlTask.current = urlTask;
+    lastStoreTask.current = taskDetailId;
+    if (urlTask === taskDetailId) return;
+    if (urlChanged || !storeChanged) {
+      // Navegación (montaje, Atrás, enlace): la URL manda.
+      if (urlTask) void openTask(urlTask);
+      else closeTask();
+      return;
+    }
+    // Abierta o cerrada desde la interfaz: la URL sigue al store.
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        if (taskDetailId) next.set("tarea", taskDetailId);
+        else next.delete("tarea");
+        return next;
+      },
+      { replace: false },
+    );
+    // Sólo reacciona a los dos valores que compara: las funciones cambian de
+    // identidad con cada navegación y volverían a evaluar con datos a medias.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlTask, taskDetailId]);
+}
+
 /** Redirección de las rutas viejas: ningún enlace guardado se rompe. */
 function LegacyRun() {
   const { runId } = useParams<{ runId: string }>();
@@ -96,6 +141,7 @@ function Shell() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const caps = useCapabilities();
+  useTaskDeepLink();
 
   useEffect(() => {
     const t = setInterval(() => void refreshBadges(), 15_000);
@@ -222,7 +268,8 @@ function Shell() {
       </header>
       <div className="scroll-edge sticky top-[52px] z-30 shrink-0" aria-hidden="true" />
 
-      <main className="min-h-0 flex-1 overflow-auto">
+      {/* El side peek empuja el contenido en escritorio ancho (§3.1). */}
+      <main className="min-h-0 flex-1 overflow-auto" style={{ paddingRight: "var(--task-peek-inset, 0px)" }}>
         <Routes>
           <Route path="/" element={<Navigate to={paths.hoy()} replace />} />
           <Route path="/hoy" element={<HoyView />} />

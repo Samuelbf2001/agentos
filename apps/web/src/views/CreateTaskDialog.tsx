@@ -8,10 +8,11 @@
  * descubra el bloqueo al arrastrar la tarjeta.
  */
 import * as Dialog from "@radix-ui/react-dialog";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
 import { PersonAvatar } from "../components/ui";
-import { STAGES, type Person, type Stage, type TaskPriority } from "../lib/types";
+import { displayPersonName, useProjectRoster } from "../lib/roster";
+import { STAGES, type Stage, type TaskPriority } from "../lib/types";
 import { fromDateTimeLocal } from "./TaskDrawer";
 
 export const STAGE_OPTION_LABEL: Record<Stage, string> = {
@@ -81,10 +82,6 @@ export function validateDraft(draft: CreateTaskDraft): { issues: DraftIssues; bl
   return { issues, blocking: Boolean(issues.title || issues.due) };
 }
 
-function displayPersonName(person: Person): string {
-  return person.full_name || person.fullName || `Persona ${person.id.slice(0, 8)}`;
-}
-
 function normalizeLabelInput(raw: string): string {
   return raw.trim().replace(/\s+/g, " ").toLocaleLowerCase("es");
 }
@@ -109,15 +106,12 @@ export function CreateTaskDialog({
 }) {
   const createTask = useStore((state) => state.createTask);
   const taskCreating = useStore((state) => state.taskCreating);
-  const people = useStore((state) => state.people);
-  const peopleLoading = useStore((state) => state.peopleLoading);
-  const loadPeople = useStore((state) => state.loadPeople);
-  const sessionPerson = useStore((state) => state.person);
   const labelCatalog = useStore((state) => state.labelCatalog);
-  const projectPeople = useStore((state) => state.projectPeople);
-  const projectPeopleId = useStore((state) => state.projectPeopleId);
-  const loadProjectPeople = useStore((state) => state.loadProjectPeople);
   const openTask = useStore((state) => state.openTask);
+  // Roster compartido con la ficha: el proyecto manda cuando la API lo dio.
+  const roster = useProjectRoster(open ? projectId : null);
+  const peopleLoading = roster.loading;
+  const peopleOptions = roster.people;
 
   const [draft, setDraft] = useState<CreateTaskDraft>(() => ({
     ...emptyDraft(defaultStage),
@@ -132,29 +126,9 @@ export function CreateTaskDialog({
     setDraft({ ...emptyDraft(defaultStage), title: initialTitle });
     setLabelInput("");
     setTouched({});
-    if (people.length === 0 && !peopleLoading) void loadPeople();
-    if (projectPeopleId !== projectId) void loadProjectPeople(projectId);
     // El foco al primer campo evita que el humano tenga que buscar dónde escribir.
     requestAnimationFrame(() => titleRef.current?.focus());
   }, [open, defaultStage, initialTitle]);
-
-  // El roster del proyecto manda cuando la API lo dio: la asignación exige
-  // que la persona pertenezca a la organización del proyecto, así que ofrecer
-  // el equipo entero sólo produciría rechazos al guardar.
-  const roster = projectPeopleId === projectId ? projectPeople : null;
-  const peopleOptions = useMemo(() => {
-    if (roster) {
-      return [...roster].sort((a, b) =>
-        displayPersonName(a).localeCompare(displayPersonName(b), "es"),
-      );
-    }
-    const map = new Map<string, Person>();
-    for (const candidate of people) map.set(candidate.id, candidate);
-    if (sessionPerson) map.set(sessionPerson.id, sessionPerson);
-    return [...map.values()].sort((a, b) =>
-      displayPersonName(a).localeCompare(displayPersonName(b), "es"),
-    );
-  }, [roster, people, sessionPerson]);
 
   const { issues, blocking } = validateDraft(draft);
 

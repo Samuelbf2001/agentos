@@ -226,9 +226,12 @@ describe("Ficha de tarea: campos editables", () => {
     );
   }
 
-  it("editar el título guarda con PATCH y expected_version", async () => {
+  // Rediseño Notion: el título es un H1 contenteditable que guarda en blur;
+  // ya no existen "Editar título" ni "Guardar título".
+  it("editar el título en sitio guarda con PATCH y expected_version al perder el foco", async () => {
     const task = makeTask({ id: "t1", version: 3 });
     const { calls } = mockFetch([
+      { path: "/api/projects/proj-1/people", body: { org_id: "org-1", people: [person] } },
       {
         method: "PATCH",
         path: "/api/tasks/t1",
@@ -239,11 +242,10 @@ describe("Ficha de tarea: campos editables", () => {
     ]);
     renderDrawerWith(task);
 
-    fireEvent.click(screen.getByTestId("edit-title"));
-    fireEvent.change(screen.getByTestId("task-title-input"), {
-      target: { value: "Mapear el proceso de cobranza" },
-    });
-    fireEvent.click(screen.getByTestId("save-title"));
+    expect(screen.queryByTestId("edit-title")).toBeNull();
+    const title = screen.getByTestId("task-title");
+    title.textContent = "Mapear el proceso de cobranza";
+    fireEvent.blur(title);
 
     await waitFor(() => {
       const call = calls.find((c) => c.method === "PATCH" && c.url.endsWith("/api/tasks/t1"));
@@ -251,20 +253,25 @@ describe("Ficha de tarea: campos editables", () => {
     });
   });
 
-  it("vaciar el título muestra error y deshabilita guardar", () => {
-    const task = makeTask({ id: "t1", version: 3 });
-    renderDrawerWith(task);
-
-    fireEvent.click(screen.getByTestId("edit-title"));
-    fireEvent.change(screen.getByTestId("task-title-input"), { target: { value: "   " } });
-
-    expect(screen.getByRole("alert").textContent).toContain("no puede quedar vacío");
-    expect((screen.getByTestId("save-title") as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("cambiar la prioridad dispara PATCH con priority", async () => {
+  it("vaciar el título no guarda: se restaura el anterior", () => {
     const task = makeTask({ id: "t1", version: 3 });
     const { calls } = mockFetch([
+      { path: "/api/projects/proj-1/people", body: { org_id: "org-1", people: [person] } },
+    ]);
+    renderDrawerWith(task);
+
+    const title = screen.getByTestId("task-title");
+    title.textContent = "   ";
+    fireEvent.blur(title);
+
+    expect(title.textContent).toBe(task.title);
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("cambiar la prioridad desde el popover dispara PATCH con priority", async () => {
+    const task = makeTask({ id: "t1", version: 3 });
+    const { calls } = mockFetch([
+      { path: "/api/projects/proj-1/people", body: { org_id: "org-1", people: [person] } },
       {
         method: "PATCH",
         path: "/api/tasks/t1",
@@ -275,7 +282,8 @@ describe("Ficha de tarea: campos editables", () => {
     ]);
     renderDrawerWith(task);
 
-    fireEvent.change(screen.getByTestId("task-priority"), { target: { value: "high" } });
+    fireEvent.click(screen.getByTestId("prop-priority"));
+    fireEvent.click(await screen.findByTestId("priority-option-high"));
 
     await waitFor(() => {
       const call = calls.find((c) => c.method === "PATCH" && c.url.endsWith("/api/tasks/t1"));
@@ -283,9 +291,10 @@ describe("Ficha de tarea: campos editables", () => {
     });
   });
 
-  it("editar la definición de terminado dispara PATCH con definition_of_done", async () => {
+  it("editar la definición de terminado guarda en blur con definition_of_done", async () => {
     const task = makeTask({ id: "t1", version: 3, definitionOfDone: "Mapa SIPOC validado" });
     const { calls } = mockFetch([
+      { path: "/api/projects/proj-1/people", body: { org_id: "org-1", people: [person] } },
       {
         method: "PATCH",
         path: "/api/tasks/t1",
@@ -296,11 +305,11 @@ describe("Ficha de tarea: campos editables", () => {
     ]);
     renderDrawerWith(task);
 
-    fireEvent.click(screen.getByTestId("edit-dod"));
+    expect(screen.queryByTestId("edit-dod")).toBeNull();
     fireEvent.change(screen.getByTestId("task-dod-input"), {
       target: { value: "Mapa SIPOC validado por el cliente" },
     });
-    fireEvent.click(screen.getByTestId("save-dod"));
+    fireEvent.blur(screen.getByTestId("task-dod-input"));
 
     await waitFor(() => {
       const call = calls.find((c) => c.method === "PATCH" && c.url.endsWith("/api/tasks/t1"));

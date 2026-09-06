@@ -75,4 +75,17 @@ export const paths = {
   sistema: (tab: SystemTab = "ahora") => `/sistema/${tab}`,
   run: (runId: string) => `/sistema/actividad/${runId}`,
   activo: () => "/activo",
+  /**
+   * Ficha de tarea como query global (`?tarea=<id>`): funciona desde cualquier
+   * vista sin reescribir rutas. Recibe pathname+search y devuelve la misma
+   * ubicación con la tarea abierta (o cerrada si `taskId` es null).
+   */
+  conTarea: (pathnameYSearch: string, taskId: string | null) => {
+    const [pathname = "/", search = ""] = pathnameYSearch.split("?");
+    const params = new URLSearchParams(search);
+    if (taskId) params.set("tarea", taskId);
+    else params.delete("tarea");
+    const qs = params.toString();
+    return `${pathname}${qs ? `?${qs}` : ""}`;
+  },
 } as const;
