@@ -34,16 +34,23 @@ function GateChip({ state }: { state: "pending" | "approved" | "rejected" }) {
 export default function ProjectLayout() {
   const { projectId, tab, sub } = useParams<{ projectId: string; tab?: string; sub?: string }>();
   const projects = useStore((s) => s.projects);
-  const activeProjectId = useStore((s) => s.activeProjectId);
   const setActiveProject = useStore((s) => s.setActiveProject);
   const bootstrapped = useStore((s) => s.bootstrapped);
   const caps = useCapabilities();
   const tabs = PROJECT_TABS.filter((t) => caps.has(`proyecto:${t}`));
 
-  // La URL es la fuente de verdad del proyecto activo.
+  // La URL es la fuente de verdad del proyecto activo. Al salir del layout
+  // (desmontar) se limpia el proyecto activo: fuera de /proyectos/:id/* no
+  // hay proyecto activo.
   useEffect(() => {
-    if (projectId && projectId !== activeProjectId) void setActiveProject(projectId);
-  }, [projectId, activeProjectId, setActiveProject]);
+    if (projectId && projectId !== useStore.getState().activeProjectId) {
+      void setActiveProject(projectId);
+    }
+    return () => {
+      void useStore.getState().setActiveProject(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   if (!projectId) return <Navigate to={paths.proyectos()} replace />;
   if (!tab) return <Navigate to={paths.proyecto(projectId, "ruta")} replace />;
@@ -121,10 +128,14 @@ export default function ProjectLayout() {
           {tabs.map((entry) => (
             <NavLink
               key={entry}
-              to={paths.proyecto(project.id, entry)}
-              className={({ isActive }) =>
+              to={entry === "contexto" ? paths.contexto(project.id) : paths.proyecto(project.id, entry)}
+              className={() =>
+                // El isActive de NavLink compara contra el "to" resuelto: para
+                // Contexto eso incluiría el subtab por defecto y dejaría de
+                // marcarse activo en /contexto/procesos. `current` ya sabe qué
+                // pestaña vive en la URL, subtabs incluidos.
                 `press inline-flex min-h-9 shrink-0 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
-                  isActive ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
+                  entry === current ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
                 }`
               }
             >
@@ -136,8 +147,8 @@ export default function ProjectLayout() {
 
       <div className="min-h-0 flex-1">
         {current === "ruta" ? <RutaView project={project} /> : null}
-        {current === "tablero" ? <BoardView /> : null}
-        {current === "contexto" ? <ContextView sub={contextSub} /> : null}
+        {current === "tablero" ? <BoardView projectId={project.id} /> : null}
+        {current === "contexto" ? <ContextView projectId={project.id} sub={contextSub} /> : null}
         {current === "conversacion" ? <ChatView /> : null}
         {current === "actividad" ? <RunsView projectId={project.id} /> : null}
       </div>

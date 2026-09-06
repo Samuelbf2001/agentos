@@ -16,7 +16,6 @@ import type {
   ProjectSourceKind,
   SourceBrowseItem,
 } from "../lib/types";
-import { useStore } from "../state/store";
 import { Markdown } from "../components/Markdown";
 import { EmptyState, ErrorBox, fmtDate, Spinner } from "../components/ui";
 import { paths, type ContextSubtab } from "../lib/paths";
@@ -186,18 +185,16 @@ function SourcePickerModal({
 }
 
 /** Sección "Fuentes del proyecto": lista con estado + Re-ingerir + Asociar fuente. */
-function SourcesSection({ onIngested }: { onIngested: () => void }) {
-  const activeProjectId = useStore((s) => s.activeProjectId);
+function SourcesSection({ projectId, onIngested }: { projectId: string; onIngested: () => void }) {
   const [sources, setSources] = useState<ProjectSource[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   async function load() {
-    if (!activeProjectId) return;
     setError(null);
     try {
-      const res = await api.projectSources(activeProjectId);
+      const res = await api.projectSources(projectId);
       setSources(res.sources);
     } catch (err) {
       setError(errMessage(err, "Error cargando fuentes del proyecto"));
@@ -208,7 +205,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
     setSources(null);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjectId]);
+  }, [projectId]);
 
   async function reingest(source: ProjectSource) {
     setBusyId(source.id);
@@ -223,10 +220,6 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
       setBusyId(null);
       void load();
     }
-  }
-
-  if (!activeProjectId) {
-    return null;
   }
 
   return (
@@ -285,7 +278,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
       </ul>
       {pickerOpen ? (
         <SourcePickerModal
-          projectId={activeProjectId}
+          projectId={projectId}
           onClose={() => setPickerOpen(false)}
           onDone={() => {
             void load();
@@ -297,8 +290,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
   );
 }
 
-function DocsTab() {
-  const activeProjectId = useStore((s) => s.activeProjectId);
+function DocsTab({ projectId }: { projectId: string }) {
   const [docs, setDocs] = useState<KnowledgeDoc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -308,7 +300,7 @@ function DocsTab() {
   async function load() {
     setError(null);
     try {
-      const res = await api.knowledge(activeProjectId ? { project_id: activeProjectId } : {});
+      const res = await api.knowledge({ project_id: projectId });
       setDocs(res.docs);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Error cargando documentos");
@@ -319,7 +311,7 @@ function DocsTab() {
     setSelected(null);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjectId]);
+  }, [projectId]);
 
   async function search(e: React.FormEvent) {
     e.preventDefault();
@@ -341,7 +333,7 @@ function DocsTab() {
 
   return (
     <div>
-      <SourcesSection onIngested={() => void load()} />
+      <SourcesSection projectId={projectId} onIngested={() => void load()} />
       <div className="flex gap-4">
       <div className="w-80 shrink-0">
         <form onSubmit={search} className="flex gap-1">
@@ -538,8 +530,7 @@ function ProcessesTab() {
  * son de Sixteam y no del cliente; el panel de reuniones vive en Sistema ›
  * Fuentes, porque es transversal a todos los proyectos.
  */
-export default function ContextView({ sub }: { sub: ContextSubtab }) {
-  const activeProjectId = useStore((s) => s.activeProjectId);
+export default function ContextView({ projectId, sub }: { projectId: string; sub: ContextSubtab }) {
   const tabs = [
     { id: "documentos" as const, label: "Documentos" },
     { id: "procesos" as const, label: "Procesos" },
@@ -550,7 +541,7 @@ export default function ContextView({ sub }: { sub: ContextSubtab }) {
         {tabs.map((t) => (
           <NavLink
             key={t.id}
-            to={activeProjectId ? paths.contexto(activeProjectId, t.id) : "#"}
+            to={paths.contexto(projectId, t.id)}
             aria-pressed={sub === t.id}
             className={`press inline-flex min-h-9 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
               sub === t.id ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
@@ -560,7 +551,7 @@ export default function ContextView({ sub }: { sub: ContextSubtab }) {
           </NavLink>
         ))}
       </div>
-      {sub === "documentos" ? <DocsTab /> : <ProcessesTab />}
+      {sub === "documentos" ? <DocsTab projectId={projectId} /> : <ProcessesTab />}
     </div>
   );
 }

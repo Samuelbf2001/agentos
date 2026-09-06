@@ -323,11 +323,10 @@ function useIsMobileBoard() {
   return mobile;
 }
 
-export default function BoardView() {
+export default function BoardView({ projectId }: { projectId: string }) {
   const board = useStore((state) => state.board);
   const boardLoading = useStore((state) => state.boardLoading);
   const boardError = useStore((state) => state.boardError);
-  const activeProjectId = useStore((state) => state.activeProjectId);
   const setActiveProject = useStore((state) => state.setActiveProject);
   const moveTaskOptimistic = useStore((state) => state.moveTaskOptimistic);
   const pushToast = useStore((state) => state.pushToast);
@@ -385,14 +384,11 @@ export default function BoardView() {
     void moveTaskOptimistic(task.id, target.status);
   }
 
-  if (!activeProjectId) {
-    return null;
-  }
   if (boardLoading) return <Spinner label="Cargando tablero…" />;
   if (boardError) {
     return (
       <div className="p-4 sm:p-6">
-        <ErrorBox message={boardError} onRetry={() => void setActiveProject(activeProjectId)} />
+        <ErrorBox message={boardError} onRetry={() => void setActiveProject(projectId)} />
       </div>
     );
   }
@@ -546,20 +542,18 @@ export default function BoardView() {
         </div>
         {copilotOpen ? (
           <BoardCopilotPanel
-            projectId={activeProjectId}
+            projectId={projectId}
             projectName={project?.name}
             onClose={() => setCopilotOpen(false)}
           />
         ) : null}
       </div>
-      {activeProjectId ? (
-        <CreateTaskDialog
-          open={creating}
-          onOpenChange={setCreating}
-          projectId={activeProjectId}
-          defaultStage={project?.stage ?? "ENTENDER"}
-        />
-      ) : null}
+      <CreateTaskDialog
+        open={creating}
+        onOpenChange={setCreating}
+        projectId={projectId}
+        defaultStage={project?.stage ?? "ENTENDER"}
+      />
     </div>
   );
 }

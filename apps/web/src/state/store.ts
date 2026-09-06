@@ -487,8 +487,6 @@ export const useStore = create<AppStore>()((set, get) => {
         get().loadKillSwitch(),
         get().refreshBadges(),
       ]);
-      const first = get().projects[0]?.id ?? null;
-      if (first) await get().setActiveProject(first);
     },
 
     logout() {

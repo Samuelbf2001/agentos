@@ -210,7 +210,7 @@ describe("contrato visual de proyectos y tareas", () => {
       { path: "/api/projects/proj-1/launches", body: { launches: [] } },
       { path: "/api/projects/proj-1/phase-status", body: { status: { reason: "no_launch" } } },
     ]);
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
     const card = screen.getByTestId("task-card-t1");
     expect(card.getAttribute("role")).toBe("button");
     expect(card.getAttribute("tabindex")).toBe("0");

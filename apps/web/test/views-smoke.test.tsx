@@ -178,7 +178,7 @@ describe("smoke de vistas", () => {
   });
 
   it("BoardView pinta carriles, columnas y la tarjeta", () => {
-    ui(<BoardView />);
+    ui(<BoardView projectId={project.id} />);
     expect(screen.getByText("Entender")).toBeTruthy();
     expect(screen.getAllByText("Backlog").length).toBeGreaterThan(0);
     expect(screen.getByText("Mapear proceso de ventas")).toBeTruthy();
@@ -256,7 +256,7 @@ describe("smoke de vistas", () => {
   });
 
   it("ContextView pinta pestañas y estado vacío", async () => {
-    ui(<ContextView sub="documentos" />);
+    ui(<ContextView projectId={project.id} sub="documentos" />);
     expect(screen.getByText("Documentos")).toBeTruthy();
     expect(await screen.findByText("Sin documentos")).toBeTruthy();
   });

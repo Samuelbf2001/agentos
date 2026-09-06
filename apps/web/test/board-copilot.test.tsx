@@ -146,7 +146,7 @@ describe("Panel Copiloto en BoardView", () => {
 
   it("reabre el hilo existente cuyo sessionKey coincide con board:<projectId>", async () => {
     const { calls } = mockFetch(chatRoutes([thread, boardThread]));
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
     expect(screen.queryByTestId("board-copilot")).toBeNull();
 
     fireEvent.click(screen.getByTestId("board-copilot-toggle"));
@@ -164,7 +164,7 @@ describe("Panel Copiloto en BoardView", () => {
 
   it("sin hilo previo deja el panel vacío y el primer envío lo crea con el hint del tablero", async () => {
     const { calls } = mockFetch(chatRoutes([thread]));
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
     fireEvent.click(screen.getByTestId("board-copilot-toggle"));
     await waitFor(() => {
       expect(calls.some((c) => c.url.includes("/api/threads?"))).toBe(true);
@@ -187,13 +187,14 @@ describe("Panel Copiloto en BoardView", () => {
 
   it("al cambiar de proyecto con el panel abierto salta al hilo del nuevo proyecto", async () => {
     const { calls } = mockFetch(chatRoutes([thread, boardThread]));
-    render(<BoardView />);
+    const { rerender } = render(<BoardView projectId={project.id} />);
     fireEvent.click(screen.getByTestId("board-copilot-toggle"));
     await waitFor(() => {
       expect(useStore.getState().chat.threadId).toBe("th-board");
     });
 
     useStore.setState({ activeProjectId: projectB.id, board: { projectId: projectB.id, tasks: {} } });
+    rerender(<BoardView projectId={projectB.id} />);
     // proj-2 no tiene hilo de tablero: se vacía en vez de seguir en el de proj-1.
     await waitFor(() => {
       expect(useStore.getState().chat.threadId).toBeNull();
@@ -210,7 +211,7 @@ describe("Panel Copiloto en BoardView", () => {
 
   it("el botón de cerrar retira el panel", async () => {
     mockFetch(chatRoutes([thread]));
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
     fireEvent.click(screen.getByTestId("board-copilot-toggle"));
     expect(screen.getByTestId("board-copilot")).toBeTruthy();
     fireEvent.click(screen.getByTestId("board-copilot-close"));

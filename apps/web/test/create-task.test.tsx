@@ -261,7 +261,7 @@ describe("Botón de alta en el tablero", () => {
   });
 
   it("board-new-task abre create-task-dialog", () => {
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
     expect(screen.queryByTestId("create-task-dialog")).toBeNull();
     fireEvent.click(screen.getByTestId("board-new-task"));
     expect(screen.getByTestId("create-task-dialog")).toBeTruthy();
