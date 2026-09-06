@@ -98,7 +98,14 @@ pnpm --filter @agentos/api start
 La API **aplica las migraciones Postgres al arrancar** (idempotentes, igual que
 hace con SQLite) y corre el seed idempotente. No hay paso manual previo: si la
 base está vacía, al primer arranque quedan las 25 tablas, tsvector, pgvector y
-el proyecto demo. El MCP admin (`apps/mcp-admin`) lee las mismas dos variables.
+el catálogo (org Sixteam, personas, agentes, metodologías, módulos, proveedores).
+El MCP admin (`apps/mcp-admin`) lee las mismas dos variables.
+
+El **proyecto demo (org ACME + launch del módulo Consultoría)** solo se siembra
+si `AGENTOS_SEED_DEMO` no vale `0`/`false`/`off`. Con `NODE_ENV=production` el
+default es NO sembrarlo — una base Postgres vacía en el despliegue real arranca
+con el catálogo y CERO proyectos; en desarrollo se mantiene el comportamiento
+histórico (demo sí). Ver `.env.example`.
 
 Un arranque en frío queda **pausado** (kill switch activo), igual que en SQLite.
 

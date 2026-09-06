@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
-import { seed } from "../src/seed.js";
+import { seed, seedCatalog, seedDemo } from "../src/seed.js";
 import { countDomainTables } from "../src/repositories/stats.js";
 import { getAgentBySlug, getActivePrompt } from "../src/repositories/agents.js";
 import { getProviderProfile } from "../src/repositories/providers.js";
@@ -10,6 +10,12 @@ import { listTasks, listTaskEvents } from "../src/repositories/tasks.js";
 import { getConfig, ConfigKeys } from "../src/repositories/config.js";
 import { getMethodology, listMethodologies } from "../src/repositories/methodologies.js";
 import { listLaunches } from "../src/repositories/modules.js";
+import {
+  getOrganizationByName,
+  getPersonByFullName,
+  listOrganizations,
+} from "../src/repositories/organizations-people.js";
+import { listPhaseModules } from "../src/repositories/modules.js";
 
 function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
@@ -281,6 +287,61 @@ describe("seeds", () => {
     expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(true);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD)).toBe(2);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD)).toBe(10);
+  });
+});
+
+describe("seedCatalog / seedDemo (endurecimiento para producción — sembrado)", () => {
+  it("seedCatalog deja agentes, metodologías, módulos, proveedores, org Sixteam y personas, y CERO proyectos/tareas", async () => {
+    const db = freshDb();
+    const { agentsFallback } = await seedCatalog(db, { env: {} });
+    expect(agentsFallback.length).toBeGreaterThan(0); // fallback de arranque, cero API keys
+    expect(getAgentBySlug(db, "alex")).toBeDefined();
+    expect(listMethodologies(db).length).toBe(5);
+    expect(listPhaseModules(db, { status: "active" }).length).toBe(3);
+    expect(getProviderProfile(db, getAgentBySlug(db, "alex")!.providerProfileId!)).toBeDefined();
+    expect(getOrganizationByName(db, "Sixteam")).toBeDefined();
+    expect(getPersonByFullName(db, "Ernesto")).toBeDefined();
+    // NUNCA la demo: ni la org ACME ni ningún proyecto/tarea.
+    expect(getOrganizationByName(db, "ACME S.A.")).toBeUndefined();
+    expect(getProjectByName(db, "Assessment ACME")).toBeUndefined();
+    expect(listTasks(db)).toHaveLength(0);
+    // Config base sí es catálogo: arranque en frío pausado (kill switch activo).
+    expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(true);
+  });
+
+  it("seedCatalog es idempotente (re-ejecutar no duplica nada)", async () => {
+    const db = freshDb();
+    await seedCatalog(db, { env: {} });
+    const counts1 = { people: listMethodologies(db).length, tables: countDomainTables(db) };
+    await seedCatalog(db, { env: {} });
+    expect(listMethodologies(db).length).toBe(counts1.people);
+    expect(countDomainTables(db)).toBe(counts1.tables);
+    expect(listTasks(db)).toHaveLength(0);
+  });
+
+  it("seedCatalog sin demo y luego seedDemo: la demo aparece sin duplicar el catálogo", async () => {
+    const db = freshDb();
+    await seedCatalog(db, { env: {} });
+    expect(listTasks(db)).toHaveLength(0);
+    await seedDemo(db, { env: {} });
+    const project = getProjectByName(db, "Assessment ACME");
+    expect(project).toBeDefined();
+    expect(listTasks(db, { projectId: project!.id })).toHaveLength(12);
+    // seedDemo no re-siembra el catálogo: sigue habiendo un solo Sixteam.
+    expect(listOrganizations(db).filter((o) => o.name === "Sixteam")).toHaveLength(1);
+  });
+
+  it("una base que ya tiene la demo no se altera al re-sembrar catálogo+demo (seed completo)", async () => {
+    const db = freshDb();
+    await seedCatalog(db, { env: {} });
+    await seedDemo(db, { env: {} });
+    const project = getProjectByName(db, "Assessment ACME")!;
+    const tasksBefore = listTasks(db, { projectId: project.id });
+    // seed() = seedCatalog + seedDemo, de nuevo: nada se duplica ni se pierde.
+    await seed(db, { env: {} });
+    const tasksAfter = listTasks(db, { projectId: project.id });
+    expect(tasksAfter).toHaveLength(tasksBefore.length);
+    expect(getProjectByName(db, "Assessment ACME")!.id).toBe(project.id);
   });
 });
 

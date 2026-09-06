@@ -9,12 +9,14 @@ import os from "node:os";
 import fs from "node:fs";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { isAgentosError } from "@agentos/shared";
+import { domainCounts } from "@agentos/db";
 import { buildApi, type Api } from "../src/server.js";
 import {
   createApiContext,
   resolveCorsOrigin,
   resolveSessionSecret,
   resolveSharedPassword,
+  shouldSeedDemo,
 } from "../src/context.js";
 import { resolveCookieSecure } from "../src/auth.js";
 import { makeFixture, TEST_PASSWORD } from "./helpers.js";
@@ -28,6 +30,7 @@ const TOUCHED = [
   "AGENTOS_SESSION_SECRET",
   "AGENTOS_WEB_ORIGIN",
   "AGENTOS_COOKIE_SECURE",
+  "AGENTOS_SEED_DEMO",
 ] as const;
 
 const ORIGINAL = Object.fromEntries(TOUCHED.map((k) => [k, process.env[k]])) as Record<
@@ -364,6 +367,71 @@ describe("arranque pausado con base nueva", () => {
       expect(await tercera.engine.isKillSwitchActive()).toBe(false);
     } finally {
       await tercera.close();
+    }
+  }, 60_000);
+});
+
+describe("sembrado: catálogo siempre, demo según AGENTOS_SEED_DEMO", () => {
+  it("shouldSeedDemo: sin variable, prod=no y dev=sí; la variable manda sobre el default", () => {
+    expect(shouldSeedDemo({ NODE_ENV: "production" })).toBe(false);
+    expect(shouldSeedDemo({ NODE_ENV: "development" })).toBe(true);
+    expect(shouldSeedDemo({ NODE_ENV: "production", AGENTOS_SEED_DEMO: "1" })).toBe(true);
+    for (const off of ["0", "false", "off", "FALSE", "OFF"]) {
+      expect(shouldSeedDemo({ NODE_ENV: "development", AGENTOS_SEED_DEMO: off })).toBe(false);
+    }
+  });
+
+  it("NODE_ENV=production sobre base vacía: arranca con el catálogo y CERO demo (0 proyectos)", async () => {
+    setEnv({
+      NODE_ENV: "production",
+      AGENTOS_SHARED_PASSWORD: "contraseña-real-del-despliegue",
+      AGENTOS_SESSION_SECRET: "secreto-de-sesion-largo-y-aleatorio",
+      AGENTOS_WEB_ORIGIN: "https://agentos.example",
+    });
+    const dbPath = path.join(tmpDir, "seed-produccion.db");
+    const ctx = await createApiContext({ dbPath, autoStartLoops: false, runners: {} });
+    try {
+      const counts = await domainCounts(ctx.db);
+      expect(counts.projects).toBe(0);
+      expect(counts.tasks).toBe(0);
+      // El catálogo sí nació: org Sixteam, personas, agentes, metodologías y módulos.
+      expect(counts.organizations).toBe(1);
+      expect(counts.people).toBeGreaterThan(0);
+      expect(counts.agents).toBeGreaterThan(0);
+      expect(counts.methodologies).toBeGreaterThan(0);
+      expect(counts.phaseModules).toBeGreaterThan(0);
+      expect(await ctx.engine.isKillSwitchActive()).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  }, 60_000);
+
+  it("en desarrollo (sin la variable) la demo sigue apareciendo", async () => {
+    setEnv({ NODE_ENV: "development" });
+    const dbPath = path.join(tmpDir, "seed-desarrollo.db");
+    const ctx = await createApiContext({ dbPath, autoStartLoops: false, runners: {} });
+    try {
+      const counts = await domainCounts(ctx.db);
+      expect(counts.projects).toBe(1);
+      expect(counts.tasks).toBe(12);
+      expect(counts.organizations).toBe(2); // Sixteam + ACME
+    } finally {
+      await ctx.close();
+    }
+  }, 60_000);
+
+  it("en desarrollo con AGENTOS_SEED_DEMO=0 tampoco se siembra la demo", async () => {
+    setEnv({ NODE_ENV: "development", AGENTOS_SEED_DEMO: "0" });
+    const dbPath = path.join(tmpDir, "seed-desarrollo-sin-demo.db");
+    const ctx = await createApiContext({ dbPath, autoStartLoops: false, runners: {} });
+    try {
+      const counts = await domainCounts(ctx.db);
+      expect(counts.projects).toBe(0);
+      expect(counts.tasks).toBe(0);
+      expect(counts.organizations).toBe(1); // solo Sixteam, catálogo íntegro
+      expect(counts.agents).toBeGreaterThan(0);
+    } finally {
+      await ctx.close();
     }
   }, 60_000);
 });

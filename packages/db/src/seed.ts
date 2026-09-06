@@ -1,10 +1,23 @@
 /**
- * Seeds de AgentOS (B1): orgs, personas, proveedores, agentes desde `agents/*.md`,
- * metodología desde `methodologies/*.md`, módulos desde `modules/*.md`, config
- * base y el proyecto demo ACME como LAUNCH del módulo consultoria v1 (§13.6):
- * el seed ya no hardcodea tareas — dispara el módulo con inputs demo fijos.
- * Idempotente: re-ejecutar no duplica nada (upserts por clave natural +
- * idempotency_key del launch).
+ * Seeds de AgentOS (B1), separados en dos funciones (endurecimiento para
+ * producción):
+ *
+ *   `seedCatalog(db)` — TODO lo que no es demo: organización interna Sixteam,
+ *   personas del equipo, proveedores, agentes desde `agents/*.md`, metodología
+ *   desde `methodologies/*.md`, módulos desde `modules/*.md` y config base
+ *   (kill switch activo por defecto). Es lo único que debe sembrarse contra
+ *   una base de producción vacía.
+ *
+ *   `seedDemo(db)` — organización ACME y el proyecto demo como LAUNCH del
+ *   módulo consultoria v1 (§13.6): el seed ya no hardcodea tareas, dispara el
+ *   módulo con inputs demo fijos. Depende del catálogo (agentes, módulos) ya
+ *   sembrado.
+ *
+ *   `seed(db)` — llama a ambas, en orden; es el comportamiento histórico
+ *   (`pnpm --filter @agentos/db seed`, tests que no distinguen).
+ *
+ * Ambas son idempotentes: re-ejecutar no duplica nada (upserts por clave
+ * natural + idempotency_key del launch).
  *
  * Regla del fallback de arranque (ARCHITECTURE §3): un agente `ai_sdk` cuyo
  * proveedor no tiene credencial configurada se seedea apuntando a
@@ -165,30 +178,31 @@ const SEED_DEMO_INPUTS: Record<string, unknown> = {
   sistemas_conocidos: "ERP básico, hojas de cálculo, WhatsApp",
 };
 
-export async function seed(
+/** Resultado de `seedCatalog`: lo único que aún necesita `seed()` para el conteo final. */
+export interface CatalogSeedResult {
+  agentsFallback: string[];
+}
+
+/**
+ * Siembra el CATÁLOGO: proveedores, organización interna Sixteam, personas del
+ * equipo, agentes (+ jerarquía de mando), metodologías, módulos de fase y
+ * config base (kill switch activo si no existe). NUNCA toca ACME ni dispara el
+ * launch demo — es seguro correrlo contra una base de producción vacía.
+ * Idempotente: re-ejecutar no duplica nada.
+ */
+export async function seedCatalog(
   db: AnyDb,
   opts: { env?: NodeJS.ProcessEnv } = {},
-): Promise<SeedCounts> {
+): Promise<CatalogSeedResult> {
   const env = opts.env ?? process.env;
 
   // 1) Proveedores
   for (const p of PROVIDER_SEEDS) await upsertProviderProfile(db, p);
 
-  // 2) Organizaciones
+  // 2) Organización interna
   const sixteam =
     (await getOrganizationByName(db, "Sixteam")) ??
     (await createOrganization(db, { name: "Sixteam", kind: "internal" }));
-  // La org demo se preserva con sus notas; el launch demo (paso 7) la
-  // encuentra por nombre exacto (get-or-create §13.3), no la duplica.
-  if (!(await getOrganizationByName(db, "ACME S.A."))) {
-    await createOrganization(db, {
-      name: "ACME S.A.",
-      kind: "client",
-      industry: "manufactura",
-      employeeCount: 40,
-      notes: "Organización demo del MVP. Quieren preparación ISO 9001.",
-    });
-  }
 
   // 3) Personas internas (nombre completo para asignaciones)
   for (const p of PEOPLE_SEEDS) {
@@ -317,12 +331,37 @@ export async function seed(
     await setConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD, 10);
   }
 
-  // 7) Proyecto demo = LAUNCH del módulo consultoria v1 (§13.6): las 12 tareas
-  // salen de las plantillas del módulo, con la política de aprobación real
-  // (NM-5). Motor directo (launchModule, no launchModuleWithEvents): el seed NO
-  // publica eventos AG-UI. Cinturón y tirantes contra el re-seed: guard por
-  // nombre de proyecto + idempotency_key fija (misma key + mismos inputs
-  // devuelve lo ya creado sin duplicar — CA-M2.6).
+  return { agentsFallback };
+}
+
+/**
+ * Siembra la DEMO: organización ACME + proyecto demo como LAUNCH del módulo
+ * consultoria v1 (§13.6) — las 12 tareas salen de las plantillas del módulo,
+ * con la política de aprobación real (NM-5). Motor directo (launchModule, no
+ * launchModuleWithEvents): el seed NO publica eventos AG-UI. Cinturón y
+ * tirantes contra el re-seed: guard por nombre de proyecto + idempotency_key
+ * fija (misma key + mismos inputs devuelve lo ya creado sin duplicar — CA-M2.6).
+ *
+ * Depende del catálogo (agentes, módulo `consultoria`) ya sembrado — llamar
+ * antes a `seedCatalog(db)`. NUNCA debe correr contra una base de producción
+ * real (ver `AGENTOS_SEED_DEMO` en `apps/api/src/context.ts`).
+ */
+export async function seedDemo(
+  db: AnyDb,
+  _opts: { env?: NodeJS.ProcessEnv } = {},
+): Promise<void> {
+  // La org demo se preserva con sus notas; el launch (abajo) la encuentra por
+  // nombre exacto (get-or-create §13.3), no la duplica.
+  if (!(await getOrganizationByName(db, "ACME S.A."))) {
+    await createOrganization(db, {
+      name: "ACME S.A.",
+      kind: "client",
+      industry: "manufactura",
+      employeeCount: 40,
+      notes: "Organización demo del MVP. Quieren preparación ISO 9001.",
+    });
+  }
+
   if (!(await getProjectByName(db, "Assessment ACME"))) {
     await launchModule(db, {
       moduleSlug: "consultoria",
@@ -340,7 +379,18 @@ export async function seed(
       now: SEED_DEMO_LAUNCH_NOW,
     });
   }
+}
 
+/**
+ * Siembra ambos: catálogo + demo. Comportamiento histórico de `seed()` —
+ * `pnpm --filter @agentos/db seed` sigue sembrando los dos (demo local).
+ */
+export async function seed(
+  db: AnyDb,
+  opts: { env?: NodeJS.ProcessEnv } = {},
+): Promise<SeedCounts> {
+  const { agentsFallback } = await seedCatalog(db, opts);
+  await seedDemo(db, opts);
   return await collectCounts(db, agentsFallback);
 }
 
@@ -361,6 +411,17 @@ async function collectCounts(db: AnyDb, agentsFallback: string[]): Promise<SeedC
   };
 }
 
+/**
+ * ¿La variable pide saltarse la demo? Mismo criterio de valores "apagado" que
+ * `shouldSeedDemo` en `apps/api/src/context.ts` (0/false/off, sin distinguir
+ * mayúsculas). El comando `pnpm --filter @agentos/db seed` siembra ambos por
+ * defecto (es la demo local) salvo que se pase esta variable.
+ */
+function isDemoDisabledByEnv(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.AGENTOS_SEED_DEMO?.trim().toLowerCase();
+  return raw === "0" || raw === "false" || raw === "off";
+}
+
 // Ejecutable: `pnpm --filter @agentos/db seed`
 const isMain =
   process.argv[1] !== undefined &&
@@ -369,7 +430,14 @@ const isMain =
 if (isMain) {
   const db = await openConfiguredDb();
   await applyMigrations(db);
-  const counts = await seed(db);
+  const { agentsFallback } = await seedCatalog(db);
+  const seedsDemo = !isDemoDisabledByEnv(process.env);
+  if (seedsDemo) {
+    await seedDemo(db);
+  } else {
+    console.log("AGENTOS_SEED_DEMO desactiva la demo: solo se sembró el catálogo.");
+  }
+  const counts = await collectCounts(db, agentsFallback);
   console.log(
     `Seed aplicado en ${process.env.AGENTOS_DB_DRIVER === undefined ? resolveDbPath() : "el backend configurado (" + process.env.AGENTOS_DB_DRIVER + ")"}`,
   );

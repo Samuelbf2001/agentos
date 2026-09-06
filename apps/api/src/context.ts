@@ -11,7 +11,8 @@ import {
   domainCounts,
   openConfiguredDb,
   type DbDriver,
-  seed,
+  seedCatalog,
+  seedDemo,
   type AgentosDb,
 } from "@agentos/db";
 import type { EventBus } from "@agentos/events";
@@ -59,6 +60,24 @@ export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
 /** ¿Estamos en producción? Único punto de verdad para las guardas fail-closed. */
 export function isProductionEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+}
+
+/**
+ * ¿El arranque debe sembrar la demo (org ACME + launch del módulo Consultoría)?
+ * El catálogo (org Sixteam, agentes, metodologías, módulos, proveedores,
+ * config) se siembra SIEMPRE — es idempotente y no expone datos de cliente.
+ *
+ * `AGENTOS_SEED_DEMO=0/false/off` desactiva la demo explícitamente, en
+ * cualquier entorno. Sin la variable, el default depende de `NODE_ENV`: en
+ * producción NO se siembra (una base Postgres vacía en el despliegue real no
+ * debe amanecer con el proyecto demo de ACME); en desarrollo se mantiene el
+ * comportamiento histórico (demo sí).
+ */
+export function shouldSeedDemo(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.AGENTOS_SEED_DEMO?.trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "off") return false;
+  if (raw) return true; // valor explícito no reconocido como "apagado" ⇒ fuerza la demo
+  return !isProductionEnv(env);
 }
 
 /**
@@ -111,7 +130,11 @@ export interface ApiOptions {
   dbDriver?: DbDriver;
   /** URL PG explícita para el runtime asíncrono (por defecto AGENTOS_PG_URL). */
   pgUrl?: string;
-  /** Aplica seeds al arrancar (default true; los seeds son idempotentes). */
+  /**
+   * Aplica seeds al arrancar (default true; los seeds son idempotentes).
+   * Siempre siembra el catálogo; la demo depende de `AGENTOS_SEED_DEMO`
+   * (ver `shouldSeedDemo`).
+   */
   seedOnBoot?: boolean;
   /** Contraseña compartida (default: env AGENTOS_SHARED_PASSWORD; obligatoria en producción). */
   sharedPassword?: string;
@@ -231,7 +254,12 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
   });
   await applyMigrations(db);
   if (options.seedOnBoot !== false) {
-    await seed(db);
+    // El catálogo se siembra siempre (idempotente); la demo solo si el flag
+    // no la desactiva (default: sí en desarrollo, no en producción).
+    await seedCatalog(db);
+    if (shouldSeedDemo()) {
+      await seedDemo(db);
+    }
   }
 
   // 2) Bus de eventos (DB = fuente de verdad, ring buffer por topic).
