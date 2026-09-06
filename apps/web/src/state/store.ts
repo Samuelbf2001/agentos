@@ -143,9 +143,6 @@ export interface AppStore extends EventState {
   taskSearchResults: TaskSearchHit[];
   taskSearchLoading: boolean;
   taskSearchError: string | null;
-  myTasks: Task[];
-  myTasksLoading: boolean;
-  myTasksError: string | null;
   chatSending: boolean;
 
   toasts: Toast[];
@@ -175,7 +172,6 @@ export interface AppStore extends EventState {
   uploadTaskArtifact(taskId: string, file: File, title?: string): Promise<boolean>;
   searchTasks(query: string, opts?: { projectId?: string; mine?: boolean }): Promise<void>;
   clearTaskSearch(): void;
-  loadMyTasks(opts?: { label?: string; status?: TaskStatus }): Promise<void>;
 
   openTask(taskId: string): Promise<void>;
   retryTaskDetail(): Promise<void>;
@@ -390,9 +386,6 @@ export const useStore = create<AppStore>()((set, get) => {
     taskSearchResults: [],
     taskSearchLoading: false,
     taskSearchError: null,
-    myTasks: [],
-    myTasksLoading: false,
-    myTasksError: null,
     chatSending: false,
     toasts: [],
 
@@ -468,7 +461,6 @@ export const useStore = create<AppStore>()((set, get) => {
         blockedMove: null,
         taskSearchQuery: "",
         taskSearchResults: [],
-        myTasks: [],
         activeProjectId: null,
       });
     },
@@ -773,23 +765,6 @@ export const useStore = create<AppStore>()((set, get) => {
 
     clearTaskSearch() {
       set({ taskSearchQuery: "", taskSearchResults: [], taskSearchError: null, taskSearchLoading: false });
-    },
-
-    async loadMyTasks(opts = {}) {
-      set({ myTasksLoading: true, myTasksError: null });
-      try {
-        const { tasks } = await api.tasks({
-          mine: "1",
-          ...(opts.label ? { label: opts.label } : {}),
-          ...(opts.status ? { status: opts.status } : {}),
-        });
-        set({ myTasks: tasks, myTasksLoading: false });
-      } catch (err) {
-        set({
-          myTasksLoading: false,
-          myTasksError: normalizeMutationError(err, "No se pudieron cargar tus tareas"),
-        });
-      }
     },
 
     async openTask(taskId) {

@@ -168,7 +168,7 @@ function TitleCell({ task, onChanged }: { task: Task; onChanged: (task: Task) =>
     if (!title || title === task.title) return;
     setBusy(true);
     try {
-      const { task: updated } = await api.patchTask(task.id, {
+      const { task: updated } = await api.updateTask(task.id, {
         expected_version: task.version,
         title,
       });

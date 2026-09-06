@@ -217,21 +217,12 @@ async function request<T>(
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 export const api = {
-  request,
-
   people: () => request<{ people: Person[] }>("/api/auth/people"),
   login: (password: string, personId: string) =>
     request<{ token: string; person: Person }>("/api/auth/login", {
       method: "POST",
       body: { password, person_id: personId },
     }),
-  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-  health: () =>
-    request<{
-      ok: boolean;
-      kill_switch: boolean;
-      counts: Record<string, number>;
-    }>("/api/health"),
   brainOverview: () => request<BrainOverview>("/api/brain/overview"),
 
   // ── Projects / board ──────────────────────────────────────────────────────
@@ -311,29 +302,6 @@ export const api = {
         ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
       }),
     })),
-  /** Alias explícito para callers que nombran la mutación por verbo HTTP. */
-  patchTask: (
-    id: string,
-    body: {
-      expected_version: number;
-      title?: string;
-      description?: string | null;
-      definition_of_done?: string | null;
-      activity_type?: string | null;
-      priority?: Task["priority"];
-      due_at?: number | null;
-    },
-  ) =>
-    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}`, {
-      method: "PATCH",
-      body,
-    }).then((result) => ({
-      ...result,
-      task: normalizeTask({
-        ...(result.task as WireTask),
-        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
-      }),
-    })),
   assignTask: (
     id: string,
     body: {
@@ -343,21 +311,6 @@ export const api = {
       /** Optional: kept separate from people; the UI does not edit it. */
       agent_slug?: string | null;
     },
-  ) =>
-    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/assign`, {
-      method: "POST",
-      body,
-    }).then((result) => ({
-      ...result,
-      task: normalizeTask({
-        ...(result.task as WireTask),
-        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
-      }),
-    })),
-  /** Nombre de dominio alternativo usado por algunos consumidores del módulo. */
-  assignPeople: (
-    id: string,
-    body: { expected_version: number; assignee_person_ids: string[]; primary_assignee_person_id?: string | null },
   ) =>
     request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/assign`, {
       method: "POST",
@@ -464,7 +417,6 @@ export const api = {
   cancelRun: (id: string) => request<{ run: Run }>(`/api/runs/${id}/cancel`, { method: "POST" }),
 
   // ── Approvals / bandeja ───────────────────────────────────────────────────
-  approvalsPending: () => request<{ approvals: Approval[] }>("/api/approvals/pending"),
   /** Bandeja completa (CA-4.2, H10): aprobaciones + entregables en REVIEW con artefactos. */
   waiting: () =>
     request<{ approvals: Approval[]; review_tasks: { task: Task; artifacts: Artifact[] }[] }>(
@@ -524,13 +476,9 @@ export const api = {
     request<{ hits: KnowledgeDoc[] }>(
       `/api/knowledge/search?q=${encodeURIComponent(query)}&limit=${limit}`,
     ),
-  knowledgeDoc: (id: string) => request<{ doc: KnowledgeDoc }>(`/api/knowledge/${id}`),
   processes: (orgId?: string) =>
     request<{ processes: ProcessEntity[] }>(`/api/processes${orgId ? `?org_id=${orgId}` : ""}`),
-  process: (id: string) => request<{ process: ProcessEntity }>(`/api/processes/${id}`),
   methodologies: () => request<{ methodologies: Methodology[] }>("/api/methodologies"),
-  methodology: (slug: string) =>
-    request<{ methodology: Methodology }>(`/api/methodologies/${slug}`),
 
   // ── Módulos de Fase (M4 — wizard "Nuevo proyecto") ────────────────────────
   modules: () => request<{ modules: ModuleSummary[] }>("/api/modules"),

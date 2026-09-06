@@ -7,7 +7,6 @@
  * como punto que late, y el atraso con un solo patrón en todo el producto.
  */
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
 import { STAGES, type Stage } from "../lib/types";
 
 // ── Piezas base ─────────────────────────────────────────────────────────────
@@ -217,7 +216,6 @@ function LockIcon({ state }: { state: GateState }) {
 export interface GateMissing {
   key: string;
   text: string;
-  to?: string;
   onClick?: () => void;
   hint?: string;
 }
@@ -274,17 +272,7 @@ export function GateLock({
       {state === "locked" && missing.length > 0 ? (
         <ul className="mt-1 w-full space-y-1.5 text-left">
           {missing.map((item) =>
-            item.to ? (
-              <li key={item.key}>
-                <Link
-                  to={item.to}
-                  className="press flex items-center gap-2 rounded-tight border border-line-soft bg-surface px-2.5 py-1.5 text-small text-ink-2 hover:border-line"
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-broken" aria-hidden="true" />
-                  <span className="min-w-0 flex-1">{item.text}</span>
-                </Link>
-              </li>
-            ) : item.onClick ? (
+            item.onClick ? (
               <li key={item.key}>
                 <button
                   type="button"

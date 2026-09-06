@@ -1,7 +1,7 @@
 /**
  * Rutas de la aplicación en un solo sitio (PLAN-v1.5 §Navegación nueva).
  *
- * El proyecto es el objeto raíz: cuatro entradas globales y cinco pestañas
+ * El proyecto es el objeto raíz: cinco entradas globales y cinco pestañas
  * dentro del proyecto. Todo enlace se construye aquí para que los caminos de
  * vuelta (run → tarea → proyecto) no dependan de cadenas sueltas por la app.
  */
