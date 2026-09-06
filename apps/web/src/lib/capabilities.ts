@@ -9,7 +9,7 @@ import { PROJECT_TABS, SYSTEM_TABS, type ProjectTab, type SystemTab } from "./pa
 import type { Person } from "./types";
 import { useStore } from "../state/store";
 
-export type GlobalEntry = "hoy" | "tareas" | "proyectos" | "sistema" | "activo";
+export type GlobalEntry = "hoy" | "tareas" | "proyectos" | "sistema" | "activo" | "2brain";
 
 export type Capability =
   | `nav:${GlobalEntry}`
@@ -18,7 +18,7 @@ export type Capability =
   | "buscar"
   | "agentes:pausar";
 
-const GLOBAL_ENTRIES: GlobalEntry[] = ["hoy", "tareas", "proyectos", "sistema", "activo"];
+const GLOBAL_ENTRIES: GlobalEntry[] = ["hoy", "tareas", "proyectos", "sistema", "activo", "2brain"];
 
 export const ALL_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   ...GLOBAL_ENTRIES.map((entry): Capability => `nav:${entry}`),

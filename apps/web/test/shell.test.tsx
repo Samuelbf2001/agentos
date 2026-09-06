@@ -35,6 +35,21 @@ const routes = [
   { path: "/api/knowledge", body: { docs: [] } },
   { path: /^\/api\/projects\/[^/]+\/sources$/, body: { sources: [] } },
   { path: "/api/processes", body: { processes: [] } },
+  {
+    path: "/api/meetings/processing",
+    body: {
+      source: "2brain / WhatsAppHub",
+      mode: "remote_read_only",
+      page: 1,
+      page_size: 20,
+      status: "all",
+      total: 0,
+      has_more: false,
+      queue: { pending: 0, errors: 0, complete: 0 },
+      agentos_context: { linked: 0, ingested: 0, errors: 0 },
+      meetings: [],
+    },
+  },
 ];
 
 function renderApp(entry: string) {
@@ -75,6 +90,7 @@ describe("shell y navegación", () => {
       "Hoy",
       "Tareas",
       "Clientes",
+      "Panorama",
       "Reuniones",
       "Método",
       "Equipo",
@@ -114,7 +130,7 @@ describe("shell y navegación", () => {
   it("las rutas viejas redirigen a su nuevo sitio en vez de romperse", async () => {
     renderApp("/brain");
     expect(await screen.findByRole("heading", { name: "Fuentes" })).toBeTruthy();
-    expect(screen.getByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
+    expect(screen.getByText("Estado de las fuentes externas de las que dependen los agentes.")).toBeTruthy();
   });
 
   it("el enjambre vive en Sistema y ya no es entrada de menú", async () => {
@@ -155,14 +171,14 @@ describe("shell y navegación", () => {
     expect(await screen.findByRole("heading", { name: "Clientes" })).toBeTruthy();
   });
 
-  it("/meetings redirige a Sistema › Fuentes", async () => {
+  it("/meetings redirige a 2brain › Reuniones", async () => {
     renderApp("/meetings");
-    expect(await screen.findByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Reuniones" })).toBeTruthy();
   });
 
   it("/sistema/salud redirige a Sistema › Fuentes", async () => {
     renderApp("/sistema/salud");
-    expect(await screen.findByText("Estado de las fuentes externas y de la cola de reuniones.")).toBeTruthy();
+    expect(await screen.findByText("Estado de las fuentes externas de las que dependen los agentes.")).toBeTruthy();
   });
 
   it("/sistema/ajustes redirige a Sistema › Configuración", async () => {

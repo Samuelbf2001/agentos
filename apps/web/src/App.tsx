@@ -24,6 +24,8 @@ import TareasView from "./views/TareasView";
 import ProjectsView from "./views/ProjectsView";
 import ProjectLayout from "./views/ProjectLayout";
 import SystemLayout from "./views/SystemLayout";
+import BrainView from "./views/BrainView";
+import BrainMeetingsView from "./views/BrainMeetingsView";
 import AssetView from "./views/AssetView";
 import RunDetailView from "./views/RunDetailView";
 import NewProjectWizard from "./views/NewProjectWizard";
@@ -221,6 +223,8 @@ function Shell() {
             <Route path="/sistema/ajustes" element={<RedirectKeepSearch to={paths.sistema("configuracion")} />} />
             <Route path="/sistema/:tab" element={<SystemLayout />} />
             <Route path="/activo" element={<AssetView />} />
+            <Route path="/2brain" element={<BrainView />} />
+            <Route path="/2brain/reuniones" element={<BrainMeetingsView />} />
 
             {/* Rutas anteriores: se conservan como redirección, no como destino. */}
             <Route path="/waiting" element={<RedirectKeepSearch to="/hoy" />} />
@@ -233,7 +237,7 @@ function Shell() {
             <Route path="/board" element={<RedirectKeepSearch to={paths.proyectos()} />} />
             <Route path="/chat" element={<RedirectKeepSearch to={paths.proyectos()} />} />
             <Route path="/context" element={<RedirectKeepSearch to={paths.proyectos()} />} />
-            <Route path="/meetings" element={<RedirectKeepSearch to={paths.sistema("fuentes")} />} />
+            <Route path="/meetings" element={<RedirectKeepSearch to={paths.brainReuniones()} />} />
             <Route path="*" element={<RedirectKeepSearch to="/hoy" />} />
           </Routes>
         </main>

@@ -13,7 +13,6 @@ import { Card, Chip, SectionHead, type Tone } from "../components/system";
 import { ErrorBox, Spinner } from "../components/ui";
 import { paths } from "../lib/paths";
 import type { BrainSource } from "../lib/types";
-import MeetingProcessingView from "./MeetingProcessingView";
 
 const SOURCE_STATUS: Record<BrainSource["status"], { label: string; tone: Tone }> = {
   connected: { label: "conectada", tone: "done" },
@@ -106,11 +105,14 @@ export default function SystemHealthView() {
               );
             })}
           </div>
+
+          <p className="mt-3 text-small">
+            <Link to={paths.brainReuniones()} className="press font-semibold text-link hover:underline">
+              Ver la cola de reuniones en 2brain
+            </Link>
+          </p>
         </>
       )}
-
-      <SectionHead label="Cola de reuniones" />
-      <MeetingProcessingView />
     </div>
   );
 }

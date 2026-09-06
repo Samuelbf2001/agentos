@@ -5,8 +5,10 @@
  */
 import {
   Activity,
+  AudioLines,
   Bot,
   BookOpen,
+  Brain,
   Building2,
   Clapperboard,
   FileText,
@@ -89,11 +91,19 @@ export function agencyNav(): NavGroup[] {
       label: "2brain",
       items: [
         {
+          id: "panorama",
+          label: "Panorama",
+          to: paths.brain(),
+          icon: Brain,
+          cap: "nav:2brain",
+          match: (p) => p === "/2brain" || p === "/2brain/",
+        },
+        {
           id: "reuniones",
           label: "Reuniones",
-          to: paths.sistema("fuentes"),
+          to: paths.brainReuniones(),
           icon: Video,
-          cap: "sistema:fuentes",
+          cap: "nav:2brain",
         },
         {
           id: "conversaciones",
@@ -107,6 +117,13 @@ export function agencyNav(): NavGroup[] {
           label: "Notas de voz",
           to: `${BRAIN_URL}/notas`,
           icon: Mic,
+          external: true,
+        },
+        {
+          id: "grabadora",
+          label: "Grabadora",
+          to: `${BRAIN_URL}/recorder`,
+          icon: AudioLines,
           external: true,
         },
         {

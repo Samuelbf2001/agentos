@@ -237,11 +237,14 @@ describe("smoke de vistas", () => {
     expect(screen.getAllByText(project.name).length).toBeGreaterThan(0);
   });
 
-  it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro) y la Cola de reuniones", async () => {
+  it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro) y enlaza a la cola de 2brain", async () => {
     ui(<SystemHealthView />);
     expect(await screen.findByText("AgentOS")).toBeTruthy();
     expect(screen.getByText("Núcleo de trabajo operativo.")).toBeTruthy();
-    expect(screen.getByText("Cola de reuniones")).toBeTruthy();
+    expect(screen.queryByText("Cola de reuniones")).toBeNull();
+    expect(screen.getByRole("link", { name: "Ver la cola de reuniones en 2brain" }).getAttribute("href")).toBe(
+      "/2brain/reuniones",
+    );
   });
 
   it("Sistema › Equipo pinta personas y agentes", async () => {

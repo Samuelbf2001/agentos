@@ -75,6 +75,8 @@ export const paths = {
   sistema: (tab: SystemTab = "ahora") => `/sistema/${tab}`,
   run: (runId: string) => `/sistema/actividad/${runId}`,
   activo: () => "/activo",
+  brain: () => "/2brain",
+  brainReuniones: () => "/2brain/reuniones",
   /**
    * Ficha de tarea como query global (`?tarea=<id>`): funciona desde cualquier
    * vista sin reescribir rutas. Recibe pathname+search y devuelve la misma
