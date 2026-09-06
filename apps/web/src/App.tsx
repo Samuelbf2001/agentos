@@ -106,6 +106,8 @@ function Shell() {
   const failedRuns = useStore((s) => s.failedRunsCount);
   const refreshBadges = useStore((s) => s.refreshBadges);
   const activeProjectId = useStore((s) => s.activeProjectId);
+  const previewRole = useStore((s) => s.previewRole);
+  const setPreviewRole = useStore((s) => s.setPreviewRole);
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -151,6 +153,14 @@ function Shell() {
     () => perspectiveFor(location.pathname, location.search),
     [location.pathname, location.search],
   );
+
+  // La previsualización "ver como cliente" es local a un proyecto: si el
+  // usuario navega fuera de /proyectos/:id/* o /hoy?proyecto=<id>, se apaga
+  // sola en vez de arrastrarse a otra pantalla de agencia.
+  useEffect(() => {
+    if (previewRole === "sponsor" && perspective.kind !== "client") setPreviewRole(null);
+  }, [perspective, previewRole, setPreviewRole]);
+
   const groups = useMemo(() => {
     const raw = perspective.kind === "client" ? clientNav(perspective.projectId) : agencyNav();
     return raw

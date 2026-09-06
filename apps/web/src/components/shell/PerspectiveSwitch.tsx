@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, ChevronsUpDown } from "lucide-react";
+import { ArrowLeft, ChevronsUpDown, Eye, EyeOff } from "lucide-react";
 import { InlinePopover, PopoverOption, PopoverSearch } from "../ui/InlinePopover";
 import { STAGE_LABELS } from "../system";
 import { paths } from "../../lib/paths";
@@ -47,6 +47,9 @@ export function PerspectiveSwitch({
   onNavigate?: () => void;
 }) {
   const projects = useStore((s) => s.projects);
+  const previewRole = useStore((s) => s.previewRole);
+  const setPreviewRole = useStore((s) => s.setPreviewRole);
+  const previewing = previewRole === "sponsor";
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -110,6 +113,24 @@ export function PerspectiveSwitch({
     </button>
   );
 
+  if (previewing) {
+    return (
+      <div className="px-3 py-2.5">
+        <div className="rounded-soft bg-decide-bg px-3 py-2 text-small text-decide">
+          <p>Estás viendo lo que ve el cliente</p>
+          <button
+            type="button"
+            onClick={() => setPreviewRole(null)}
+            className="press mt-1 inline-flex items-center gap-1 font-semibold hover:underline"
+          >
+            <EyeOff size={14} strokeWidth={1.75} aria-hidden="true" />
+            Volver a la vista de Sixteam
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-3 py-2.5">
       {perspective.kind === "client" ? (
@@ -168,6 +189,16 @@ export function PerspectiveSwitch({
           <span className="font-semibold text-link">+ Nuevo cliente…</span>
         </PopoverOption>
       </InlinePopover>
+      {perspective.kind === "client" ? (
+        <button
+          type="button"
+          onClick={() => setPreviewRole("sponsor")}
+          className="press mt-1.5 inline-flex items-center gap-1 text-small text-muted hover:text-ink-2"
+        >
+          <Eye size={14} strokeWidth={1.75} aria-hidden="true" />
+          Ver como cliente
+        </button>
+      ) : null}
     </div>
   );
 }

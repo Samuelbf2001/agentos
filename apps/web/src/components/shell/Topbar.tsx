@@ -26,6 +26,7 @@ export function Topbar({
   onOpenMenu: () => void;
 }) {
   const projects = useStore((s) => s.projects);
+  const previewing = useStore((s) => s.previewRole === "sponsor");
   const project =
     perspective.kind === "client"
       ? (projects.find((p) => p.id === perspective.projectId) ?? null)
@@ -48,16 +49,27 @@ export function Topbar({
           oculta (queda "Sixteam › <proyecto>"): con el proyecto ya en foco,
           el cliente es lo primero que sobra en un ancho estrecho. */}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 text-small text-muted">
-        <span className={`truncate ${project ? "shrink-0" : "font-semibold text-ink"}`}>Sixteam</span>
-        {project ? (
+        {previewing && project ? (
           <>
-            <span aria-hidden="true" className="hidden text-faint lg:inline">›</span>
-            <span className="hidden truncate lg:inline">{clientName}</span>
+            <span className="truncate font-semibold text-ink">{clientName}</span>
             <span aria-hidden="true" className="text-faint">›</span>
             <span className="truncate font-semibold text-ink">{project.name}</span>
             <PhaseChip stage={project.stage} />
           </>
-        ) : null}
+        ) : (
+          <>
+            <span className={`truncate ${project ? "shrink-0" : "font-semibold text-ink"}`}>Sixteam</span>
+            {project ? (
+              <>
+                <span aria-hidden="true" className="hidden text-faint lg:inline">›</span>
+                <span className="hidden truncate lg:inline">{clientName}</span>
+                <span aria-hidden="true" className="text-faint">›</span>
+                <span className="truncate font-semibold text-ink">{project.name}</span>
+                <PhaseChip stage={project.stage} />
+              </>
+            ) : null}
+          </>
+        )}
       </div>
 
       <div className="ml-auto flex items-center gap-2">

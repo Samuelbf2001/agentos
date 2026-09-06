@@ -19,6 +19,7 @@ import type {
 import { Markdown } from "../components/Markdown";
 import { EmptyState, ErrorBox, fmtDate, Spinner } from "../components/ui";
 import { paths, type ContextSubtab } from "../lib/paths";
+import { useStore } from "../state/store";
 
 const KIND_LABELS: Record<string, string> = {
   org_profile: "Perfil de organización",
@@ -291,6 +292,7 @@ function SourcesSection({ projectId, onIngested }: { projectId: string; onIngest
 }
 
 function DocsTab({ projectId }: { projectId: string }) {
+  const previewing = useStore((s) => s.previewRole === "sponsor");
   const [docs, setDocs] = useState<KnowledgeDoc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -333,7 +335,7 @@ function DocsTab({ projectId }: { projectId: string }) {
 
   return (
     <div>
-      <SourcesSection projectId={projectId} onIngested={() => void load()} />
+      {!previewing ? <SourcesSection projectId={projectId} onIngested={() => void load()} /> : null}
       <div className="flex gap-4">
       <div className="w-80 shrink-0">
         <form onSubmit={search} className="flex gap-1">

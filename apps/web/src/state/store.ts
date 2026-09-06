@@ -16,6 +16,7 @@ import {
   wsUrl,
 } from "../lib/api";
 import { WsClient, type WsStatus } from "../lib/ws";
+import type { PreviewRole } from "../lib/capabilities";
 import type {
   Agent,
   Approval,
@@ -109,6 +110,8 @@ export interface AppStore extends EventState {
   bootstrapped: boolean;
   /** Modo pruebas: copia local de datos, entrada sin contraseña (ver docs/SANDBOX.md). */
   sandbox: boolean;
+  /** "Ver como cliente": previsualización local, no un rol de sesión real. */
+  previewRole: PreviewRole;
 
   // datos
   projects: Project[];
@@ -165,6 +168,8 @@ export interface AppStore extends EventState {
   /** Modo pruebas: mismo flujo que login() pero sin contraseña. */
   loginSandbox(personId: string): Promise<void>;
   logout(): void;
+  /** "Ver como cliente": reduce el shell a las capacidades de un sponsor. */
+  setPreviewRole(role: PreviewRole): void;
   pushToast(kind: Toast["kind"], text: string): void;
   dismissToast(id: number): void;
 
@@ -420,6 +425,7 @@ export const useStore = create<AppStore>()((set, get) => {
     wsStatus: "closed",
     bootstrapped: false,
     sandbox: false,
+    previewRole: null,
 
     projects: [],
     activeProjectId: null,
@@ -531,6 +537,7 @@ export const useStore = create<AppStore>()((set, get) => {
         person: null,
         token: null,
         wsStatus: "closed",
+        previewRole: null,
         projects: [],
         people: [],
         peopleLoading: false,
@@ -556,6 +563,10 @@ export const useStore = create<AppStore>()((set, get) => {
         taskSearchResults: [],
         activeProjectId: null,
       });
+    },
+
+    setPreviewRole(role) {
+      set({ previewRole: role });
     },
 
     pushToast(kind, text) {

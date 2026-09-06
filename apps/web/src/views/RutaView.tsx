@@ -143,6 +143,7 @@ export default function RutaView({ project }: { project: Project }) {
   const loadProjects = useStore((s) => s.loadProjects);
   const pushToast = useStore((s) => s.pushToast);
   const person = useStore((s) => s.person);
+  const previewing = useStore((s) => s.previewRole === "sponsor");
   const navigate = useNavigate();
 
   const [launch, setLaunch] = useState<LaunchReceipt | null>(null);
@@ -250,7 +251,7 @@ export default function RutaView({ project }: { project: Project }) {
         </div>
       ) : null}
 
-      {launch ? <LaunchReceiptPanel launch={launch} /> : null}
+      {launch && !previewing ? <LaunchReceiptPanel launch={launch} /> : null}
 
       <SectionHead label="Mapa del ciclo" hint="Los candados abren la fase siguiente" />
       <div className="grid gap-3 lg:grid-cols-3" data-testid="cycle-map">
@@ -343,7 +344,7 @@ export default function RutaView({ project }: { project: Project }) {
       ) : null}
 
       <SectionHead label="Hito activo" />
-      <div className="grid gap-3 lg:grid-cols-[1.35fr_0.95fr]">
+      <div className={`grid gap-3 ${previewing ? "" : "lg:grid-cols-[1.35fr_0.95fr]"}`}>
         <Card className="p-4" data-testid="phase-closure">
           <div className="flex flex-wrap items-center gap-2">
             {/* "Entregables (Context Hub)": viene de phase-status (documentos, procesos,
@@ -417,39 +418,41 @@ export default function RutaView({ project }: { project: Project }) {
           )}
         </Card>
 
-        <Card className="overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
-            <h3 className="text-label text-muted">Trabajando ahora</h3>
-          </div>
-          {workers.length === 0 ? (
-            <p className="px-4 py-4 text-small text-muted">
-              Ningún agente tiene una ejecución viva en este proyecto ahora mismo.
-            </p>
-          ) : (
-            workers.map(({ run, agent, task }) => (
-              <div key={run.id} className="flex items-center gap-2.5 border-b border-line-soft px-4 py-3 last:border-b-0">
-                <AgentAvatar name={agent!.name} slug={agent!.slug} size={6} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-small font-semibold text-ink-2">{agent!.name}</p>
-                  <p className="truncate text-small text-muted">
-                    {task ? task.title : `ejecución ${run.id.slice(0, 8)}`}
-                  </p>
+        {!previewing ? (
+          <Card className="overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
+              <h3 className="text-label text-muted">Trabajando ahora</h3>
+            </div>
+            {workers.length === 0 ? (
+              <p className="px-4 py-4 text-small text-muted">
+                Ningún agente tiene una ejecución viva en este proyecto ahora mismo.
+              </p>
+            ) : (
+              workers.map(({ run, agent, task }) => (
+                <div key={run.id} className="flex items-center gap-2.5 border-b border-line-soft px-4 py-3 last:border-b-0">
+                  <AgentAvatar name={agent!.name} slug={agent!.slug} size={6} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-small font-semibold text-ink-2">{agent!.name}</p>
+                    <p className="truncate text-small text-muted">
+                      {task ? task.title : `ejecución ${run.id.slice(0, 8)}`}
+                    </p>
+                  </div>
+                  <Link to={paths.run(run.id)} className="press shrink-0" aria-label={`Ver la ejecución de ${agent!.name}`}>
+                    <WorkingDot />
+                  </Link>
                 </div>
-                <Link to={paths.run(run.id)} className="press shrink-0" aria-label={`Ver la ejecución de ${agent!.name}`}>
-                  <WorkingDot />
-                </Link>
-              </div>
-            ))
-          )}
-          <div className="p-3">
-            <ActionButton
-              className="w-full"
-              onClick={() => navigate(paths.proyecto(project.id, "actividad"))}
-            >
-              Ver toda la actividad
-            </ActionButton>
-          </div>
-        </Card>
+              ))
+            )}
+            <div className="p-3">
+              <ActionButton
+                className="w-full"
+                onClick={() => navigate(paths.proyecto(project.id, "actividad"))}
+              >
+                Ver toda la actividad
+              </ActionButton>
+            </div>
+          </Card>
+        ) : null}
       </div>
     </div>
   );

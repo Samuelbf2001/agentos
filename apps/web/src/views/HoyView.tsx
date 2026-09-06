@@ -8,7 +8,7 @@
  * día en una columna aparte.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "../state/store";
 import { api, ApiError } from "../lib/api";
 import { paths } from "../lib/paths";
@@ -268,6 +268,9 @@ export default function HoyView() {
   const projects = useStore((s) => s.projects);
   const loadApprovals = useStore((s) => s.loadApprovals);
   const pushToast = useStore((s) => s.pushToast);
+  const previewing = useStore((s) => s.previewRole === "sponsor");
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const projectFilter = params.get("proyecto");
   const [selected, setSelected] = useState<string[]>([]);
@@ -277,6 +280,14 @@ export default function HoyView() {
   useEffect(() => {
     void loadApprovals();
   }, [loadApprovals]);
+
+  // En previsualización, "Decisiones" siempre es la de un proyecto: si se
+  // llega sin `?proyecto=` se completa con el proyecto activo.
+  useEffect(() => {
+    if (previewing && !projectFilter && activeProjectId) {
+      navigate(paths.hoy(activeProjectId), { replace: true });
+    }
+  }, [previewing, projectFilter, activeProjectId, navigate]);
 
   const all = useMemo(
     () => sortByRisk(buildDecisions(approvals, reviewTasks, projects)),
@@ -352,11 +363,13 @@ export default function HoyView() {
   return (
     <div className="density-operar mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
       <h1 className="text-display text-ink">
-        {total === 0
-          ? "Nada espera tu decisión"
-          : total === 1
-            ? "Te espera 1 decisión"
-            : `Te esperan ${total} decisiones`}
+        {previewing
+          ? "Decisiones que te esperan"
+          : total === 0
+            ? "Nada espera tu decisión"
+            : total === 1
+              ? "Te espera 1 decisión"
+              : `Te esperan ${total} decisiones`}
       </h1>
       <p className="mt-1.5 max-w-[62ch] text-body text-muted">
         {total === 0
@@ -381,7 +394,7 @@ export default function HoyView() {
         </div>
       ) : null}
 
-      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-8">
+      <div className={previewing ? undefined : "lg:grid lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-8"}>
         <div className="min-w-0">
           <SectionHead label="Decisiones" count={total} />
 
@@ -463,35 +476,37 @@ export default function HoyView() {
           )}
         </div>
 
-        <aside className="mt-8 lg:mt-0">
-          <SectionHead label="Pulso" />
-          <div className="grid gap-3">
-            <Stat
-              value={pulse ? pulse.working : "—"}
-              label="Agentes trabajando"
-              {...(pulse && pulse.working > 0 ? { tone: "work" as const } : {})}
-            />
-            <Stat
-              value={pulse ? pulse.failed : "—"}
-              label={pulse?.failed === 1 ? "Ejecución fallida" : "Ejecuciones fallidas"}
-              tone={pulse && pulse.failed > 0 ? "broken" : undefined}
-            />
-            <Stat
-              value={pulse ? (pulse.spentToday === null ? "no reportado" : fmtCost(pulse.spentToday)) : "—"}
-              label="Gasto de hoy"
-            />
-          </div>
+        {!previewing ? (
+          <aside className="mt-8 lg:mt-0">
+            <SectionHead label="Pulso" />
+            <div className="grid gap-3">
+              <Stat
+                value={pulse ? pulse.working : "—"}
+                label="Agentes trabajando"
+                {...(pulse && pulse.working > 0 ? { tone: "work" as const } : {})}
+              />
+              <Stat
+                value={pulse ? pulse.failed : "—"}
+                label={pulse?.failed === 1 ? "Ejecución fallida" : "Ejecuciones fallidas"}
+                tone={pulse && pulse.failed > 0 ? "broken" : undefined}
+              />
+              <Stat
+                value={pulse ? (pulse.spentToday === null ? "no reportado" : fmtCost(pulse.spentToday)) : "—"}
+                label="Gasto de hoy"
+              />
+            </div>
 
-          <SectionHead label="Atajos" />
-          <div className="flex flex-col items-start gap-2">
-            <Link to={paths.misTareas()} className="press text-small font-semibold text-link hover:underline">
-              Mis tareas
-            </Link>
-            <Link to={paths.tareas()} className="press text-small font-semibold text-link hover:underline">
-              Todas las tareas
-            </Link>
-          </div>
-        </aside>
+            <SectionHead label="Atajos" />
+            <div className="flex flex-col items-start gap-2">
+              <Link to={paths.misTareas()} className="press text-small font-semibold text-link hover:underline">
+                Mis tareas
+              </Link>
+              <Link to={paths.tareas()} className="press text-small font-semibold text-link hover:underline">
+                Todas las tareas
+              </Link>
+            </div>
+          </aside>
+        ) : null}
       </div>
     </div>
   );

@@ -29,15 +29,33 @@ export const ALL_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
 ]);
 
 /**
+ * "Ver como cliente": previsualización local para diseñar y enseñar, no un
+ * permiso real — hoy no existe rol de cliente en la sesión.
+ */
+export type PreviewRole = "sponsor" | null;
+
+const SPONSOR_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
+  "nav:hoy",
+  "proyecto:ruta",
+  "proyecto:contexto",
+]);
+
+/**
  * Hoy existe un solo rol (persona interna de Sixteam): todo el mundo tiene
  * todas las capacidades. Cuando la sesión traiga rol y tenant, esta función
- * es el único sitio que cambia.
+ * es el único sitio que cambia. `previewRole` es aparte: reduce el set sin
+ * tocar la sesión real, para previsualizar lo que vería el cliente.
  */
-export function capabilitiesFor(_person: Person | null): ReadonlySet<Capability> {
+export function capabilitiesFor(
+  _person: Person | null,
+  previewRole: PreviewRole = null,
+): ReadonlySet<Capability> {
+  if (previewRole === "sponsor") return SPONSOR_CAPABILITIES;
   return ALL_CAPABILITIES;
 }
 
 export function useCapabilities(): ReadonlySet<Capability> {
   const person = useStore((s) => s.person);
-  return useMemo(() => capabilitiesFor(person), [person]);
+  const previewRole = useStore((s) => s.previewRole);
+  return useMemo(() => capabilitiesFor(person, previewRole), [person, previewRole]);
 }
