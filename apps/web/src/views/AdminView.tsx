@@ -29,7 +29,9 @@ function ConfigTab() {
   return (
     <div className="space-y-3">
       <p className="text-small text-muted">
-        {killSwitch ? "Agentes pausados" : "Agentes activos"}
+        {killSwitch
+          ? "Agentes pausados: no arrancan runs nuevos y los activos se cancelan en menos de 10 segundos. Se reanudan desde el botón de la cabecera."
+          : "Agentes activos. Se pausan desde el botón de la cabecera."}
       </p>
 
       <div className="rounded-soft border border-line bg-surface p-4">

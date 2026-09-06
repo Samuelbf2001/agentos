@@ -182,7 +182,9 @@ function Shell() {
     <div className="flex h-full min-h-0 flex-col bg-canvas">
       {killSwitch ? (
         <div className="flex flex-wrap items-center justify-center gap-3 bg-broken-bg px-4 py-1.5 text-small text-broken">
-          <span className="font-semibold">Los agentes están pausados: no arrancan runs nuevos.</span>
+          <span className="font-semibold">
+            Los agentes están pausados: no arrancan runs nuevos. Reanúdalos desde el botón de la cabecera.
+          </span>
         </div>
       ) : null}
 

@@ -484,12 +484,6 @@ export default function HoyView() {
         </Link>
         .
       </p>
-
-      <p className="mt-2 text-small text-muted">
-        <Link to={paths.proyectos()} className="press font-semibold text-link hover:underline">
-          Ver los proyectos
-        </Link>
-      </p>
     </div>
   );
 }
