@@ -46,7 +46,6 @@ import {
   AGRUPACION_LABELS,
   COLUMNAS,
   COLUMNA_LABELS,
-  ESTADOS_CERRADOS,
   FILTROS_VACIOS,
   VENCIMIENTOS,
   VENCIMIENTO_LABELS,
@@ -58,9 +57,7 @@ import {
   filtrar,
   filtrosAParams,
   guardarProyectoReciente,
-  guardarVista,
   leerProyectoReciente,
-  leerVista,
   ordenar,
   orgIdOf,
   parseAgrupacion,
@@ -73,14 +70,8 @@ import {
   type Columna,
   type Contexto,
   type Filtros,
-  type Vista,
 } from "../lib/tareas";
 import { CreateTaskDialog } from "./CreateTaskDialog";
-
-/** Estados del tablero: los cerrados sólo aparecen cuando se piden. */
-function columnasTablero(cerradas: boolean): TaskStatus[] {
-  return cerradas ? TASK_STATUSES : TASK_STATUSES.filter((s) => !ESTADOS_CERRADOS.includes(s));
-}
 
 const selectClass =
   "min-h-8 rounded-tight border border-line bg-surface px-2 py-1 text-small text-ink-2 focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
@@ -351,43 +342,6 @@ function TaskRow({
   );
 }
 
-// ── Tarjeta del tablero ─────────────────────────────────────────────────────
-
-function TaskCard({ task, ctx, selected }: { task: Task; ctx: Contexto; selected: boolean }) {
-  const openTask = useStore((s) => s.openTask);
-  const project = projectOf(task, ctx.projects);
-  const orgId = orgIdOf(task, ctx.projects);
-  const responsable = responsablePrincipal(task);
-  return (
-    <button
-      type="button"
-      data-testid={`tarea-tarjeta-${task.id}`}
-      data-selected={selected ? "true" : undefined}
-      onClick={() => void openTask(task.id)}
-      className={`flex w-full flex-col gap-1 rounded-soft border bg-surface px-2.5 py-2 text-left shadow-rest transition-colors hover:bg-surface-2 ${
-        selected ? "border-link" : "border-line-soft"
-      }`}
-    >
-      <span className="flex items-start gap-1.5">
-        <PriorityDot priority={task.priority} />
-        <span className="min-w-0 flex-1 text-small font-medium leading-snug text-ink">{task.title}</span>
-      </span>
-      <span className="flex flex-wrap items-center gap-1.5 text-label text-muted">
-        <span className="max-w-[10rem] truncate">{clienteLabel(orgId, ctx)}</span>
-        {project ? <span className="max-w-[10rem] truncate text-faint">· {project.name}</span> : null}
-      </span>
-      <span className="flex flex-wrap items-center gap-1.5 text-label">
-        {responsable ? (
-          <span className="text-muted">{personName(responsable, ctx.people)}</span>
-        ) : (
-          <span className="text-faint">Sin responsable</span>
-        )}
-        <DuePill task={task} />
-      </span>
-    </button>
-  );
-}
-
 // ── La vista ────────────────────────────────────────────────────────────────
 
 export default function TareasView() {
@@ -407,7 +361,6 @@ export default function TareasView() {
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [vista, setVista] = useState<Vista>(() => leerVista());
   const [cursor, setCursor] = useState(-1);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickProject, setQuickProject] = useState<string>(() => leerProyectoReciente() ?? "");
@@ -585,11 +538,6 @@ export default function TareasView() {
     aplicar(filtros, { orden: { columna, direccion } });
   }
 
-  function cambiarVista(next: Vista): void {
-    setVista(next);
-    guardarVista(next);
-  }
-
   async function crearRapido(): Promise<void> {
     const title = quickTitle.trim();
     const project = projects.find((p) => p.id === quickProject);
@@ -614,26 +562,6 @@ export default function TareasView() {
             Todo el trabajo de Sixteam en una sola base: todos los clientes, todos los proyectos. El
             cliente y el proyecto son filtros, no puertas que haya que cruzar.
           </p>
-        </div>
-        <div
-          role="group"
-          aria-label="Modo de vista"
-          className="flex gap-0.5 rounded-[11px] bg-canvas-deep p-[3px]"
-        >
-          {(["tabla", "tablero"] as const).map((modo) => (
-            <button
-              key={modo}
-              type="button"
-              data-testid={`tareas-vista-${modo}`}
-              aria-pressed={vista === modo}
-              onClick={() => cambiarVista(modo)}
-              className={`press inline-flex min-h-8 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
-                vista === modo ? "bg-surface text-ink shadow-rest" : "text-muted hover:text-ink-2"
-              }`}
-            >
-              {modo === "tabla" ? "Tabla" : "Tablero"}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -922,7 +850,7 @@ export default function TareasView() {
           />
         ) : null}
 
-        {!error && visibles.length > 0 && vista === "tabla" ? (
+        {!error && visibles.length > 0 ? (
           <div className="space-y-5">
             {grupos.map((grupo) => {
               let indexBase = 0;
@@ -991,37 +919,6 @@ export default function TareasView() {
                       </tbody>
                     </table>
                   </div>
-                </section>
-              );
-            })}
-          </div>
-        ) : null}
-
-        {!error && visibles.length > 0 && vista === "tablero" ? (
-          <div className="flex gap-2.5 overflow-x-auto pb-2" data-testid="tareas-tablero">
-            {columnasTablero(filtros.cerradas).map((status) => {
-              const columna = visiblesRender.filter((task) => task.status === status);
-              return (
-                <section
-                  key={status}
-                  data-testid={`tareas-columna-${status}`}
-                  className="flex w-64 shrink-0 flex-col gap-1.5 rounded-panel border border-line-soft bg-canvas-deep/60 p-2"
-                >
-                  <h2 className="flex items-center gap-2 px-1 py-0.5">
-                    <StatusPill status={status} />
-                    <span className="text-label tabular-nums text-muted">{columna.length}</span>
-                  </h2>
-                  {columna.length === 0 ? (
-                    <p className="px-1 py-2 text-label text-faint">Nada aquí.</p>
-                  ) : null}
-                  {columna.map((task) => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      ctx={ctx}
-                      selected={recorrido[cursor]?.id === task.id}
-                    />
-                  ))}
                 </section>
               );
             })}

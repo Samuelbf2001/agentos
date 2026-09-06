@@ -498,21 +498,6 @@ describe("TareasView (render)", () => {
     expect(screen.getByTestId("tareas-chip-responsable").textContent).toContain("Yo");
   });
 
-  it("el conmutador tabla/tablero se recuerda en localStorage", async () => {
-    const { unmount } = renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
-
-    fireEvent.click(screen.getByTestId("tareas-vista-tablero"));
-    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
-    expect(screen.getByTestId("tareas-columna-READY")).toBeTruthy();
-    expect(screen.getByTestId("tarea-tarjeta-t-beta-semana")).toBeTruthy();
-    expect(localStorage.getItem("agentos_tareas_vista")).toBe("tablero");
-
-    unmount();
-    renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
-  });
-
   it("la creación rápida manda título y proyecto, y recuerda el último usado", async () => {
     renderTareas();
     await waitFor(() => expect(screen.getByTestId("tareas-alta-titulo")).toBeTruthy());

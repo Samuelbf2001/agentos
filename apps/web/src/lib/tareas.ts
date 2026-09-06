@@ -32,8 +32,6 @@ import {
 
 // ── Vocabulario de la vista ─────────────────────────────────────────────────
 
-export type Vista = "tabla" | "tablero";
-
 export const AGRUPACIONES = [
   "ninguna",
   "cliente",
@@ -482,26 +480,6 @@ export function clientesDe(ctx: ClienteCtx): { id: string; label: string }[] {
   return ids
     .map((id) => ({ id, label: clienteLabel(id, ctx) }))
     .sort((a, b) => a.label.localeCompare(b.label, "es"));
-}
-
-// ── Persistencia del conmutador de vista ────────────────────────────────────
-
-export const VISTA_STORAGE_KEY = "agentos_tareas_vista";
-
-export function leerVista(): Vista {
-  try {
-    return localStorage.getItem(VISTA_STORAGE_KEY) === "tablero" ? "tablero" : "tabla";
-  } catch {
-    return "tabla";
-  }
-}
-
-export function guardarVista(vista: Vista): void {
-  try {
-    localStorage.setItem(VISTA_STORAGE_KEY, vista);
-  } catch {
-    // Sin almacenamiento la vista sigue funcionando: sólo no se recuerda.
-  }
 }
 
 export const PROYECTO_RECIENTE_KEY = "agentos_tareas_ultimo_proyecto";
