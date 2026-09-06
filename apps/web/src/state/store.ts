@@ -107,6 +107,8 @@ export interface AppStore extends EventState {
   token: string | null;
   wsStatus: WsStatus;
   bootstrapped: boolean;
+  /** Modo pruebas: copia local de datos, entrada sin contraseña (ver docs/SANDBOX.md). */
+  sandbox: boolean;
 
   // datos
   projects: Project[];
@@ -163,6 +165,8 @@ export interface AppStore extends EventState {
   // acciones
   init(): Promise<void>;
   login(password: string, personId: string): Promise<void>;
+  /** Modo pruebas: mismo flujo que login() pero sin contraseña. */
+  loginSandbox(personId: string): Promise<void>;
   logout(): void;
   pushToast(kind: Toast["kind"], text: string): void;
   dismissToast(id: number): void;
@@ -419,6 +423,7 @@ export const useStore = create<AppStore>()((set, get) => {
     token: null,
     wsStatus: "closed",
     bootstrapped: false,
+    sandbox: false,
 
     projects: [],
     activeProjectId: null,
@@ -461,6 +466,15 @@ export const useStore = create<AppStore>()((set, get) => {
       setOnUnauthorized(() => {
         if (get().token) get().logout();
       });
+      // El chip "Pruebas" y el botón sin contraseña dependen de esto incluso
+      // antes de iniciar sesión (LoginView). Si la API no responde, queda en
+      // false: nunca rompe el arranque normal.
+      try {
+        const health = await api.health();
+        set({ sandbox: health.sandbox === true });
+      } catch {
+        set({ sandbox: false });
+      }
       const session = loadSession();
       if (!session) {
         set({ bootstrapped: true });
@@ -487,6 +501,24 @@ export const useStore = create<AppStore>()((set, get) => {
 
     async login(password, personId) {
       const res = await api.login(password, personId);
+      setToken(res.token);
+      saveSession(res.token, res.person);
+      set({ token: res.token, person: res.person });
+      connectWs(res.token);
+      await Promise.allSettled([
+        get().loadProjects(),
+        get().loadPeople(),
+        get().loadApprovals(),
+        get().loadAgents(),
+        get().loadKillSwitch(),
+        get().refreshBadges(),
+      ]);
+      const first = get().projects[0]?.id ?? null;
+      if (first) await get().setActiveProject(first);
+    },
+
+    async loginSandbox(personId) {
+      const res = await api.sandboxLogin(personId);
       setToken(res.token);
       saveSession(res.token, res.person);
       set({ token: res.token, person: res.person });

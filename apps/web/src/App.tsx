@@ -120,6 +120,7 @@ function LegacyRun() {
 
 function Shell() {
   const person = useStore((s) => s.person);
+  const sandbox = useStore((s) => s.sandbox);
   const killSwitch = useStore((s) => s.killSwitch);
   const setKillSwitch = useStore((s) => s.setKillSwitch);
   const decisionsCount = useStore((s) => s.approvals.length + s.reviewTasks.length);
@@ -185,6 +186,14 @@ function Shell() {
               className="block h-[22px] w-[22px] rounded-[7px] bg-gradient-to-br from-ink to-muted"
             />
             AgentOS
+            {sandbox ? (
+              <kbd
+                title="Entorno de pruebas: copia de datos, sin efectos reales"
+                className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint"
+              >
+                Pruebas
+              </kbd>
+            ) : null}
           </span>
           <nav aria-label="Navegación principal" className="flex gap-0.5 rounded-[11px] bg-canvas-deep p-[3px]">
             {GLOBAL_NAV.map((item) => {

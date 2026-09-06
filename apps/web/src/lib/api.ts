@@ -226,9 +226,16 @@ export const api = {
       body: { password, person_id: personId },
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  /** Modo pruebas (sandbox): entrada sin contraseña, misma forma que login(). */
+  sandboxLogin: (personId: string) =>
+    request<{ token: string; person: Person }>("/api/auth/sandbox-login", {
+      method: "POST",
+      body: { person_id: personId },
+    }),
   health: () =>
     request<{
       ok: boolean;
+      sandbox: boolean;
       kill_switch: boolean;
       counts: Record<string, number>;
     }>("/api/health"),
