@@ -200,6 +200,17 @@ describe("organigrama del cliente", () => {
     expect(within(screen.getByTestId("role-node-r2")).getByText("Vacante")).toBeTruthy();
   });
 
+  it("pinta 2 nodos de área con su nombre y el conteo de roles", async () => {
+    renderApp(`/proyectos/${orgProject.id}/organigrama`);
+    await screen.findByTestId("role-node-r1");
+    const ventas = screen.getByTestId("area-node-u1");
+    expect(within(ventas).getByText("Ventas")).toBeTruthy();
+    expect(within(ventas).getByText("2 roles")).toBeTruthy();
+    const operaciones = screen.getByTestId("area-node-u2");
+    expect(within(operaciones).getByText("Operaciones")).toBeTruthy();
+    expect(within(operaciones).getByText("1 roles")).toBeTruthy();
+  });
+
   it("pulsar un rol abre el panel con sus funciones y su proceso", async () => {
     renderApp(`/proyectos/${orgProject.id}/organigrama`);
     await screen.findByTestId("role-node-r2");

@@ -3,7 +3,7 @@
  * pertenece a un área, reporta a otro rol, lo ocupan personas, tiene
  * funciones y participa en procesos. Al pulsar un rol se abre RolePanel.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -15,6 +15,7 @@ import {
   type Connection,
   type Edge,
   type Node,
+  type NodeChange,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -23,20 +24,73 @@ import { ActionButton } from "../../components/system";
 import { EmptyState, ErrorBox, Spinner } from "../../components/ui";
 import { InlinePopover, PopoverSearch } from "../../components/ui/InlinePopover";
 import type { OrgUnit } from "../../lib/types";
+import { AreaNode, type AreaNodeData } from "./AreaNode";
 import { layoutRoles } from "./layout";
 import { RoleNode, type RoleNodeData } from "./RoleNode";
 import RolePanel from "./RolePanel";
 import { useOrgGraph } from "./useOrgGraph";
 
-const nodeTypes = { role: RoleNode };
+const nodeTypes = { role: RoleNode, area: AreaNode };
+
+/** Nodo que puede vivir en el canvas: rol (interactivo) o área (fondo). */
+type CanvasNode = Node<RoleNodeData> | Node<AreaNodeData>;
 
 /** Seis tonos fijos, todos tokens existentes; sin área usa bg-faint aparte. */
 const AREA_COLORS = ["bg-link", "bg-done", "bg-work", "bg-decide", "bg-broken", "bg-ink-2"];
+/** Mismo orden que AREA_COLORS: fondo translúcido del rectángulo de área. */
+const AREA_BG_TINT = ["bg-link/10", "bg-done/10", "bg-work/10", "bg-decide/10", "bg-broken/10", "bg-ink-2/10"];
+/** Mismo orden que AREA_COLORS: color de texto de la etiqueta del área. */
+const AREA_TEXT_COLORS = ["text-link", "text-done", "text-work", "text-decide", "text-broken", "text-ink-2"];
 
 function colorForUnit(units: OrgUnit[], unitId: string | null): string {
   if (!unitId) return "bg-faint";
   const idx = units.findIndex((u) => u.id === unitId);
   return idx === -1 ? "bg-faint" : (AREA_COLORS[idx % AREA_COLORS.length] ?? "bg-faint");
+}
+
+// Caja envolvente de cada área a partir de las posiciones absolutas de sus
+// roles: 220px de ancho de tarjeta, alto medido por React Flow o 120px por
+// defecto, 24px de margen y 36px extra arriba para la etiqueta.
+const AREA_MARGIN = 24;
+const AREA_LABEL_SPACE = 36;
+const ROLE_CARD_WIDTH = 220;
+const ROLE_CARD_DEFAULT_HEIGHT = 120;
+
+function computeAreaNodes(
+  roleNodes: Node<RoleNodeData>[],
+  units: OrgUnit[],
+  highlightUnitId: string | null,
+): Node<AreaNodeData>[] {
+  const areas: Node<AreaNodeData>[] = [];
+  units.forEach((unit, i) => {
+    const rolesInUnit = roleNodes.filter((n) => n.data.role.unitId === unit.id);
+    if (rolesInUnit.length === 0) return;
+    const left = Math.min(...rolesInUnit.map((n) => n.position.x)) - AREA_MARGIN;
+    const top = Math.min(...rolesInUnit.map((n) => n.position.y)) - AREA_MARGIN - AREA_LABEL_SPACE;
+    const right = Math.max(...rolesInUnit.map((n) => n.position.x + ROLE_CARD_WIDTH)) + AREA_MARGIN;
+    const bottom =
+      Math.max(...rolesInUnit.map((n) => n.position.y + (n.measured?.height ?? ROLE_CARD_DEFAULT_HEIGHT))) +
+      AREA_MARGIN;
+    areas.push({
+      id: `area-${unit.id}`,
+      type: "area",
+      position: { x: left, y: top },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      zIndex: -1,
+      style: { width: right - left, height: bottom - top, pointerEvents: "none" },
+      data: {
+        unitId: unit.id,
+        name: unit.name,
+        roleCount: rolesInUnit.length,
+        bgClass: AREA_BG_TINT[i % AREA_BG_TINT.length] ?? "bg-faint/10",
+        textClass: AREA_TEXT_COLORS[i % AREA_TEXT_COLORS.length] ?? "text-faint",
+        dimmed: highlightUnitId !== null && highlightUnitId !== unit.id,
+      },
+    });
+  });
+  return areas;
 }
 
 export default function OrgChartView({ orgId, readOnly = false }: { orgId: string; readOnly?: boolean }) {
@@ -52,7 +106,7 @@ export default function OrgChartView({ orgId, readOnly = false }: { orgId: strin
   const [newAreaName, setNewAreaName] = useState("");
 
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const instanceRef = useRef<ReactFlowInstance<Node<RoleNodeData>, Edge> | null>(null);
+  const instanceRef = useRef<ReactFlowInstance<CanvasNode, Edge> | null>(null);
 
   // Reconstruye nodos/aristas cada vez que cambia el grafo, la selección o el
   // filtro de área. No toca el estado durante un arrastre en curso: eso pasa
@@ -120,6 +174,15 @@ export default function OrgChartView({ orgId, readOnly = false }: { orgId: strin
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedRoleId, readOnly, deleteRole]);
 
+  // Los rectángulos de área son derivados: se recalculan a partir de las
+  // posiciones absolutas de los roles cada vez que cambian (arrastre
+  // incluido), nunca se persisten y nunca entran al estado de nodos de rol.
+  const areaNodes = useMemo<Node<AreaNodeData>[]>(
+    () => (graph ? computeAreaNodes(nodes, graph.units, highlightUnitId) : []),
+    [nodes, graph, highlightUnitId],
+  );
+  const canvasNodes = useMemo<CanvasNode[]>(() => [...areaNodes, ...nodes], [areaNodes, nodes]);
+
   if (loading && !graph) return <Spinner label="Cargando el organigrama…" />;
   if (error && !graph) return <ErrorBox message={error} onRetry={() => void reload()} />;
   if (!graph) return null;
@@ -142,6 +205,16 @@ export default function OrgChartView({ orgId, readOnly = false }: { orgId: strin
   function onConnect(connection: Connection) {
     if (readOnly || !connection.source || !connection.target) return;
     void updateRole(connection.target, { reports_to_role_id: connection.source });
+  }
+
+  // Los nodos de área no forman parte del estado de roles (se derivan en el
+  // useMemo de arriba): se descartan aquí los cambios que React Flow reporta
+  // para ellos (p. ej. medición de tamaño) antes de aplicar el resto sobre
+  // los roles.
+  function handleNodesChange(changes: NodeChange<CanvasNode>[]) {
+    const roleIds = new Set(nodes.map((n) => n.id));
+    const roleChanges = changes.filter((c) => "id" in c && roleIds.has(c.id));
+    onNodesChange(roleChanges as NodeChange<Node<RoleNodeData>>[]);
   }
 
   function onNodeDragStop(_: unknown, node: Node) {
@@ -249,11 +322,11 @@ export default function OrgChartView({ orgId, readOnly = false }: { orgId: strin
           onDoubleClick={onPaneDoubleClick}
           className="h-[calc(100vh-8rem)] min-h-[520px] min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-rest"
         >
-          <ReactFlow
-            nodes={nodes}
+          <ReactFlow<CanvasNode, Edge>
+            nodes={canvasNodes}
             edges={edges}
             nodeTypes={nodeTypes}
-            onNodesChange={readOnly ? undefined : onNodesChange}
+            onNodesChange={readOnly ? undefined : handleNodesChange}
             onEdgesChange={readOnly ? undefined : onEdgesChange}
             onConnect={readOnly ? undefined : onConnect}
             onNodeDragStop={readOnly ? undefined : onNodeDragStop}
