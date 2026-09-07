@@ -97,7 +97,7 @@ export default function OrgChartView({ orgId, readOnly = false }: { orgId: strin
         target: r.id,
         type: "smoothstep",
         markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-faint)" },
-        style: { stroke: "var(--color-line-2)" },
+        style: { stroke: "var(--color-faint)", strokeWidth: 1.5 },
       }));
     setEdges(nextEdges);
     // eslint-disable-next-line react-hooks/exhaustive-deps

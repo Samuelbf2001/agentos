@@ -75,8 +75,30 @@ export function useOrgGraph(orgId: string): UseOrgGraphResult {
     void load();
   }, [load]);
 
-  function mergeRole(role: OrgRoleFull) {
-    setGraph((g) => (g ? { ...g, roles: g.roles.map((r) => (r.id === role.id ? role : r)) } : g));
+  /**
+   * `PATCH /api/roles/:id` devuelve la fila del rol sin sus listas anidadas:
+   * se conservan las que ya teníamos para no perder funciones, personas y
+   * procesos al renombrar o mover un rol.
+   */
+  function mergeRole(role: Partial<OrgRoleFull> & { id: string }) {
+    setGraph((g) =>
+      g
+        ? {
+            ...g,
+            roles: g.roles.map((r) =>
+              r.id === role.id
+                ? {
+                    ...r,
+                    ...role,
+                    functions: role.functions ?? r.functions,
+                    people: role.people ?? r.people,
+                    processes: role.processes ?? r.processes,
+                  }
+                : r,
+            ),
+          }
+        : g,
+    );
   }
 
   return {
