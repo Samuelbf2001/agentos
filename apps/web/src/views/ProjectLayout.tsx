@@ -22,6 +22,7 @@ import { useCapabilities } from "../lib/capabilities";
 import BoardView from "./BoardView";
 import ChatView from "./ChatView";
 import ContextView from "./ContextView";
+import OrgChartView from "./orgchart/OrgChartView";
 import RunsView from "./RunsView";
 import RutaView from "./RutaView";
 
@@ -37,6 +38,7 @@ export default function ProjectLayout() {
   const projects = useStore((s) => s.projects);
   const setActiveProject = useStore((s) => s.setActiveProject);
   const bootstrapped = useStore((s) => s.bootstrapped);
+  const previewRole = useStore((s) => s.previewRole);
   const caps = useCapabilities();
   const tabs = PROJECT_TABS.filter((t) => caps.has(`proyecto:${t}`));
 
@@ -114,6 +116,9 @@ export default function ProjectLayout() {
         {current === "ruta" ? <RutaView project={project} /> : null}
         {current === "tablero" ? <BoardView projectId={project.id} /> : null}
         {current === "contexto" ? <ContextView projectId={project.id} sub={contextSub} /> : null}
+        {current === "organigrama" ? (
+          <OrgChartView orgId={project.orgId} readOnly={previewRole === "sponsor"} />
+        ) : null}
         {current === "conversacion" ? <ChatView /> : null}
         {current === "actividad" ? <RunsView projectId={project.id} /> : null}
       </div>

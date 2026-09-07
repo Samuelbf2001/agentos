@@ -38,6 +38,7 @@ const SPONSOR_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   "nav:hoy",
   "proyecto:ruta",
   "proyecto:contexto",
+  "proyecto:organigrama",
 ]);
 
 /**

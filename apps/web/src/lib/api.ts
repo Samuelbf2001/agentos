@@ -28,6 +28,12 @@ import type {
   SourceBrowseItem,
   MeetingProcessingFilter,
   MeetingProcessingOverview,
+  OrgGraph,
+  OrgRoleFull,
+  OrgRolePerson,
+  OrgRoleProcessLink,
+  OrgUnit,
+  RoleFunction,
   Run,
   Span,
   Stage,
@@ -565,6 +571,57 @@ export const api = {
     const params = new URLSearchParams({ status, page: String(page) });
     return request<MeetingProcessingOverview>(`/api/meetings/processing?${params.toString()}`);
   },
+
+  // ── Organigrama ────────────────────────────────────────────────────────────
+  orgGraph: (orgId: string) => request<OrgGraph>(`/api/orgs/${orgId}/graph`),
+  createOrgUnit: (
+    orgId: string,
+    body: { name: string; parent_unit_id?: string | null; description?: string | null },
+  ) => request<{ unit: OrgUnit }>(`/api/orgs/${orgId}/units`, { method: "POST", body }),
+  updateOrgUnit: (
+    id: string,
+    body: { name?: string; parent_unit_id?: string | null; description?: string | null },
+  ) => request<{ unit: OrgUnit }>(`/api/units/${id}`, { method: "PATCH", body }),
+  deleteOrgUnit: (id: string) => request<{ ok: boolean }>(`/api/units/${id}`, { method: "DELETE" }),
+  createOrgRole: (
+    orgId: string,
+    body: {
+      name: string;
+      unit_id?: string | null;
+      purpose?: string | null;
+      reports_to_role_id?: string | null;
+      canvas_x?: number;
+      canvas_y?: number;
+    },
+  ) => request<{ role: OrgRoleFull }>(`/api/orgs/${orgId}/roles`, { method: "POST", body }),
+  updateOrgRole: (
+    id: string,
+    body: {
+      name?: string;
+      unit_id?: string | null;
+      purpose?: string | null;
+      reports_to_role_id?: string | null;
+      canvas_x?: number;
+      canvas_y?: number;
+      status?: "draft" | "validated";
+      expected_version?: number;
+    },
+  ) => request<{ role: OrgRoleFull }>(`/api/roles/${id}`, { method: "PATCH", body }),
+  deleteOrgRole: (id: string) => request<{ ok: boolean }>(`/api/roles/${id}`, { method: "DELETE" }),
+  replaceRoleFunctions: (
+    id: string,
+    functions: { id?: string; name: string; description?: string | null }[],
+  ) => request<{ functions: RoleFunction[] }>(`/api/roles/${id}/functions`, { method: "PUT", body: { functions } }),
+  replaceRolePeople: (id: string, people: { person_id: string; dedication_pct?: number | null }[]) =>
+    request<{ people: OrgRolePerson[] }>(`/api/roles/${id}/people`, { method: "PUT", body: { people } }),
+  replaceRoleProcesses: (
+    id: string,
+    processes: { process_id: string; relation: "owner" | "participant" }[],
+  ) =>
+    request<{ processes: OrgRoleProcessLink[] }>(`/api/roles/${id}/processes`, {
+      method: "PUT",
+      body: { processes },
+    }),
 };
 
 export type Api = typeof api;

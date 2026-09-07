@@ -20,6 +20,7 @@ import {
   MessageSquare,
   MessagesSquare,
   Mic,
+  Network,
   Plug,
   Settings,
   ShieldCheck,
@@ -235,6 +236,13 @@ export function clientNav(projectId: string): NavGroup[] {
               icon: Workflow,
             },
           ],
+        },
+        {
+          id: "organigrama",
+          label: "Organigrama",
+          to: paths.proyecto(projectId, "organigrama"),
+          icon: Network,
+          cap: "proyecto:organigrama",
         },
         {
           id: "conversacion",

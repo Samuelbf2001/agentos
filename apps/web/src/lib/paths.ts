@@ -6,13 +6,14 @@
  * vuelta (run → tarea → proyecto) no dependan de cadenas sueltas por la app.
  */
 
-export const PROJECT_TABS = ["ruta", "tablero", "contexto", "conversacion", "actividad"] as const;
+export const PROJECT_TABS = ["ruta", "tablero", "contexto", "organigrama", "conversacion", "actividad"] as const;
 export type ProjectTab = (typeof PROJECT_TABS)[number];
 
 export const PROJECT_TAB_LABELS: Record<ProjectTab, string> = {
   ruta: "Ruta",
   tablero: "Tablero",
   contexto: "Contexto",
+  organigrama: "Organigrama",
   conversacion: "Conversación",
   actividad: "Actividad",
 };
