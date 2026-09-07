@@ -31,6 +31,7 @@ export {
   type TableReport,
 } from "./migrate-to-pg.js";
 
+export * from "./repositories/org-graph.js";
 export * from "./repositories/organizations-people.js";
 export * from "./repositories/projects.js";
 export * from "./repositories/providers.js";

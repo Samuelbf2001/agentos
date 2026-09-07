@@ -124,6 +124,15 @@ export const ProcessStep = z.object({
 });
 export type ProcessStep = z.infer<typeof ProcessStep>;
 
+// ── Grafo organizacional ─────────────────────────────────────────────────────
+/** `draft` = borrador de la entrevista/mapeo; `validated` = confirmado con el cliente. */
+export const OrgRoleStatus = z.enum(["draft", "validated"]);
+export type OrgRoleStatus = z.infer<typeof OrgRoleStatus>;
+
+/** Relación de un rol con un proceso: dueño único o participante. */
+export const RoleProcessRelation = z.enum(["owner", "participant"]);
+export type RoleProcessRelation = z.infer<typeof RoleProcessRelation>;
+
 // ── Canales / conversación (ARCHITECTURE §9) ────────────────────────────────
 export const MessageRole = z.enum(["user", "assistant", "system", "tool"]);
 export type MessageRole = z.infer<typeof MessageRole>;

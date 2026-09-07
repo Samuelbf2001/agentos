@@ -36,6 +36,7 @@ import type {
   ModuleBlueprint,
   ModuleStatus,
   OrgKind,
+  OrgRoleStatus,
   ProcessStatus,
   ProcessStep,
   ProcessVariant,
@@ -45,6 +46,7 @@ import type {
   ProjectType,
   ProviderCapabilities,
   ProviderKind,
+  RoleProcessRelation,
   RunStatus,
   RunTrigger,
   SpanKind,
@@ -576,6 +578,91 @@ export const processes = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [index("idx_processes_org").on(t.orgId)],
+);
+
+// ── Grafo organizacional (el rol es el centro: PRD v1.1 §3.1 y Parte II §5.3) ─
+
+export const orgUnits = sqliteTable(
+  "org_units",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    name: text("name").notNull(),
+    parentUnitId: text("parent_unit_id").references((): AnySQLiteColumn => orgUnits.id),
+    description: text("description"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("idx_org_units_org").on(t.orgId)],
+);
+
+export const orgRoles = sqliteTable(
+  "org_roles",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    unitId: text("unit_id").references(() => orgUnits.id),
+    name: text("name").notNull(),
+    purpose: text("purpose"),
+    reportsToRoleId: text("reports_to_role_id").references((): AnySQLiteColumn => orgRoles.id),
+    canvasX: real("canvas_x"),
+    canvasY: real("canvas_y"),
+    status: text("status").$type<OrgRoleStatus>().notNull().default("draft"),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("idx_org_roles_org").on(t.orgId), index("idx_org_roles_unit").on(t.unitId)],
+);
+
+export const roleFunctions = sqliteTable(
+  "role_functions",
+  {
+    id: text("id").primaryKey(),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => orgRoles.id),
+    name: text("name").notNull(),
+    description: text("description"),
+    position: integer("position").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("idx_role_functions_role").on(t.roleId)],
+);
+
+export const rolePeople = sqliteTable(
+  "role_people",
+  {
+    roleId: text("role_id")
+      .notNull()
+      .references(() => orgRoles.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    dedicationPct: integer("dedication_pct"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roleId, t.personId], name: "pk_role_people" })],
+);
+
+export const roleProcesses = sqliteTable(
+  "role_processes",
+  {
+    roleId: text("role_id")
+      .notNull()
+      .references(() => orgRoles.id),
+    processId: text("process_id")
+      .notNull()
+      .references(() => processes.id),
+    relation: text("relation").$type<RoleProcessRelation>().notNull().default("participant"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roleId, t.processId], name: "pk_role_processes" })],
 );
 
 export const methodologies = sqliteTable(

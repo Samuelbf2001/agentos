@@ -31,6 +31,7 @@ import * as liteEvents from "./repositories/events.js";
 import * as liteKnowledge from "./repositories/knowledge.js";
 import * as liteMethodologies from "./repositories/methodologies.js";
 import * as liteModules from "./repositories/modules.js";
+import * as liteOrgGraph from "./repositories/org-graph.js";
 import * as liteOrgs from "./repositories/organizations-people.js";
 import * as liteProcesses from "./repositories/processes.js";
 import * as liteProjectSources from "./repositories/project-sources.js";
@@ -55,6 +56,7 @@ export type * from "./repositories/events.js";
 export type * from "./repositories/knowledge.js";
 export type * from "./repositories/methodologies.js";
 export type * from "./repositories/modules.js";
+export type * from "./repositories/org-graph.js";
 export type * from "./repositories/organizations-people.js";
 export type * from "./repositories/processes.js";
 export type * from "./repositories/project-sources.js";
@@ -248,6 +250,33 @@ export const getProcess = dual(liteProcesses.getProcess, "getProcess");
 export const listProcesses = dual(liteProcesses.listProcesses, "listProcesses");
 export const countProcesses = dual(liteProcesses.countProcesses, "countProcesses");
 export const linkSource = dual(liteProcesses.linkSource, "linkSource");
+
+// ── Grafo organizacional (el rol es el centro) ──────────────────────────────
+
+export const createOrgUnit = dual(liteOrgGraph.createOrgUnit, "createOrgUnit");
+export const getOrgUnit = dual(liteOrgGraph.getOrgUnit, "getOrgUnit");
+export const getOrgUnitByName = dual(liteOrgGraph.getOrgUnitByName, "getOrgUnitByName");
+export const listOrgUnits = dual(liteOrgGraph.listOrgUnits, "listOrgUnits");
+export const updateOrgUnit = dual(liteOrgGraph.updateOrgUnit, "updateOrgUnit");
+export const deleteOrgUnit = dual(liteOrgGraph.deleteOrgUnit, "deleteOrgUnit");
+
+export const createOrgRole = dual(liteOrgGraph.createOrgRole, "createOrgRole");
+export const getOrgRole = dual(liteOrgGraph.getOrgRole, "getOrgRole");
+export const getOrgRoleByName = dual(liteOrgGraph.getOrgRoleByName, "getOrgRoleByName");
+export const listOrgRoles = dual(liteOrgGraph.listOrgRoles, "listOrgRoles");
+export const updateOrgRole = dual(liteOrgGraph.updateOrgRole, "updateOrgRole");
+export const deleteOrgRole = dual(liteOrgGraph.deleteOrgRole, "deleteOrgRole");
+
+export const listRoleFunctions = dual(liteOrgGraph.listRoleFunctions, "listRoleFunctions");
+export const replaceRoleFunctions = dual(liteOrgGraph.replaceRoleFunctions, "replaceRoleFunctions");
+
+export const listRolePeople = dual(liteOrgGraph.listRolePeople, "listRolePeople");
+export const replaceRolePeople = dual(liteOrgGraph.replaceRolePeople, "replaceRolePeople");
+
+export const listRoleProcesses = dual(liteOrgGraph.listRoleProcesses, "listRoleProcesses");
+export const replaceRoleProcesses = dual(liteOrgGraph.replaceRoleProcesses, "replaceRoleProcesses");
+
+export const getOrgGraph = dual(liteOrgGraph.getOrgGraph, "getOrgGraph");
 
 // ── Fuentes del proyecto ────────────────────────────────────────────────────
 
