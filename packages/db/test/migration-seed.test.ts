@@ -16,6 +16,15 @@ import {
   listOrganizations,
 } from "../src/repositories/organizations-people.js";
 import { listPhaseModules } from "../src/repositories/modules.js";
+import { listProcesses } from "../src/repositories/processes.js";
+import {
+  getOrgRoleByName,
+  listOrgRoles,
+  listOrgUnits,
+  listRoleFunctions,
+  listRolePeople,
+  listRoleProcesses,
+} from "../src/repositories/org-graph.js";
 
 function freshDb(): AgentosSqliteDb {
   const db = openDb(":memory:");
@@ -99,7 +108,7 @@ describe("seeds", () => {
     const db = freshDb();
     const counts = await seed(db, { env: {} });
     expect(counts.organizations).toBe(2);
-    expect(counts.people).toBe(5);
+    expect(counts.people).toBe(9);
     expect(counts.providerProfiles).toBe(6);
     expect(counts.agents).toBe(7);
     expect(counts.promptVersions).toBe(7);
@@ -150,7 +159,7 @@ describe("seeds", () => {
     const counts = await seed(db, { env: {} });
     expect(counts.agents).toBe(7);
     expect(counts.tasks).toBe(12);
-    expect(counts.people).toBe(5);
+    expect(counts.people).toBe(9);
     expect(counts.promptVersions).toBe(7);
     // El launch demo (§13.6) tampoco se re-dispara: mismo proyecto, mismo recibo.
     expect(counts.projects).toBe(1);
@@ -292,6 +301,28 @@ describe("seeds", () => {
     expect(getConfig(db, ConfigKeys.KILL_SWITCH)).toBe(true);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_RUN_USD)).toBe(2);
     expect(getConfig(db, ConfigKeys.BUDGET_MAX_COST_PER_DAY_USD)).toBe(10);
+  });
+
+  it("organigrama de demostración de ACME: 6 roles, 4 áreas, 2 procesos, sin duplicados tras re-seed", async () => {
+    const db = freshDb();
+    await seed(db, { env: {} });
+    await seed(db, { env: {} });
+    const acme = getOrganizationByName(db, "ACME S.A.")!;
+    expect(listOrgUnits(db, acme.id)).toHaveLength(4);
+    expect(listOrgRoles(db, acme.id)).toHaveLength(6);
+    expect(listProcesses(db, acme.id)).toHaveLength(2);
+
+    const gerente = getOrgRoleByName(db, acme.id, "Gerente General")!;
+    const jefeProduccion = getOrgRoleByName(db, acme.id, "Jefe de Producción")!;
+    expect(jefeProduccion.reportsToRoleId).toBe(gerente.id);
+    expect(listRoleFunctions(db, jefeProduccion.id)).toHaveLength(3);
+    expect(listRolePeople(db, gerente.id)).toHaveLength(1);
+    // Roles vacantes a propósito.
+    const vendedor = getOrgRoleByName(db, acme.id, "Vendedor")!;
+    expect(listRolePeople(db, vendedor.id)).toHaveLength(0);
+
+    const proceso = listProcesses(db, acme.id).find((p) => p.name === "Control de calidad en planta")!;
+    expect(listRoleProcesses(db, jefeProduccion.id).map((rp) => rp.processId)).toContain(proceso.id);
   });
 });
 

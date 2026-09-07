@@ -35,20 +35,31 @@ import {
   ConfigKeys,
   countDomainTables,
   createOrganization,
+  createOrgRole,
+  createOrgUnit,
   createPerson,
+  createProcess,
   createPromptVersion,
   domainCounts,
   getActivePrompt,
   getAgent,
   getConfig,
   getOrganizationByName,
+  getOrgRole,
+  getOrgRoleByName,
+  getOrgUnitByName,
   getPersonByFullName,
   getProjectByName,
   getProviderProfileBySlug,
   isProviderConfigured,
+  listProcesses,
   listTasks,
+  replaceRoleFunctions,
+  replaceRolePeople,
+  replaceRoleProcesses,
   setConfig,
   updateAgent,
+  updateOrgRole,
   upsertAgentFromSeed,
   upsertMethodology,
   upsertPhaseModuleFromSeed,
@@ -177,6 +188,208 @@ const SEED_DEMO_INPUTS: Record<string, unknown> = {
   fecha_objetivo: "2026-09-15",
   sistemas_conocidos: "ERP básico, hojas de cálculo, WhatsApp",
 };
+
+// ── Organigrama de demostración de ACME (grafo organizacional) ─────────────
+// El rol es el centro (PRD v1.1 §3.1 y Parte II §5.3): cuelga de un área,
+// reporta a otro rol, lo ocupan personas y tiene funciones. Dos roles quedan
+// vacantes (Supervisor de Planta, Vendedor) para mostrar ese estado en la UI.
+
+const ACME_UNIT_SEEDS = ["Dirección", "Producción", "Comercial", "Administración"] as const;
+
+const ACME_PEOPLE_SEEDS = ["María Restrepo", "Carlos Pérez", "Laura Gómez", "Andrés Mora"] as const;
+
+interface AcmeRoleSeed {
+  name: string;
+  unit: (typeof ACME_UNIT_SEEDS)[number];
+  canvasX: number;
+  canvasY: number;
+  personFullName?: (typeof ACME_PEOPLE_SEEDS)[number];
+  reportsTo?: string;
+  functions: readonly string[];
+}
+
+const ACME_ROLE_SEEDS: readonly AcmeRoleSeed[] = [
+  {
+    name: "Gerente General",
+    unit: "Dirección",
+    canvasX: 400,
+    canvasY: 40,
+    personFullName: "María Restrepo",
+    functions: ["Definir prioridades del trimestre", "Aprobar inversiones y contrataciones"],
+  },
+  {
+    name: "Jefe de Producción",
+    unit: "Producción",
+    canvasX: 120,
+    canvasY: 220,
+    personFullName: "Carlos Pérez",
+    reportsTo: "Gerente General",
+    functions: [
+      "Planificar la producción semanal",
+      "Controlar calidad y mermas",
+      "Coordinar mantenimiento",
+    ],
+  },
+  {
+    name: "Jefe Comercial",
+    unit: "Comercial",
+    canvasX: 400,
+    canvasY: 220,
+    personFullName: "Laura Gómez",
+    reportsTo: "Gerente General",
+    functions: ["Gestionar la cartera de clientes", "Cotizar y cerrar pedidos"],
+  },
+  {
+    name: "Administrador",
+    unit: "Administración",
+    canvasX: 680,
+    canvasY: 220,
+    personFullName: "Andrés Mora",
+    reportsTo: "Gerente General",
+    functions: ["Facturación y cobranza", "Nómina y proveedores"],
+  },
+  {
+    // Vacante a propósito: muestra el estado "sin ocupar" en el lienzo.
+    name: "Supervisor de Planta",
+    unit: "Producción",
+    canvasX: 120,
+    canvasY: 400,
+    reportsTo: "Jefe de Producción",
+    functions: ["Asignar operarios por turno", "Registrar avance de órdenes"],
+  },
+  {
+    // Vacante a propósito.
+    name: "Vendedor",
+    unit: "Comercial",
+    canvasX: 400,
+    canvasY: 400,
+    reportsTo: "Jefe Comercial",
+    functions: ["Atender pedidos y consultas", "Hacer seguimiento a cotizaciones"],
+  },
+];
+
+interface AcmeProcessSeed {
+  name: string;
+  ownerRoleName: string;
+  steps: { step: string; responsible: string }[];
+  relations: readonly { role: string; relation: "owner" | "participant" }[];
+}
+
+const ACME_PROCESS_SEEDS: readonly AcmeProcessSeed[] = [
+  {
+    name: "Recepción y planificación de pedidos",
+    ownerRoleName: "Jefe Comercial",
+    steps: [
+      { step: "Recibir el pedido del cliente", responsible: "Vendedor" },
+      { step: "Verificar disponibilidad y precio", responsible: "Jefe Comercial" },
+      { step: "Programar la producción con planta", responsible: "Jefe de Producción" },
+    ],
+    relations: [
+      { role: "Jefe Comercial", relation: "owner" },
+      { role: "Vendedor", relation: "participant" },
+      { role: "Jefe de Producción", relation: "participant" },
+    ],
+  },
+  {
+    name: "Control de calidad en planta",
+    ownerRoleName: "Jefe de Producción",
+    steps: [
+      { step: "Inspeccionar materia prima al ingreso", responsible: "Supervisor de Planta" },
+      { step: "Verificar el producto en proceso", responsible: "Jefe de Producción" },
+      { step: "Registrar no conformidades y mermas", responsible: "Supervisor de Planta" },
+    ],
+    relations: [
+      { role: "Jefe de Producción", relation: "owner" },
+      { role: "Supervisor de Planta", relation: "participant" },
+    ],
+  },
+];
+
+/**
+ * Organigrama de demostración: SOLO para ACME, idempotente (get-or-create por
+ * nombre natural; `replace*` sobrescribe con el mismo contenido, nunca crece).
+ */
+async function seedOrgGraphAcme(db: AnyDb, orgId: string): Promise<void> {
+  const unitIdByName = new Map<string, string>();
+  for (const name of ACME_UNIT_SEEDS) {
+    const unit = (await getOrgUnitByName(db, orgId, name)) ?? (await createOrgUnit(db, { orgId, name }));
+    unitIdByName.set(name, unit.id);
+  }
+
+  for (const fullName of ACME_PEOPLE_SEEDS) {
+    if (!(await getPersonByFullName(db, fullName))) {
+      await createPerson(db, { orgId, fullName, isInternal: false });
+    }
+  }
+
+  const roleIdByName = new Map<string, string>();
+  for (const roleSeed of ACME_ROLE_SEEDS) {
+    const role =
+      (await getOrgRoleByName(db, orgId, roleSeed.name)) ??
+      (await createOrgRole(db, {
+        orgId,
+        name: roleSeed.name,
+        unitId: unitIdByName.get(roleSeed.unit) ?? null,
+        canvasX: roleSeed.canvasX,
+        canvasY: roleSeed.canvasY,
+      }));
+    roleIdByName.set(roleSeed.name, role.id);
+  }
+
+  // Segunda pasada: resuelve `reports_to` por nombre (el manager puede
+  // haberse creado después en la lista) — mismo patrón que la jerarquía de agentes.
+  for (const roleSeed of ACME_ROLE_SEEDS) {
+    if (!roleSeed.reportsTo) continue;
+    const roleId = roleIdByName.get(roleSeed.name)!;
+    const managerId = roleIdByName.get(roleSeed.reportsTo);
+    if (!managerId) continue;
+    const current = await getOrgRole(db, roleId);
+    if (current && current.reportsToRoleId !== managerId) {
+      await updateOrgRole(db, roleId, { reportsToRoleId: managerId }, current.version);
+    }
+  }
+
+  for (const roleSeed of ACME_ROLE_SEEDS) {
+    const roleId = roleIdByName.get(roleSeed.name)!;
+    await replaceRoleFunctions(
+      db,
+      roleId,
+      roleSeed.functions.map((name) => ({ name })),
+    );
+    const person = roleSeed.personFullName ? await getPersonByFullName(db, roleSeed.personFullName) : undefined;
+    await replaceRolePeople(db, roleId, person ? [{ personId: person.id }] : []);
+  }
+
+  const processIdByName = new Map<string, string>();
+  for (const procSeed of ACME_PROCESS_SEEDS) {
+    const existing = (await listProcesses(db, orgId)).find((p) => p.name === procSeed.name);
+    const process =
+      existing ??
+      (await createProcess(db, {
+        orgId,
+        name: procSeed.name,
+        variant: "as_is",
+        ownerPerson: procSeed.ownerRoleName,
+        steps: procSeed.steps,
+      }));
+    processIdByName.set(procSeed.name, process.id);
+  }
+
+  const roleProcessesByRole = new Map<string, { processId: string; relation: "owner" | "participant" }[]>();
+  for (const procSeed of ACME_PROCESS_SEEDS) {
+    const processId = processIdByName.get(procSeed.name)!;
+    for (const rel of procSeed.relations) {
+      const list = roleProcessesByRole.get(rel.role) ?? [];
+      list.push({ processId, relation: rel.relation });
+      roleProcessesByRole.set(rel.role, list);
+    }
+  }
+  for (const [roleName, relations] of roleProcessesByRole) {
+    const roleId = roleIdByName.get(roleName);
+    if (!roleId) continue;
+    await replaceRoleProcesses(db, roleId, relations);
+  }
+}
 
 /** Resultado de `seedCatalog`: lo único que aún necesita `seed()` para el conteo final. */
 export interface CatalogSeedResult {
@@ -352,15 +565,15 @@ export async function seedDemo(
 ): Promise<void> {
   // La org demo se preserva con sus notas; el launch (abajo) la encuentra por
   // nombre exacto (get-or-create §13.3), no la duplica.
-  if (!(await getOrganizationByName(db, "ACME S.A."))) {
-    await createOrganization(db, {
+  const acme =
+    (await getOrganizationByName(db, "ACME S.A.")) ??
+    (await createOrganization(db, {
       name: "ACME S.A.",
       kind: "client",
       industry: "manufactura",
       employeeCount: 40,
       notes: "Organización demo del MVP. Quieren preparación ISO 9001.",
-    });
-  }
+    }));
 
   if (!(await getProjectByName(db, "Assessment ACME"))) {
     await launchModule(db, {
@@ -379,6 +592,9 @@ export async function seedDemo(
       now: SEED_DEMO_LAUNCH_NOW,
     });
   }
+
+  // Organigrama de demostración (grafo organizacional): SOLO ACME, idempotente.
+  await seedOrgGraphAcme(db, acme.id);
 }
 
 /**
