@@ -156,3 +156,54 @@ Modo pruebas reutilizable ✅ hecho: `AGENTOS_SANDBOX=1` habilita `POST
 a `sandbox` en `GET /api/health`; `scripts/sandbox.mjs` (+ `pnpm sandbox:*` y
 `.claude/launch.json`) copia `data/agentos.db` a `data/sandbox.db` y arranca
 api/web en `:4310`/`:4311`. Detalle de uso en `docs/SANDBOX.md`.
+
+## Grafo organizacional (rama `feat/organigrama`, 2026-09-07)
+
+Modelo (PRD v1.1 §3.1 y Parte II §5.3): **el rol es el centro**. Cuelga de un área, reporta a otro rol, lo
+ocupan personas, tiene funciones y participa en procesos (dueño único o participante). `apps/web` NO se
+tocó en esta rama: la construye en paralelo otro worktree contra este mismo contrato de API.
+
+**Índices de migración reservados**: SQLite `0008_grafo_organizacional` (idx 8) y Postgres
+`0004_grafo_organizacional` (idx 4), ambos con `when: 1788120000000` — ver
+`packages/db/drizzle/meta/_journal.json` y `packages/db/drizzle-pg/meta/_journal.json`.
+
+| Tabla | Contenido |
+|---|---|
+| `org_units` | Áreas del organigrama; `parent_unit_id` auto-FK para sub-áreas |
+| `org_roles` | El centro del grafo: `unit_id`, `reports_to_role_id` (auto-FK, ciclo rechazado), `canvas_x`/`canvas_y` (posición en el lienzo), `status` (`draft`/`validated`), `version` (optimistic locking, salvo el arrastre de canvas) |
+| `role_functions` | Funciones del rol, `position` ordena la lista |
+| `role_people` | Personas que ocupan el rol (unión, PK compuesta), `dedication_pct` opcional |
+| `role_processes` | Procesos en los que participa el rol (unión, PK compuesta), `relation` `owner`/`participant` |
+
+`packages/shared/src/schemas.ts`: `OrgRoleStatus` y `RoleProcessRelation`. Repos duales
+`packages/db/src/repositories/org-graph.ts` + `pg/repositories/org-graph.ts`, compuestos en `repos.ts`.
+Total de tablas de dominio: 31 → **36**.
+
+Rutas (`apps/api/src/routes/org-graph.ts`, `registerOrgGraphRoutes`), todas con sesión y `appendAudit`
+(`source: "ui"`, acciones `org_unit.*` / `org_role.*`):
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/orgs/:orgId/graph` | `{ units, roles, processes, people }` — 404 si la org no existe |
+| `POST /api/orgs/:orgId/units` · `PATCH /api/units/:id` · `DELETE /api/units/:id` | `{unit}` / `{unit}` / `{ok:true}` |
+| `POST /api/orgs/:orgId/roles` | `{role}` con `functions:[]`, `people:[]`, `processes:[]` |
+| `PATCH /api/roles/:id` | `{role}`; ciclo de reporte → 400 `validation_error`; `expected_version` desalineada → 409 `version_conflict`; solo `canvas_x`/`canvas_y` no sube `version` ni la exige |
+| `DELETE /api/roles/:id` | `{ok:true}`; subordinados quedan sin manager, se borran sus uniones |
+| `PUT /api/roles/:id/functions` | `{functions}` — conserva ids dados |
+| `PUT /api/roles/:id/people` | `{people}` — 400 si la persona no es de la organización del rol |
+| `PUT /api/roles/:id/processes` | `{processes}` — 400 si el proceso no es de la organización del rol |
+
+Seed (`packages/db/src/seed.ts`, `seedOrgGraphAcme`, SOLO org "ACME S.A.", idempotente): 4 áreas
+(Dirección, Producción, Comercial, Administración), 4 personas de ACME (María Restrepo, Carlos Pérez,
+Laura Gómez, Andrés Mora), 6 roles con posición en canvas y reporta-a (Gerente General en la raíz;
+Supervisor de Planta y Vendedor quedan vacantes a propósito), 2 procesos (`createProcess` idempotente por
+nombre) con sus uniones owner/participante.
+
+**Tests**: `packages/db/test/org-graph.test.ts` (6, repositorio: CRUD de áreas/roles, `getOrgGraph`, ciclo
+rechazado, conflicto de versión, borrado limpia uniones, `replaceRoleFunctions` conserva ids) +
+`apps/api/test/org-graph.test.ts` (5, REST: flujo completo, ciclo 400, versión 409, persona/proceso de otra
+org 400, auditoría) + caso nuevo en `migration-seed.test.ts` (ACME con 6 roles/4 áreas/2 procesos sin
+duplicar tras re-seed) + conteos de tabla (31→36) actualizados en `pg-portability.test.ts`,
+`pg-backend.test.ts`, `dual-facade.test.ts`, `apps/api/test/rest.test.ts` y `pg-end-to-end.test.ts`.
+`pnpm -r typecheck` limpio; `@agentos/shared` (62), `@agentos/db` (140 + 41 PG auto-omitidos) y
+`@agentos/api` (152 + 2 PG auto-omitidos) verdes.
