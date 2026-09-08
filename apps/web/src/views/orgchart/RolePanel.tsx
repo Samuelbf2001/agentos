@@ -229,7 +229,12 @@ function ProcessesSection({
       <ul className="space-y-1.5">
         {linked.map((l) => (
           <li key={l.processId} className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-small text-ink">{l.process?.name ?? l.processId}</span>
+            <Link
+              to={`${paths.contexto(projectId, "procesos")}?proceso=${l.processId}`}
+              className="min-w-0 flex-1 truncate text-small text-ink underline hover:text-link"
+            >
+              {l.process?.name ?? l.processId}
+            </Link>
             <button type="button" disabled={readOnly} onClick={() => toggleRelation(l.processId)} className="press shrink-0">
               <Chip tone={l.relation === "owner" ? "done" : "quiet"}>
                 {l.relation === "owner" ? "Responsable" : "Participa"}

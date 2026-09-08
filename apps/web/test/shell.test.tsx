@@ -153,7 +153,7 @@ describe("shell y navegación", () => {
     expect(contextoLink.className).toContain("bg-link");
     // El hijo del lateral sólo se pinta con el padre activo.
     expect(within(nav).getByRole("link", { name: "Procesos" })).toBeTruthy();
-    expect(await screen.findByText("Sin procesos mapeados")).toBeTruthy();
+    expect(await screen.findByText("Todavía no hay procesos mapeados")).toBeTruthy();
   });
 
   it("una sub-pestaña de Contexto inválida redirige a documentos", async () => {

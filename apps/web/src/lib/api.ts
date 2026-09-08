@@ -20,6 +20,7 @@ import type {
   PhaseClosureStatus,
   PreviewResult,
   ProcessEntity,
+  ProcessStep,
   Project,
   ProjectSource,
   ProjectSourceExternalRef,
@@ -513,6 +514,32 @@ export const api = {
     ),
   processes: (orgId?: string) =>
     request<{ processes: ProcessEntity[] }>(`/api/processes${orgId ? `?org_id=${orgId}` : ""}`),
+  createProcess: (
+    orgId: string,
+    body: {
+      name: string;
+      variant?: "as_is" | "to_be";
+      owner_person?: string | null;
+      steps?: ProcessStep[];
+      systems?: string[];
+      pain_points?: string[];
+      iso_refs?: string[];
+    },
+  ) => request<{ process: ProcessEntity }>(`/api/orgs/${orgId}/processes`, { method: "POST", body }),
+  updateProcess: (
+    id: string,
+    body: {
+      name?: string;
+      variant?: "as_is" | "to_be";
+      owner_person?: string | null;
+      steps?: ProcessStep[];
+      systems?: string[];
+      pain_points?: string[];
+      iso_refs?: string[];
+      status?: "draft" | "validated";
+    },
+  ) => request<{ process: ProcessEntity }>(`/api/processes/${id}`, { method: "PATCH", body }),
+  deleteProcess: (id: string) => request<{ ok: boolean }>(`/api/processes/${id}`, { method: "DELETE" }),
   methodologies: () => request<{ methodologies: Methodology[] }>("/api/methodologies"),
 
   // ── Módulos de Fase (M4 — wizard "Nuevo proyecto") ────────────────────────

@@ -9,17 +9,12 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
-import type {
-  KnowledgeDoc,
-  ProcessEntity,
-  ProjectSource,
-  ProjectSourceKind,
-  SourceBrowseItem,
-} from "../lib/types";
+import type { KnowledgeDoc, ProjectSource, ProjectSourceKind, SourceBrowseItem } from "../lib/types";
 import { Markdown } from "../components/Markdown";
 import { EmptyState, ErrorBox, fmtDate, Spinner } from "../components/ui";
 import { paths, type ContextSubtab } from "../lib/paths";
 import { useStore } from "../state/store";
+import ProcessesView from "./processes/ProcessesView";
 
 const KIND_LABELS: Record<string, string> = {
   org_profile: "Perfil de organización",
@@ -418,121 +413,14 @@ function DocsTab({ projectId }: { projectId: string }) {
   );
 }
 
-function ProcessesTab() {
-  const [processes, setProcesses] = useState<ProcessEntity[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<ProcessEntity | null>(null);
-
-  async function load() {
-    setError(null);
-    try {
-      const res = await api.processes();
-      setProcesses(res.processes);
-    } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Error cargando procesos");
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
-
-  if (error) return <ErrorBox message={error} onRetry={() => void load()} />;
-  if (processes === null) return <Spinner label="Cargando procesos…" />;
-  if (processes.length === 0) {
-    return (
-      <EmptyState
-        title="Sin procesos mapeados"
-        hint="Un proceso mapeado es una entidad de primera clase: nombre, dueño, as-is/to-be, pasos y fuentes."
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="overflow-x-auto rounded-soft bg-surface shadow-rest">
-        <table className="w-full text-left text-small">
-          <thead className="bg-surface-2 text-label text-faint">
-            <tr>
-              <th className="px-3 py-2">Nombre</th>
-              <th className="px-3 py-2">Dueño</th>
-              <th className="px-3 py-2">Variante</th>
-              <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Nº fuentes</th>
-              <th className="px-3 py-2">Pasos</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-soft">
-            {processes.map((p) => (
-              <tr
-                key={p.id}
-                onClick={() => setSelected(p)}
-                className={`cursor-pointer hover:bg-surface-2 ${selected?.id === p.id ? "bg-link-bg" : ""}`}
-              >
-                <td className="px-3 py-2 font-medium">{p.name}</td>
-                <td className="px-3 py-2">{p.ownerPerson ?? "—"}</td>
-                <td className="px-3 py-2">{p.variant === "as_is" ? "as-is" : "to-be"}</td>
-                <td className="px-3 py-2">
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-label font-semibold ${
-                      p.status === "validated"
-                        ? "bg-done-bg text-done"
-                        : "bg-work-bg text-work"
-                    }`}
-                  >
-                    {p.status === "validated" ? "validado" : "borrador"}
-                  </span>
-                </td>
-                <td className="px-3 py-2">{p.sourceDocIds?.length ?? 0}</td>
-                <td className="px-3 py-2">{p.steps?.length ?? 0}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {selected ? (
-        <div className="rounded-soft bg-surface shadow-rest p-4">
-          <h3 className="text-body font-bold">
-            {selected.name} <span className="text-small font-normal text-faint">({selected.variant})</span>
-          </h3>
-          {selected.steps && selected.steps.length > 0 ? (
-            <ol className="mt-2 space-y-1">
-              {selected.steps.map((s, i) => (
-                <li key={i} className="rounded bg-surface-2 p-2 text-small">
-                  <span className="font-semibold">{i + 1}. {s.step}</span>
-                  <span className="ml-2 text-muted">
-                    {s.responsible ? `resp: ${s.responsible}` : ""}
-                    {s.system ? ` · sistema: ${s.system}` : ""}
-                    {s.input ? ` · entrada: ${s.input}` : ""}
-                    {s.output ? ` · salida: ${s.output}` : ""}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="mt-2 text-small text-faint">(sin pasos registrados)</p>
-          )}
-          {selected.painPoints && selected.painPoints.length > 0 ? (
-            <div className="mt-2">
-              <p className="text-label font-bold text-faint">Puntos de dolor</p>
-              <ul className="ml-4 list-disc text-small text-broken">
-                {selected.painPoints.map((p, i) => (
-                  <li key={i}>{p}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 /**
  * Contexto del proyecto. Las metodologías emigraron a Activo Sixteam, porque
  * son de Sixteam y no del cliente; el panel de reuniones vive en Sistema ›
  * Fuentes, porque es transversal a todos los proyectos.
  */
 export default function ContextView({ projectId, sub }: { projectId: string; sub: ContextSubtab }) {
+  const orgId = useStore((s) => s.projects.find((p) => p.id === projectId)?.orgId ?? "");
+  const readOnly = useStore((s) => s.previewRole === "sponsor");
   const tabs = [
     { id: "documentos" as const, label: "Documentos" },
     { id: "procesos" as const, label: "Procesos" },
@@ -553,7 +441,11 @@ export default function ContextView({ projectId, sub }: { projectId: string; sub
           </NavLink>
         ))}
       </div>
-      {sub === "documentos" ? <DocsTab projectId={projectId} /> : <ProcessesTab />}
+      {sub === "documentos" ? (
+        <DocsTab projectId={projectId} />
+      ) : (
+        <ProcessesView orgId={orgId} projectId={projectId} readOnly={readOnly} />
+      )}
     </div>
   );
 }
