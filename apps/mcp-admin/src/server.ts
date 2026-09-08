@@ -19,6 +19,7 @@ import { runTools } from "./tools/runs.js";
 import { approvalTools } from "./tools/approvals.js";
 import { providerTools } from "./tools/providers.js";
 import { knowledgeTools, methodologyTools, processTools } from "./tools/context-hub.js";
+import { orgGraphTools } from "./tools/org-graph.js";
 import { auditTools, configTools, peopleTools } from "./tools/system.js";
 
 export const SERVER_NAME = "agentos-admin";
@@ -36,6 +37,7 @@ export function buildAdminToolCatalog(): Map<string, AdminToolDefinition> {
     providerTools,
     knowledgeTools,
     processTools,
+    orgGraphTools,
     methodologyTools,
     configTools,
     peopleTools,
