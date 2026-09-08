@@ -53,9 +53,14 @@ COPY packages/runners/package.json packages/runners/
 COPY packages/shared/package.json packages/shared/
 COPY packages/tools/package.json packages/tools/
 
+# El importador de Notion se instala junto a la API para poder correr la
+# migración dentro del contenedor (job puntual por `docker exec`). Sus
+# dependencias de runtime son solo @agentos/db y @agentos/shared, ya en el
+# cierre de la API; @agentos/core es devDependency y no entra con --prod.
 RUN pnpm install --frozen-lockfile --prod \
       --filter "agentos" \
-      --filter "@agentos/api..."
+      --filter "@agentos/api..." \
+      --filter "@agentos/notion-migration..."
 
 # --------------------------------------------------------------------------
 # 3) Runtime mínimo: node slim + fuentes + node_modules de producción.
