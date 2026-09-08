@@ -67,7 +67,10 @@ export const STATUS_TONES: Record<TaskStatus, Tone> = {
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
   BACKLOG: "Backlog",
-  READY: "Lista",
+  // "Lista" a secas se lee en español como "ya terminada", justo lo contrario:
+  // READY es el paso ANTES de empezar, y es la columna por la que los agentes
+  // toman trabajo. La etiqueta larga evita que alguien arrastre ahí lo acabado.
+  READY: "Lista para empezar",
   IN_PROGRESS: "En curso",
   REVIEW: "En revisión",
   BLOCKED: "Bloqueada",
