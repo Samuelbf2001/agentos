@@ -6,3 +6,14 @@ export { createToolRuntime, type ToolRuntimeOptions } from "./gateway.js";
 export { asAiSdkTools, type AsAiSdkToolsOptions } from "./adapters/ai-sdk.js";
 export { asSdkMcpServer, MCP_SERVER_NAME, type AsSdkMcpServerOptions } from "./adapters/mcp.js";
 export { ingestProjectSource, type IngestResult } from "./tools/sources.js";
+export {
+  buildOrgGraphView,
+  upsertOrgUnitByName,
+  upsertOrgRoleByName,
+  type OrgGraphView,
+  type OrgGraphUnitView,
+  type OrgGraphRoleView,
+  type UpsertOrgUnitByNameInput,
+  type UpsertOrgRoleByNameInput,
+  type UpsertOrgRoleByNameResult,
+} from "./tools/org-graph.js";
