@@ -578,6 +578,8 @@ export const orgRoles = pgTable(
     canvasY: doublePrecision("canvas_y"),
     status: text("status").$type<OrgRoleStatus>().notNull().default("draft"),
     version: integer("version").notNull().default(1),
+    /** Agente que ejecuta este rol ("convertir en rol en agente"), o null si aún lo ocupa solo una persona. */
+    agentId: text("agent_id").references(() => agents.id),
     createdAt: epochMs("created_at").notNull(),
     updatedAt: epochMs("updated_at").notNull(),
   },

@@ -12,6 +12,7 @@ import { artifactTools } from "./tools/artifacts.js";
 import { delegationTools } from "./tools/delegation.js";
 import { knowledgeTools } from "./tools/knowledge.js";
 import { processTools } from "./tools/processes.js";
+import { orgGraphTools } from "./tools/org-graph.js";
 import { methodologyTools } from "./tools/methodology.js";
 import { isoTools } from "./tools/iso.js";
 import { emailTools } from "./tools/email.js";
@@ -37,6 +38,7 @@ export function buildCatalog(extra: ToolDefinition[] = []): Map<string, ToolDefi
     ...delegationTools,
     ...knowledgeTools,
     ...processTools,
+    ...orgGraphTools,
     ...methodologyTools,
     ...isoTools,
     ...emailTools,

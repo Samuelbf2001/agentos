@@ -247,6 +247,7 @@ export const listAssignablePeople = dual(liteOrgs.listAssignablePeople, "listAss
 export const createProcess = dual(liteProcesses.createProcess, "createProcess");
 export const upsertProcess = dual(liteProcesses.upsertProcess, "upsertProcess");
 export const getProcess = dual(liteProcesses.getProcess, "getProcess");
+export const deleteProcess = dual(liteProcesses.deleteProcess, "deleteProcess");
 export const listProcesses = dual(liteProcesses.listProcesses, "listProcesses");
 export const countProcesses = dual(liteProcesses.countProcesses, "countProcesses");
 export const linkSource = dual(liteProcesses.linkSource, "linkSource");

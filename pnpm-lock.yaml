@@ -85,6 +85,9 @@ importers:
       '@agentos/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@agentos/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.4.3)

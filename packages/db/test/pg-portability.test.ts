@@ -92,7 +92,7 @@ describe("esquema Postgres = esquema SQLite", () => {
       project_sources: ["projects", "knowledge_docs"],
       processes: ["organizations"],
       org_units: ["organizations"],
-      org_roles: ["organizations", "org_units"],
+      org_roles: ["organizations", "org_units", "agents"],
       role_functions: ["org_roles"],
       role_people: ["org_roles", "people"],
       role_processes: ["org_roles", "processes"],

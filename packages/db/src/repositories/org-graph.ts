@@ -131,8 +131,9 @@ function wouldCreateReportingCycle(
 
 /**
  * Optimistic locking salvo cuando el patch SOLO trae `canvasX`/`canvasY`
- * (arrastrar en el lienzo): eso ni sube `version` ni exige `expectedVersion`,
- * porque no es una transición de dominio, es la posición de un dibujo.
+ * (arrastrar en el lienzo) o `agentId` (convertir el rol en agente): eso ni
+ * sube `version` ni exige `expectedVersion`, porque no es una transición de
+ * dominio del rol — es la posición de un dibujo o el enlace con su agente.
  */
 export function updateOrgRole(
   db: AgentosSqliteDb,
@@ -144,7 +145,8 @@ export function updateOrgRole(
   if (!current) throw errors.notFound("org_role", id);
 
   const keys = Object.keys(patch);
-  const canvasOnly = keys.length > 0 && keys.every((k) => k === "canvasX" || k === "canvasY");
+  const canvasOnly =
+    keys.length > 0 && keys.every((k) => k === "canvasX" || k === "canvasY" || k === "agentId");
 
   if (patch.reportsToRoleId !== undefined && patch.reportsToRoleId !== null) {
     if (patch.reportsToRoleId === id || wouldCreateReportingCycle(db, id, patch.reportsToRoleId)) {

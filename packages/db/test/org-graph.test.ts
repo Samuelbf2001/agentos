@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { isAgentosError } from "@agentos/shared";
 import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
+import { createAgent } from "../src/repositories/agents.js";
 import { createOrganization, createPerson } from "../src/repositories/organizations-people.js";
 import { createProcess } from "../src/repositories/processes.js";
+import { upsertProviderProfile } from "../src/repositories/providers.js";
 import {
   createOrgRole,
   createOrgUnit,
@@ -173,6 +175,35 @@ describe("grafo organizacional — roles, funciones, personas y procesos", () =>
     deleteOrgRole(db, gerente.id);
     // No queda ningún rol huérfano apuntando al gerente borrado.
     expect(listOrgRoles(db, org.id)).toEqual([]);
+  });
+
+  it("enlaza el rol con su agente sin exigir expected_version (igual que canvasX/canvasY)", () => {
+    const db = freshDb();
+    const { org } = fixture(db);
+    const provider = upsertProviderProfile(db, {
+      slug: "test_provider_org_graph",
+      name: "Test",
+      kind: "openai_compatible",
+      apiKeyEnv: "TEST_KEY",
+    });
+    const agent = createAgent(db, {
+      slug: "agente-del-rol",
+      name: "Agente del rol",
+      layer: "operacion",
+      runtime: "ai_sdk",
+      providerProfileId: provider.id,
+      model: "test-1",
+      toolsAllowlist: [],
+      mcpAllowlist: [],
+    });
+    const role = createOrgRole(db, { orgId: org.id, name: "Jefe de Compras" });
+    expect(role.agentId).toBeNull();
+
+    const linked = updateOrgRole(db, role.id, { agentId: agent.id });
+    expect(linked.agentId).toBe(agent.id);
+    expect(linked.version).toBe(1); // no sube versión: no es una transición de dominio
+
+    expect(getOrgGraph(db, org.id).roles.find((r) => r.id === role.id)?.agentId).toBe(agent.id);
   });
 
   it("replaceRoleFunctions conserva los ids dados, crea los nuevos y borra los ausentes", () => {

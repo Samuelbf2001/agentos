@@ -23,6 +23,7 @@ tools:
   - methodology.get
   - sources.list
   - sources.ingest
+  - org_graph.get
   - delegate
   - ask_human
 ---
