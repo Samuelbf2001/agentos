@@ -205,5 +205,67 @@ rechazado, conflicto de versión, borrado limpia uniones, `replaceRoleFunctions`
 org 400, auditoría) + caso nuevo en `migration-seed.test.ts` (ACME con 6 roles/4 áreas/2 procesos sin
 duplicar tras re-seed) + conteos de tabla (31→36) actualizados en `pg-portability.test.ts`,
 `pg-backend.test.ts`, `dual-facade.test.ts`, `apps/api/test/rest.test.ts` y `pg-end-to-end.test.ts`.
+## Procesos del cliente, tools del grafo y "convertir en agente" (rama `feat/organigrama`, 2026-09-07)
+
+Continuación del grafo organizacional: procesos como CRUD completo, el mismo grafo abierto a los agentes
+(tool de dominio + MCP admin) y el cierre del ciclo — un rol del organigrama nace agente. `apps/web` sigue
+SIN tocarse en esta rama; el frontend codifica contra este contrato.
+
+**Migración reservada**: SQLite `0009_rol_agente` (idx 9) y Postgres `0005_rol_agente` (idx 5), ambas con
+`when: 1788180000000`. Añaden `org_roles.agent_id` (FK `agents.id`, nullable) en los dos esquemas.
+`updateOrgRole` trata `agentId` igual que `canvasX`/`canvasY`: no sube `version` ni exige
+`expectedVersion` porque enlazar el agente no es una transición de dominio del rol.
+
+**Procesos** (`packages/db/src/{repositories,pg/repositories}/processes.ts`): nueva `deleteProcess`
+(borra primero sus `role_processes`, luego el proceso). Rutas (`apps/api/src/routes/processes.ts`,
+`registerProcessRoutes`), con sesión y `appendAudit` (acciones `process.create|update|delete`):
+
+| Ruta | Contrato |
+|---|---|
+| `POST /api/orgs/:orgId/processes` | `{process}` — 404 si la org no existe |
+| `PATCH /api/processes/:id` | `{process}` — 404 si no existe |
+| `DELETE /api/processes/:id` | `{ok:true}` — desvincula el proceso de cualquier rol antes de borrarlo |
+
+**Tools del grafo para agentes** (`packages/tools/src/tools/org-graph.ts`, catálogo `org_graph.*`):
+`org_graph.get` (lectura, nombres ya resueltos: área, jefe, funciones, personas, procesos) y
+`org_graph.upsert_unit` / `org_graph.upsert_role` (escritura POR NOMBRE — sin ids, como en una
+entrevista de consultoría; crean lo que falta —área padre, rol jefe—, y lo que no encuentran —persona o
+proceso— va en `warnings` sin romper la llamada). Ambas de escritura: `read_only:false`,
+`external_effect:false`, `requires_approval:false`, `projectScope:"none"` (entidades de organización, no
+de proyecto). Todo rol creado/actualizado por esta vía queda `status:"draft"`: un humano lo valida después
+en el Organigrama. `agents/sam.md` gana las tres tools; `agents/alex.md` gana solo `org_graph.get`.
+
+**MCP admin** (`apps/mcp-admin/src/tools/org-graph.ts`, `agentos.org_graph.get/upsert_unit/upsert_role`):
+reutiliza `buildOrgGraphView`/`upsertOrgUnitByName`/`upsertOrgRoleByName` exportadas desde
+`@agentos/tools` (la regla de resolución por nombre no vive en dos sitios). Las mutaciones exigen perfil
+`rw`, aceptan `reason` e `idempotency_key` (`findIdempotentMutation`), y auditan con `auditMutation`.
+`apps/mcp-admin/package.json` ganó `@agentos/tools` como dependencia (`pnpm-lock.yaml` actualizado).
+
+**Convertir un rol en agente** (`apps/api/src/routes/role-agent.ts`, `apps/api/src/routes/tool-catalog.ts`):
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/tools/catalog` | `{tools:[{name, description, read_only, external_effect, requires_approval}]}` — alimenta el picker de allowlist |
+| `POST /api/roles/:id/agent` | body `{function_ids, autonomy, activate, tools_allowlist, name?}` → `{agent, role, prompt_version}`; 404 si el rol no existe; 409 (`errors.conflict`, nuevo en `packages/shared/src/errors.ts`) si el rol ya tiene agente |
+
+El agente nace con `layer:"operacion"`, slug único (nombre pedido o el del rol; `-2`, `-3`... si colisiona),
+proveedor/runtime/modelo resueltos por `resolveAgentProvider` (extraído de `seedCatalog` a
+`packages/db/src/seed.ts` para no duplicar la regla del fallback a `claude_subscription`), `status`
+`active`/`paused` según `activate`, allowlist filtrada contra el catálogo real, y `reportsTo` apuntando al
+agente del rol jefe si ya existe. El prompt v1 (español) hereda propósito, funciones elegidas, procesos
+(dueño/participante) y personas del rol — deja claro que el agente asiste a quien ocupa el rol, nunca lo
+reemplaza. Cierra con `updateOrgRole(id, {agentId})` y dos entradas de auditoría
+(`agent.create_from_role`, `org_role.update`).
+
+**Tests**: `apps/api/test/processes.test.ts` (2), `packages/tools/test/org-graph.test.ts` (5, más
+`scope.test.ts` sigue verde con las tools de escritura sin aprobación), `apps/mcp-admin/test/org-graph.test.ts`
+(3), `apps/api/test/role-agent.test.ts` (7: creación con allowlist filtrada y prompt, `activate`, 409 por
+segunda conversión, 404 rol inexistente, slug único con colisión, `reports_to` heredado, catálogo expone
+`org_graph.get` como read-only), más el caso de enlace rol↔agente en `packages/db/test/org-graph.test.ts`
+y el ajuste de `pg-portability.test.ts` (`org_roles` ahora depende también de `agents`).
+
+`pnpm -r typecheck` limpio. `@agentos/db` 141 passed + 41 skipped (182), `@agentos/tools` 57 passed (8
+archivos), `@agentos/mcp-admin` 70 passed (7 archivos), `@agentos/api` 161 passed + 2 skipped (163).
+
 `pnpm -r typecheck` limpio; `@agentos/shared` (62), `@agentos/db` (140 + 41 PG auto-omitidos) y
 `@agentos/api` (152 + 2 PG auto-omitidos) verdes.
