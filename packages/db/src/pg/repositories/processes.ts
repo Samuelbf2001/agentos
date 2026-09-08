@@ -2,7 +2,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type ProcessVariant } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
-import { processes } from "../schema-pg.js";
+import { processes, roleProcesses } from "../schema-pg.js";
 import type { NewProcess, Process } from "../types-pg.js";
 
 /**
@@ -36,6 +36,12 @@ export async function upsertProcess(
 export async function getProcess(db: AgentosPgDb, id: string): Promise<Process | undefined> {
   const [row] = await db.select().from(processes).where(eq(processes.id, id)).limit(1);
   return row;
+}
+
+/** Borra el proceso; primero desvincula sus roles (`role_processes`). */
+export async function deleteProcess(db: AgentosPgDb, id: string): Promise<void> {
+  await db.delete(roleProcesses).where(eq(roleProcesses.processId, id));
+  await db.delete(processes).where(eq(processes.id, id));
 }
 
 export async function listProcesses(db: AgentosPgDb, orgId?: string): Promise<Process[]> {
