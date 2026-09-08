@@ -19,6 +19,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronsUpDown, Search, SlidersHorizontal } from "lucide-react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { useStore } from "../state/store";
 import { api } from "../lib/api";
 import { paths } from "../lib/paths";
@@ -50,6 +61,8 @@ import {
   FILTROS_VACIOS,
   VENCIMIENTOS,
   VENCIMIENTO_LABELS,
+  VISTAS,
+  VISTA_LABELS,
   YO,
   agrupar,
   chipsActivos,
@@ -64,6 +77,7 @@ import {
   parseAgrupacion,
   parseFiltros,
   parseOrden,
+  parseVista,
   personName,
   projectOf,
   responsablePrincipal,
@@ -71,6 +85,7 @@ import {
   type Columna,
   type Contexto,
   type Filtros,
+  type Vista,
 } from "../lib/tareas";
 import { CreateTaskDialog } from "./CreateTaskDialog";
 
@@ -86,6 +101,40 @@ const RENDER_STEP = 200;
 
 // ── Estado en línea: el motor puede decir que no, y entonces se revierte ────
 
+/**
+ * Un solo camino para cambiar de estado desde esta vista: lo usan el
+ * desplegable de la fila y el arrastre entre columnas del tablero. Pinta el
+ * destino ya (optimista) y manda `expected_version`; si el motor rechaza —
+ * transición ilegal, falta de evidencia, conflicto de versión— se revierte la
+ * tarea a como estaba y se abre la ficha con el mensaje real, en vez de dejar
+ * un error mudo. La máquina de estados no se replica aquí: manda la API.
+ */
+function useMoverTarea(onChanged: (task: Task) => void) {
+  const pushToast = useStore((s) => s.pushToast);
+  const openTask = useStore((s) => s.openTask);
+  return useCallback(
+    async (task: Task, to: TaskStatus): Promise<boolean> => {
+      if (to === task.status) return true;
+      onChanged({ ...task, status: to });
+      try {
+        const { task: updated } = await api.moveTask(task.id, {
+          to,
+          expected_version: task.version,
+        });
+        onChanged(updated);
+        return true;
+      } catch (err) {
+        onChanged(task);
+        const message = err instanceof Error ? err.message : "La API rechazó la transición";
+        pushToast("error", message);
+        void openTask(task.id);
+        return false;
+      }
+    },
+    [onChanged, openTask, pushToast],
+  );
+}
+
 function StatusSelect({
   task,
   onChanged,
@@ -93,8 +142,7 @@ function StatusSelect({
   task: Task;
   onChanged: (task: Task) => void;
 }) {
-  const pushToast = useStore((s) => s.pushToast);
-  const openTask = useStore((s) => s.openTask);
+  const mover = useMoverTarea(onChanged);
   const [busy, setBusy] = useState(false);
   const tone = STATUS_TONES[task.status];
   const toneClass =
@@ -112,14 +160,10 @@ function StatusSelect({
     if (to === task.status) return;
     setBusy(true);
     try {
-      const { task: updated } = await api.moveTask(task.id, { to, expected_version: task.version });
-      onChanged(updated);
-    } catch (err) {
       // La regla anti-teatro (ningún REVIEW/DONE sin evidencia) se resuelve en
-      // la ficha, no aquí: se abre en vez de dejar un error mudo en la fila.
-      const message = err instanceof Error ? err.message : "La API rechazó la transición";
-      pushToast("error", message);
-      void openTask(task.id);
+      // la ficha, no aquí: `useMoverTarea` la abre en vez de dejar un error
+      // mudo en la fila.
+      await mover(task, to);
     } finally {
       setBusy(false);
     }
@@ -343,6 +387,121 @@ function TaskRow({
   );
 }
 
+// ── Tablero por estado ──────────────────────────────────────────────────────
+
+/**
+ * La misma tarea de la tabla, en tarjeta: título, de quién es el trabajo
+ * (cliente · proyecto), quién responde, cuándo vence y con qué prioridad. Se
+ * arrastra a otra columna para cambiarle el estado y se abre con un clic; no
+ * se edita en línea (para eso está la tabla o la ficha).
+ */
+function TareaTarjeta({ task, ctx }: { task: Task; ctx: Contexto }) {
+  const openTask = useStore((s) => s.openTask);
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+    data: { task },
+  });
+  const project = projectOf(task, ctx.projects);
+  const orgId = orgIdOf(task, ctx.projects);
+  const responsable = responsablePrincipal(task);
+  const responsableNombre = personName(responsable, ctx.people);
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      role="button"
+      tabIndex={0}
+      data-testid={`tarea-tarjeta-${task.id}`}
+      data-status={task.status}
+      aria-label={`${task.title}. ${clienteLabel(orgId, ctx)}. ${STATUS_LABELS[task.status]}`}
+      onClick={() => {
+        if (!isDragging) void openTask(task.id);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          void openTask(task.id);
+        }
+      }}
+      style={
+        transform
+          ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 30 }
+          : undefined
+      }
+      className={`group min-w-0 cursor-grab rounded-panel border border-line bg-surface p-2.5 text-left shadow-rest transition-shadow hover:shadow-raise focus:outline-none focus:ring-2 focus:ring-link ${
+        isDragging ? "opacity-70 shadow-float" : ""
+      }`}
+    >
+      <span className="flex items-start gap-1.5">
+        <PriorityDot priority={task.priority} />
+        <span className="min-w-0 flex-1 text-small font-medium leading-snug text-ink">
+          {task.title}
+        </span>
+      </span>
+      <p className="mt-1 truncate text-label text-muted">
+        {clienteLabel(orgId, ctx)}
+        {project ? ` · ${project.name}` : ""}
+      </p>
+      <div className="mt-2 flex min-w-0 items-center gap-1.5">
+        {responsable ? (
+          <span className="inline-flex min-w-0 items-center gap-1" title={responsableNombre}>
+            <PersonAvatar name={responsableNombre} size={5} />
+            <span className="max-w-[7rem] truncate text-label text-muted">{responsableNombre}</span>
+          </span>
+        ) : (
+          <span className="text-label text-faint">Sin responsable</span>
+        )}
+        <span className="ml-auto shrink-0">
+          <DuePill task={task} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ColumnaEstado({
+  status,
+  tasks,
+  ctx,
+}: {
+  status: TaskStatus;
+  tasks: Task[];
+  ctx: Contexto;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: status, data: { status } });
+  return (
+    <section
+      data-testid={`tareas-columna-${status}`}
+      className="flex w-[16rem] shrink-0 flex-col rounded-panel border border-line bg-canvas-deep/40"
+    >
+      <div className="flex items-center gap-2 border-b border-line-soft px-2.5 py-2">
+        <StatusPill status={status} />
+        <span
+          data-testid={`tareas-conteo-${status}`}
+          className="ml-auto rounded-full bg-surface px-1.5 py-px text-label tabular-nums text-muted"
+        >
+          {tasks.length}
+        </span>
+      </div>
+      <div
+        ref={setNodeRef}
+        className={`min-h-24 flex-1 space-y-2 p-2 transition-colors ${
+          isOver ? "bg-link-bg ring-1 ring-link" : ""
+        }`}
+      >
+        {tasks.map((task) => (
+          <TareaTarjeta key={task.id} task={task} ctx={ctx} />
+        ))}
+        {tasks.length === 0 ? (
+          <p className="px-1 py-1.5 text-label text-faint">Sin tareas aquí</p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 // ── La vista ────────────────────────────────────────────────────────────────
 
 export default function TareasView() {
@@ -366,20 +525,26 @@ export default function TareasView() {
   const [quickTitle, setQuickTitle] = useState("");
   const [quickProject, setQuickProject] = useState<string>(() => leerProyectoReciente() ?? "");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [clientNames, setClientNames] = useState<Map<string, string>>(new Map());
   const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
   // El panel de filtros es un plegable local: no viaja en la URL, así que un
   // enlace compartido no arrastra si el que lo abrió lo tenía desplegado.
   const [filtersOpen, setFiltersOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Arrastrar sólo empieza tras 6 px: un clic en la tarjeta sigue siendo un
+  // clic que abre la ficha (mismo umbral que el tablero del proyecto).
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const filtros = useMemo(() => parseFiltros(params), [params]);
   const agrupacion = useMemo(() => parseAgrupacion(params), [params]);
   const orden = useMemo(() => parseOrden(params), [params]);
+  const vista = useMemo(() => parseVista(params), [params]);
 
   const ctx = useMemo<Contexto>(
-    () => ({ projects, people, meId: me?.id ?? null, clientNames }),
-    [projects, people, me, clientNames],
+    () => ({ projects, people, meId: me?.id ?? null }),
+    [projects, people, me],
   );
 
   const cargar = useCallback(async () => {
@@ -416,42 +581,20 @@ export default function TareasView() {
     if (!quickProject && projects.length > 0) setQuickProject(projects[0]!.id);
   }, [projects, quickProject]);
 
-  /**
-   * El nombre real del cliente vive en el recibo de launch del proyecto
-   * (`inputs.empresa`), porque `/api/projects` sólo devuelve `org_id`. Se pide
-   * un recibo por proyecto y el que falle simplemente deja a ese cliente con el
-   * nombre deducido: media lista de nombres es mejor que ninguno.
-   */
-  useEffect(() => {
-    if (projects.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const results = await Promise.allSettled(
-        projects.map((project) => api.projectLaunches(project.id)),
-      );
-      if (cancelled) return;
-      const names = new Map<string, string>();
-      results.forEach((result, index) => {
-        if (result.status !== "fulfilled") return;
-        const receipt = result.value.launches[0];
-        if (!receipt) return;
-        const inputs = receipt.inputs as { empresa?: unknown; alias?: unknown };
-        const name = typeof inputs.empresa === "string" ? inputs.empresa : inputs.alias;
-        const orgId = receipt.org_id || projects[index]!.orgId;
-        if (typeof name === "string" && name.trim()) names.set(orgId, name.trim());
-      });
-      setClientNames(names);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projects]);
+  // El nombre del cliente ya no cuesta una petición por proyecto: `orgName`
+  // viene en `GET /api/projects` y `clienteLabel` lo lee de ahí. Los proyectos
+  // importados de Notion no tienen recibo de launch, así que pedirlo dejaba a
+  // media base con "Cliente 01a074" a cambio de 34 llamadas al montar.
 
-  function aplicar(next: Filtros, extra?: { agrupacion?: Agrupacion; orden?: typeof orden }): void {
+  function aplicar(
+    next: Filtros,
+    extra?: { agrupacion?: Agrupacion; orden?: typeof orden; vista?: Vista },
+  ): void {
     setParams(
       filtrosAParams(next, {
         agrupacion: extra?.agrupacion ?? agrupacion,
         orden: extra?.orden ?? orden,
+        vista: extra?.vista ?? vista,
       }),
       { replace: true },
     );
@@ -471,11 +614,33 @@ export default function TareasView() {
   // orden: si no, "Mostrar más" de una vista anterior se arrastraría a otra.
   useEffect(() => {
     setRenderLimit(RENDER_STEP);
-  }, [filtros, agrupacion, orden]);
+  }, [filtros, agrupacion, orden, vista]);
 
   const visiblesRender = useMemo(() => visibles.slice(0, renderLimit), [visibles, renderLimit]);
 
-  const grupos = useMemo(() => agrupar(visiblesRender, agrupacion, ctx), [visiblesRender, agrupacion, ctx]);
+  /**
+   * En tablero la agrupación elegida se ignora —el tablero YA agrupa por
+   * estado—, así que los grupos se calculan por estado: eso mantiene el
+   * recorrido del teclado en el mismo orden en que se ven las columnas.
+   */
+  const grupos = useMemo(
+    () => agrupar(visiblesRender, vista === "tablero" ? "estado" : agrupacion, ctx),
+    [visiblesRender, vista, agrupacion, ctx],
+  );
+
+  /**
+   * Columnas del tablero. El paginado es el mismo que el de la tabla y por la
+   * misma razón: se reparte `visiblesRender` (los primeros `renderLimit` de la
+   * base ya filtrada y ordenada) entre las columnas, y "Mostrar más" sube el
+   * tope para todas a la vez. Con 1232 tareas reales, repartir el tope global
+   * es lo único que mantiene un solo contador honesto: "Mostrando N de M".
+   */
+  const porEstado = useMemo(() => {
+    const cells = new Map<TaskStatus, Task[]>();
+    for (const status of TASK_STATUSES) cells.set(status, []);
+    for (const task of visiblesRender) cells.get(task.status)?.push(task);
+    return cells;
+  }, [visiblesRender]);
   /** Orden de recorrido del teclado: el mismo que se ve, grupo a grupo. */
   const recorrido = useMemo(() => grupos.flatMap((grupo) => grupo.tasks), [grupos]);
   const chips = useMemo(() => chipsActivos(filtros, ctx), [filtros, ctx]);
@@ -492,6 +657,19 @@ export default function TareasView() {
   const onChanged = useCallback((updated: Task) => {
     setTasks((prev) => (prev ? prev.map((t) => (t.id === updated.id ? updated : t)) : prev));
   }, []);
+  const mover = useMoverTarea(onChanged);
+
+  /**
+   * Soltar en otra columna es un cambio de estado y nada más: la legalidad de
+   * la transición la decide el motor, y si dice que no, `useMoverTarea`
+   * revierte la tarjeta a su columna.
+   */
+  function onDragEnd(event: DragEndEvent): void {
+    const task = event.active.data.current?.task as Task | undefined;
+    const to = (event.over?.data.current as { status?: TaskStatus } | undefined)?.status;
+    if (!task || !to || to === task.status) return;
+    void mover(task, to);
+  }
 
   // Teclado: `j`/`k` recorren, Enter abre, Esc suelta, `/` busca, `m` es mío.
   useEffect(() => {
@@ -613,6 +791,28 @@ export default function TareasView() {
           <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">m</kbd>
         </button>
 
+        {/* La misma base, en dos formas. El modo viaja en la URL (`vista`). */}
+        <div
+          role="group"
+          aria-label="Modo de vista"
+          className="inline-flex items-center gap-0.5 rounded-full bg-surface p-0.5 shadow-rest"
+        >
+          {VISTAS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              data-testid={`tareas-vista-${value}`}
+              aria-pressed={vista === value}
+              onClick={() => aplicar(filtros, { vista: value })}
+              className={`press inline-flex min-h-10 items-center rounded-full px-3 text-small font-semibold focus:outline-none focus:ring-2 focus:ring-link ${
+                vista === value ? "bg-link text-surface" : "text-muted hover:text-ink-2"
+              }`}
+            >
+              {VISTA_LABELS[value]}
+            </button>
+          ))}
+        </div>
+
         <div className="relative">
           <label className="sr-only" htmlFor="tareas-agrupar">
             Agrupar por
@@ -621,8 +821,15 @@ export default function TareasView() {
             id="tareas-agrupar"
             data-testid="tareas-agrupar"
             value={agrupacion}
+            // En tablero la agrupación no manda: el tablero ya agrupa por
+            // estado. Se deshabilita y se dice por qué, en vez de dejar un
+            // selector que miente sobre lo que se está viendo.
+            disabled={vista === "tablero"}
+            aria-describedby={vista === "tablero" ? "tareas-agrupar-nota" : undefined}
             onChange={(event) => aplicar(filtros, { agrupacion: event.target.value as Agrupacion })}
-            className="min-h-8 appearance-none rounded-full bg-surface py-1 pl-3 pr-7 text-small text-ink-2 shadow-rest focus:outline-none focus:ring-2 focus:ring-link"
+            className={`min-h-8 appearance-none rounded-full bg-surface py-1 pl-3 pr-7 text-small text-ink-2 shadow-rest focus:outline-none focus:ring-2 focus:ring-link ${
+              vista === "tablero" ? "opacity-45" : ""
+            }`}
           >
             {AGRUPACIONES.map((value) => (
               <option key={value} value={value}>
@@ -637,6 +844,12 @@ export default function TareasView() {
             className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-faint"
           />
         </div>
+
+        {vista === "tablero" ? (
+          <span id="tareas-agrupar-nota" data-testid="tareas-agrupar-nota" className="text-label text-faint">
+            El tablero ya agrupa por estado
+          </span>
+        ) : null}
 
         <button
           type="button"
@@ -910,7 +1123,24 @@ export default function TareasView() {
           />
         ) : null}
 
-        {!error && visibles.length > 0 ? (
+        {!error && visibles.length > 0 && vista === "tablero" ? (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <div className="overflow-x-auto pb-2" data-testid="tareas-tablero">
+              <div className="flex items-start gap-2">
+                {TASK_STATUSES.map((status) => (
+                  <ColumnaEstado
+                    key={status}
+                    status={status}
+                    tasks={porEstado.get(status) ?? []}
+                    ctx={ctx}
+                  />
+                ))}
+              </div>
+            </div>
+          </DndContext>
+        ) : null}
+
+        {!error && visibles.length > 0 && vista === "tabla" ? (
           <div className="space-y-5">
             {grupos.map((grupo) => {
               let indexBase = 0;

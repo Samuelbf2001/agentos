@@ -96,6 +96,19 @@ export const COLUMNA_LABELS: Record<Columna, string> = {
 
 export type Direccion = "asc" | "desc";
 
+/**
+ * Los dos modos de ver la misma base: la tabla (densa, ordenable, editable en
+ * línea) y el tablero por estado (arrastrable). El modo viaja en la URL como
+ * un filtro más: un enlace compartido llega en el modo en que se compartió.
+ */
+export const VISTAS = ["tabla", "tablero"] as const;
+export type Vista = (typeof VISTAS)[number];
+
+export const VISTA_LABELS: Record<Vista, string> = {
+  tabla: "Tabla",
+  tablero: "Tablero",
+};
+
 /** El valor reservado de `responsable` que significa "la persona de la sesión". */
 export const YO = "yo";
 
@@ -133,8 +146,9 @@ export interface Contexto {
   /** Persona de la sesión; resuelve `responsable=yo`. */
   meId: string | null;
   /**
-   * Nombre real de cada organización, sacado del recibo de launch
-   * (`inputs.empresa`). `/api/projects` no lo trae, así que puede faltar.
+   * Override opcional del nombre de cada organización, para quien lo tenga por
+   * otra vía (por ejemplo el recibo de launch). Ya no hace falta para el caso
+   * normal: `/api/projects` trae `orgName`.
    */
   clientNames?: Map<string, string>;
 }
@@ -175,19 +189,25 @@ function prefijoComun(a: string, b: string): string {
 }
 
 /**
- * Nombre del cliente. `/api/projects` sólo devuelve `org_id`, así que el
- * nombre real sale del recibo de launch del proyecto (`inputs.empresa`), que
- * es un endpoint que ya existe. Cuando el proyecto no nació de un módulo no hay
- * recibo: entonces se deduce de lo único legible que queda, los nombres de sus
- * proyectos —uno solo es su nombre; varios, el prefijo que comparten— y en
- * último término se identifica por el id, antes que inventar uno.
+ * Nombre del cliente, por orden de fiabilidad:
+ *
+ * 1. `orgName` de cualquier proyecto de esa organización: es el nombre de la
+ *    tabla `orgs` y `GET /api/projects` ya lo enriquece. Es la fuente buena y
+ *    la única que sirve para las 1232 tareas importadas de Notion, que nunca
+ *    tuvieron recibo de launch.
+ * 2. Un override explícito en `clientNames`, para quien lo tenga por otra vía.
+ * 3. Los nombres de sus proyectos —uno solo presta el suyo; varios, el prefijo
+ *    que comparten—.
+ * 4. El id, antes que inventar un nombre.
  */
 export function clienteLabel(orgId: string | null, ctx: ClienteCtx): string {
   if (!orgId) return "Sin cliente";
-  const real = ctx.clientNames?.get(orgId);
-  if (real) return real;
   const projects = ctx.projects;
   const own = projects.filter((project) => project.orgId === orgId);
+  const real = own.find((project) => project.orgName?.trim())?.orgName?.trim();
+  if (real) return real;
+  const override = ctx.clientNames?.get(orgId);
+  if (override) return override;
   if (own.length === 0) return `Cliente ${orgId.slice(0, 6)}`;
   const first = own[0]!;
   if (own.length === 1) return first.name;
@@ -407,6 +427,11 @@ export function parseAgrupacion(params: URLSearchParams): Agrupacion {
   return pick(params.get("agrupar"), AGRUPACIONES) ?? "cliente";
 }
 
+/** El modo por defecto es la tabla; `vista=tablero` lo cambia. */
+export function parseVista(params: URLSearchParams): Vista {
+  return pick(params.get("vista"), VISTAS) ?? "tabla";
+}
+
 export function parseOrden(params: URLSearchParams): { columna: Columna; direccion: Direccion } {
   return {
     columna: pick(params.get("orden"), COLUMNAS) ?? "vencimiento",
@@ -416,7 +441,11 @@ export function parseOrden(params: URLSearchParams): { columna: Columna; direcci
 
 export function filtrosAParams(
   filtros: Filtros,
-  extra: { agrupacion?: Agrupacion; orden?: { columna: Columna; direccion: Direccion } } = {},
+  extra: {
+    agrupacion?: Agrupacion;
+    orden?: { columna: Columna; direccion: Direccion };
+    vista?: Vista;
+  } = {},
 ): URLSearchParams {
   const params = new URLSearchParams();
   if (filtros.cliente) params.set("cliente", filtros.cliente);
@@ -432,6 +461,8 @@ export function filtrosAParams(
   if (extra.agrupacion && extra.agrupacion !== "cliente") params.set("agrupar", extra.agrupacion);
   if (extra.orden && extra.orden.columna !== "vencimiento") params.set("orden", extra.orden.columna);
   if (extra.orden && extra.orden.direccion === "desc") params.set("dir", "desc");
+  // La tabla es el default: sólo el tablero deja rastro en la URL.
+  if (extra.vista && extra.vista !== "tabla") params.set("vista", extra.vista);
   return params;
 }
 

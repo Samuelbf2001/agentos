@@ -7,8 +7,8 @@
  * salir de la vista.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import App from "../src/App";
 import TareasView from "../src/views/TareasView";
 import { useStore } from "../src/state/store";
@@ -34,6 +34,7 @@ import {
   projectB,
   type FetchCall,
 } from "./helpers";
+import { TASK_STATUSES, type Project, type TaskStatus } from "../src/lib/types";
 
 const ctx: Contexto = {
   projects: [project, projectB],
@@ -251,7 +252,34 @@ describe("agrupación (pura)", () => {
 });
 
 describe("cliente y query", () => {
-  it("el nombre real del cliente manda; sin recibo se deduce de sus proyectos", () => {
+  it("el nombre real del cliente sale de orgName, y sólo sin él se deduce", () => {
+    // (1) `orgName` de `/api/projects` manda sobre todo lo demás: es lo único
+    // que tienen las tareas importadas de Notion.
+    expect(
+      clienteLabel("org-1", { projects: [{ ...project, orgName: "ACME S.A." }] }),
+    ).toBe("ACME S.A.");
+    // Basta con que UN proyecto de esa organización lo traiga.
+    expect(
+      clienteLabel("org-1", {
+        projects: [
+          { ...project, id: "a", orgName: null },
+          { ...project, id: "b", orgName: "ACME S.A." },
+        ],
+      }),
+    ).toBe("ACME S.A.");
+    // (4) Sin orgName ni proyectos legibles, el id: nunca un nombre inventado.
+    expect(clienteLabel("01a074aa-bb", { projects: [] })).toBe("Cliente 01a074");
+    expect(
+      clienteLabel("01a074aa-bb", {
+        projects: [
+          { ...project, id: "a", orgId: "01a074aa-bb", name: "X" },
+          { ...project, id: "b", orgId: "01a074aa-bb", name: "Y" },
+        ],
+      }),
+    ).toBe("Cliente 01a074");
+  });
+
+  it("sin orgName se deduce del recibo o de los proyectos", () => {
     // Con recibo de launch: el nombre de la empresa, tal cual.
     expect(
       clienteLabel("org-1", { ...ctx, clientNames: new Map([["org-1", "ACME S.A."]]) }),
@@ -303,6 +331,14 @@ describe("cliente y query", () => {
 
 type Wire = { method: string; body: unknown; url: string };
 
+/**
+ * Los proyectos tal como los sirve `GET /api/projects`: con `orgName`, el
+ * nombre real de la organización. Es lo único que tienen los 1232 registros
+ * importados de Notion, que nunca pasaron por un launch.
+ */
+const projectConOrg: Project = { ...project, orgName: "ACME S.A." };
+const projectBConOrg: Project = { ...projectB, orgName: "Delta Logística" };
+
 const viewRoutes = [
   // Las rutas de escritura van antes: el mock casa por orden y la de lectura
   // no declara método, así que atraparía también el POST.
@@ -339,7 +375,7 @@ const viewRoutes = [
     }),
   },
   { path: "/api/tasks", body: { tasks: base() } },
-  { path: "/api/projects", body: { projects: [project, projectB] } },
+  { path: "/api/projects", body: { projects: [projectConOrg, projectBConOrg] } },
   { path: "/api/auth/people", body: { people: [person, personB] } },
   { path: "/api/labels", body: { labels: [{ label: "cliente", count: 2 }, { label: "ops", count: 1 }] } },
   {
@@ -354,11 +390,17 @@ const viewRoutes = [
   { path: /^\/api\/tasks\/[^/]+$/, body: { task: makeTask(), events: [], artifacts: [], runs: [] } },
 ];
 
+/** Deja ver la query real: el modo de vista y los filtros viven en la URL. */
+function Ubicacion() {
+  const location = useLocation();
+  return <span data-testid="ubicacion">{location.search}</span>;
+}
+
 function renderTareas(entry = "/tareas") {
   useStore.setState({
     person,
     token: "tok",
-    projects: [project, projectB],
+    projects: [projectConOrg, projectBConOrg],
     people: [person, personB],
     activeProjectId: null,
     labelCatalog: [],
@@ -371,6 +413,7 @@ function renderTareas(entry = "/tareas") {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <TareasView />
+      <Ubicacion />
     </MemoryRouter>,
   );
 }
@@ -402,11 +445,26 @@ describe("TareasView (render)", () => {
     expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
   });
 
-  it("no ofrece un botón «Tablero»: Tareas es transversal, no un proyecto", async () => {
+  it("«Tablero» es un modo de esta base, no un enlace al tablero de un proyecto", async () => {
     renderTareas();
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
-    expect(screen.queryByRole("button", { name: "Tablero" })).toBeNull();
+    // El conmutador es un botón de la propia vista: Tareas sigue siendo
+    // transversal y no manda a nadie al tablero de un proyecto concreto.
+    expect(screen.getByTestId("tareas-vista-tablero").tagName).toBe("BUTTON");
     expect(screen.queryByRole("link", { name: "Tablero" })).toBeNull();
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs.some((href) => /\/proyectos\/[^/]+\/tablero/.test(href))).toBe(false);
+  });
+
+  it("no pide un recibo de launch por proyecto: el nombre del cliente viene con los proyectos", async () => {
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    // 34 proyectos en producción eran 34 peticiones al montar para nada: los
+    // proyectos importados de Notion no tienen recibo.
+    expect(calls.some((c) => c.url.includes("/launches"))).toBe(false);
+    // Y el nombre real (orgName) se ve como cabecera del grupo de cliente.
+    const grupo = await screen.findByTestId("tareas-grupo-org-1");
+    expect(within(grupo).getByRole("heading", { level: 2 }).textContent).toContain("ACME S.A.");
   });
 
   it("cruza dos filtros y deja los chips visibles y borrables", async () => {
@@ -692,6 +750,213 @@ describe("TareasView (render)", () => {
     await waitFor(() => expect(screen.getByText("Nada coincide con estos filtros")).toBeTruthy());
     fireEvent.click(screen.getByText("Limpiar los filtros"));
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+  });
+});
+
+// ── Modo tablero ────────────────────────────────────────────────────────────
+
+/**
+ * jsdom no mide nada: todos los rectángulos son 0×0 en (0,0), así que dnd-kit
+ * no puede decidir sobre qué columna se soltó. Se le dan medidas sintéticas
+ * —una fila de columnas de 260 px separadas 300— derivadas del data-testid, y
+ * con eso la detección de colisión resuelve igual que en el navegador.
+ */
+const ANCHO_COLUMNA = 300;
+
+function medirColumnas(): () => void {
+  const original = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
+    const columna = this.closest?.("[data-testid^='tareas-columna-']");
+    if (!columna) return original.call(this);
+    const status = columna.getAttribute("data-testid")!.replace("tareas-columna-", "");
+    const indice = TASK_STATUSES.indexOf(status as TaskStatus);
+    // La tarjeta es un rectángulo pequeño dentro de su columna; la columna, la
+    // caja alta sobre la que se suelta.
+    const tarjeta = this !== columna;
+    const left = indice * ANCHO_COLUMNA + (tarjeta ? 10 : 0);
+    const width = tarjeta ? 240 : 260;
+    const height = tarjeta ? 60 : 400;
+    const top = tarjeta ? 10 : 0;
+    return {
+      x: left,
+      y: top,
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+      toJSON: () => ({}),
+    } as DOMRect;
+  };
+  return () => {
+    Element.prototype.getBoundingClientRect = original;
+  };
+}
+
+/** Arrastra una tarjeta desde su columna hasta la columna destino. */
+async function arrastrar(card: HTMLElement, desde: TaskStatus, hasta: TaskStatus): Promise<void> {
+  const delta = (TASK_STATUSES.indexOf(hasta) - TASK_STATUSES.indexOf(desde)) * ANCHO_COLUMNA;
+  const x0 = TASK_STATUSES.indexOf(desde) * ANCHO_COLUMNA + 130;
+  const y0 = 40;
+  fireEvent.pointerDown(card, { button: 0, isPrimary: true, clientX: x0, clientY: y0 });
+  // El primer movimiento supera el umbral de 6 px y arranca el arrastre; el
+  // segundo llega cuando dnd-kit ya midió las columnas y decide el destino.
+  fireEvent.pointerMove(document, { clientX: x0 + delta, clientY: y0 });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  fireEvent.pointerMove(document, { clientX: x0 + delta, clientY: y0 + 1 });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  fireEvent.pointerUp(document, { clientX: x0 + delta, clientY: y0 + 1 });
+}
+
+describe("TareasView (tablero)", () => {
+  let calls: FetchCall[];
+  let restaurarMedidas: () => void;
+
+  beforeEach(() => {
+    calls = mockFetch(viewRoutes).calls;
+    restaurarMedidas = medirColumnas();
+  });
+  afterEach(() => {
+    restaurarMedidas();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("el conmutador lleva al tablero, lo deja en la URL y un enlace así arranca en tablero", async () => {
+    const { unmount } = renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+    expect(screen.queryByTestId("tareas-tablero")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("tareas-vista-tablero"));
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+    // La tabla se va: son dos modos de la misma base, no dos listas a la vez.
+    expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull();
+    expect(screen.getByTestId("tareas-vista-tablero").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("tareas-vista-tabla").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tablero");
+    unmount();
+
+    // El mismo enlace, abierto de cero: arranca en tablero.
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+    expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy();
+
+    // Y volver a la tabla limpia la URL: la tabla es el default.
+    fireEvent.click(screen.getByTestId("tareas-vista-tabla"));
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+    expect(screen.getByTestId("ubicacion").textContent).not.toContain("vista=");
+  });
+
+  it("hay una columna por estado, con su conteo, y las tarjetas respetan el filtro", async () => {
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+
+    // Las siete columnas de la máquina de estados, en su orden.
+    const columnas = [...document.querySelectorAll("[data-testid^='tareas-columna-']")].map((el) =>
+      el.getAttribute("data-testid")!.replace("tareas-columna-", ""),
+    );
+    expect(columnas).toEqual(TASK_STATUSES);
+
+    const conteo = (status: TaskStatus) => screen.getByTestId(`tareas-conteo-${status}`).textContent;
+    expect(conteo("BACKLOG")).toBe("1");
+    expect(conteo("READY")).toBe("2");
+    expect(conteo("IN_PROGRESS")).toBe("1");
+    expect(conteo("REVIEW")).toBe("0");
+    // La cerrada no está: el tablero filtra lo mismo que la tabla.
+    expect(conteo("DONE")).toBe("0");
+    expect(screen.queryByTestId("tarea-tarjeta-t-beta-cerrada")).toBeNull();
+
+    // Cada tarjeta dice de quién es el trabajo, con el nombre real del cliente.
+    const tarjeta = screen.getByTestId("tarea-tarjeta-t-acme-hoy");
+    expect(tarjeta.textContent).toContain("Zanjar el mapa SIPOC");
+    expect(tarjeta.textContent).toContain("ACME S.A.");
+    expect(tarjeta.textContent).toContain(project.name);
+    expect(tarjeta.textContent).toContain("Jorge");
+
+    // "Mis tareas" recorta el tablero igual que recorta la tabla.
+    fireEvent.click(screen.getByTestId("tareas-mias"));
+    await waitFor(() => expect(conteo("READY")).toBe("1"));
+    expect(screen.queryByTestId("tarea-tarjeta-t-acme-hoy")).toBeNull();
+    expect(screen.getByTestId("tarea-tarjeta-t-beta-semana")).toBeTruthy();
+    expect(conteo("IN_PROGRESS")).toBe("1");
+    expect(conteo("BACKLOG")).toBe("0");
+  });
+
+  it("en tablero el selector «Agrupar» se deshabilita y dice por qué", async () => {
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+    const agrupar = screen.getByTestId("tareas-agrupar") as HTMLSelectElement;
+    expect(agrupar.disabled).toBe(true);
+    expect(screen.getByTestId("tareas-agrupar-nota").textContent).toContain("agrupa por estado");
+    expect(agrupar.getAttribute("aria-describedby")).toBe("tareas-agrupar-nota");
+  });
+
+  it("el tablero también capa el render y «Mostrar más» reparte el resto (I2)", async () => {
+    const many = Array.from({ length: 250 }, (_, i) =>
+      makeTask({ id: `t-many-${i}`, projectId: project.id, title: `Tarea generada ${i}`, status: "READY" }),
+    );
+    mockFetch([{ method: "GET", path: "/api/tasks", body: { tasks: many } }, ...viewRoutes]);
+    renderTareas("/tareas?vista=tablero");
+
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+    expect(screen.getAllByTestId(/^tarea-tarjeta-/).length).toBe(200);
+    expect(screen.getByTestId("tareas-conteo-READY").textContent).toBe("200");
+    const bar = screen.getByTestId("tareas-mostrar-mas");
+    expect(bar.textContent).toContain("Mostrando 200 de 250");
+
+    fireEvent.click(within(bar).getByText("Mostrar más"));
+    await waitFor(() => expect(screen.getAllByTestId(/^tarea-tarjeta-/).length).toBe(250));
+  });
+
+  it("arrastrar una tarjeta a otra columna manda el move con su expected_version", async () => {
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy());
+
+    await arrastrar(screen.getByTestId("tarea-tarjeta-t-acme-hoy"), "READY", "IN_PROGRESS");
+
+    await waitFor(() => {
+      const move = calls.find(
+        (c) => c.method === "POST" && c.url.includes("/api/tasks/t-acme-hoy/move"),
+      );
+      expect(move).toBeTruthy();
+      expect(move!.body).toMatchObject({ to: "IN_PROGRESS", expected_version: 3 });
+    });
+    // Y la tarjeta se queda en su columna nueva.
+    await waitFor(() =>
+      expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy").getAttribute("data-status")).toBe(
+        "IN_PROGRESS",
+      ),
+    );
+  });
+
+  it("si el motor rechaza el arrastre, la tarjeta vuelve a su columna y se dice por qué", async () => {
+    calls = mockFetch([
+      {
+        method: "POST",
+        path: "/api/tasks/t-acme-hoy/move",
+        status: 409,
+        body: { error: { code: "version_conflict", message: "La tarea cambió de versión" } },
+      },
+      ...viewRoutes,
+    ]).calls;
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy());
+
+    await arrastrar(screen.getByTestId("tarea-tarjeta-t-acme-hoy"), "READY", "IN_PROGRESS");
+
+    await waitFor(() =>
+      expect(
+        useStore
+          .getState()
+          .toasts.some((t) => t.kind === "error" && t.text.includes("La tarea cambió de versión")),
+      ).toBe(true),
+    );
+    expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy").getAttribute("data-status")).toBe("READY");
   });
 });
 
