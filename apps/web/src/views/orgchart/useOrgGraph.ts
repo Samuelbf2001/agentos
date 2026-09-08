@@ -46,6 +46,8 @@ export interface UseOrgGraphResult {
   createRole(input: { name: string; canvasX?: number; canvasY?: number }): Promise<OrgRoleFull | null>;
   updateRole(id: string, body: UpdateOrgRoleInput): Promise<boolean>;
   deleteRole(id: string): Promise<void>;
+  /** Aplica en memoria un rol devuelto por otra mutación (p. ej. convertirlo en agente). */
+  applyRole(role: Partial<OrgRoleFull> & { id: string }): void;
   setFunctions(id: string, functions: { id?: string; name: string; description?: string | null }[]): Promise<void>;
   setPeople(id: string, people: { person_id: string; dedication_pct?: number | null }[]): Promise<void>;
   setProcesses(id: string, processes: { process_id: string; relation: "owner" | "participant" }[]): Promise<void>;
@@ -106,6 +108,7 @@ export function useOrgGraph(orgId: string): UseOrgGraphResult {
     loading,
     error,
     reload: load,
+    applyRole: mergeRole,
 
     async createUnit(name) {
       try {

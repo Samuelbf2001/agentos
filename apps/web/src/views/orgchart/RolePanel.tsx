@@ -11,6 +11,7 @@ import { PersonAvatar } from "../../components/ui";
 import { InlinePopover, PopoverOption, PopoverSearch } from "../../components/ui/InlinePopover";
 import { paths } from "../../lib/paths";
 import type { OrgGraph, OrgRoleFull } from "../../lib/types";
+import { ConvertRoleDialog } from "./ConvertRoleDialog";
 import type { UpdateOrgRoleInput } from "./useOrgGraph";
 
 interface SectionsProps {
@@ -293,6 +294,7 @@ export interface RolePanelProps {
   setFunctions(id: string, functions: DraftFunction[]): Promise<void>;
   setPeople(id: string, people: { person_id: string; dedication_pct?: number | null }[]): Promise<void>;
   setProcesses(id: string, processes: { process_id: string; relation: "owner" | "participant" }[]): Promise<void>;
+  applyRole(role: Partial<OrgRoleFull> & { id: string }): void;
 }
 
 export default function RolePanel({
@@ -306,9 +308,11 @@ export default function RolePanel({
   setFunctions,
   setPeople,
   setProcesses,
+  applyRole,
 }: RolePanelProps) {
   const [nameDraft, setNameDraft] = useState(role.name);
   const [purposeDraft, setPurposeDraft] = useState(role.purpose ?? "");
+  const [convertOpen, setConvertOpen] = useState(false);
 
   useEffect(() => setNameDraft(role.name), [role.id, role.name]);
   useEffect(() => setPurposeDraft(role.purpose ?? ""), [role.id, role.purpose]);
@@ -431,6 +435,27 @@ export default function RolePanel({
       <FunctionsSection role={role} graph={graph} readOnly={readOnly} setFunctions={setFunctions} />
       <PeopleSection role={role} graph={graph} readOnly={readOnly} setPeople={setPeople} />
       <ProcessesSection role={role} graph={graph} readOnly={readOnly} projectId={projectId} setProcesses={setProcesses} />
+
+      <div>
+        <SectionHead label="Agente" />
+        {role.agentId ? (
+          <div className="flex items-center gap-2">
+            <Chip tone="done">Tiene agente</Chip>
+            <Link to={paths.sistema("equipo")} className="text-small font-semibold text-link underline">
+              Ver en Equipo
+            </Link>
+          </div>
+        ) : !readOnly ? (
+          <>
+            <ActionButton variant="primary" onClick={() => setConvertOpen(true)}>
+              Convertir en agente
+            </ActionButton>
+            <ConvertRoleDialog open={convertOpen} onOpenChange={setConvertOpen} role={role} onCreated={applyRole} />
+          </>
+        ) : (
+          <p className="text-small text-muted">Sin agente</p>
+        )}
+      </div>
 
       {!readOnly ? (
         <div className="mt-8 border-t border-line-soft pt-4">

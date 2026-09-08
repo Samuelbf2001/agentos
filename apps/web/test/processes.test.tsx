@@ -27,6 +27,7 @@ function makeRole(overrides: Partial<OrgRoleFull>): OrgRoleFull {
     version: 1,
     createdAt: 1,
     updatedAt: 1,
+    agentId: null,
     functions: [],
     people: [],
     processes: [],

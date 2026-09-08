@@ -95,8 +95,20 @@ function computeAreaNodes(
 
 export default function OrgChartView({ orgId, readOnly = false }: { orgId: string; readOnly?: boolean }) {
   const { projectId } = useParams<{ projectId: string }>();
-  const { graph, loading, error, reload, createUnit, createRole, updateRole, deleteRole, setFunctions, setPeople, setProcesses } =
-    useOrgGraph(orgId);
+  const {
+    graph,
+    loading,
+    error,
+    reload,
+    createUnit,
+    createRole,
+    updateRole,
+    deleteRole,
+    setFunctions,
+    setPeople,
+    setProcesses,
+    applyRole,
+  } = useOrgGraph(orgId);
 
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [highlightUnitId, setHighlightUnitId] = useState<string | null>(null);
@@ -360,6 +372,7 @@ export default function OrgChartView({ orgId, readOnly = false }: { orgId: strin
             setFunctions={setFunctions}
             setPeople={setPeople}
             setProcesses={setProcesses}
+            applyRole={applyRole}
           />
         ) : null}
       </div>

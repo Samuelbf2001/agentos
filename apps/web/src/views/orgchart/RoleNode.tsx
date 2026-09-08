@@ -4,6 +4,7 @@
  * procesos), para no tener que abrir el panel solo para saber si hay algo.
  */
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { Bot } from "lucide-react";
 import { Chip } from "../../components/system";
 import { PersonAvatar } from "../../components/ui";
 import type { OrgRoleFull } from "../../lib/types";
@@ -43,7 +44,14 @@ export function RoleNode({ data, selected }: NodeProps<Node<RoleNodeData>>) {
         <span className={`h-2 w-2 shrink-0 rounded-full ${areaColor}`} aria-hidden="true" />
         <span className="truncate text-label text-muted">{areaName ?? "Sin área"}</span>
       </div>
-      <p className="mt-1 truncate text-body font-semibold text-ink">{role.name}</p>
+      <p className="mt-1 flex items-center gap-1 truncate text-body font-semibold text-ink">
+        <span className="truncate">{role.name}</span>
+        {role.agentId ? (
+          <span title="Tiene agente" className="inline-flex shrink-0 text-muted">
+            <Bot className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+        ) : null}
+      </p>
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {people.length > 0 ? (
           people.slice(0, 3).map((p) => (

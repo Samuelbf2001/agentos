@@ -841,6 +841,8 @@ export interface OrgRole {
   version: number;
   createdAt: number;
   updatedAt: number;
+  /** null si el rol todavía no se convirtió en agente. */
+  agentId: string | null;
 }
 
 /** Rol con sus relaciones cargadas, tal como lo sirve el grafo y el detalle. */
@@ -873,6 +875,32 @@ export interface OrgGraph {
   roles: OrgRoleFull[];
   processes: OrgGraphProcess[];
   people: OrgGraphPerson[];
+}
+
+// ── Convertir un rol en agente ──────────────────────────────────────────────
+
+/** Espejo camelCase de GET /api/tools/catalog (el wire llega en snake_case). */
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  externalEffect: boolean;
+  requiresApproval: boolean;
+}
+
+/** Lo mínimo del agente que devuelve POST /api/roles/:id/agent. */
+export interface RoleAgentSummary {
+  id: string;
+  slug: string;
+  name: string;
+  status: AgentStatus;
+  autonomy: "manual" | "supervised" | "auto";
+}
+
+export interface ConvertRoleToAgentResponse {
+  agent: RoleAgentSummary;
+  role: OrgRoleFull;
+  prompt_version: unknown;
 }
 
 /** Extrae el payload de dominio (busSink envuelve en {type, timestamp, payload}). */

@@ -9,6 +9,7 @@ import type {
   Approval,
   Artifact,
   BrainOverview,
+  ConvertRoleToAgentResponse,
   KnowledgeDoc,
   LaunchReceipt,
   LaunchResponse,
@@ -47,6 +48,7 @@ import type {
   TaskSearchHit,
   TaskStatus,
   Thread,
+  ToolCatalogEntry,
 } from "./types";
 
 const configuredApiBase =
@@ -177,6 +179,24 @@ function normalizeTaskDetail(raw: TaskDetailResponse): TaskDetailResponse {
     };
   }
   return response;
+}
+
+interface WireToolCatalogEntry {
+  name: string;
+  description: string;
+  read_only: boolean;
+  external_effect: boolean;
+  requires_approval: boolean;
+}
+
+function normalizeToolCatalogEntry(entry: WireToolCatalogEntry): ToolCatalogEntry {
+  return {
+    name: entry.name,
+    description: entry.description,
+    readOnly: entry.read_only,
+    externalEffect: entry.external_effect,
+    requiresApproval: entry.requires_approval,
+  };
 }
 
 /** Hook para 401: la shell lo usa para volver al login. */
@@ -649,6 +669,22 @@ export const api = {
       method: "PUT",
       body: { processes },
     }),
+
+  // ── Convertir un rol en agente ────────────────────────────────────────────
+  toolCatalog: async () => {
+    const { tools } = await request<{ tools: WireToolCatalogEntry[] }>("/api/tools/catalog");
+    return { tools: tools.map(normalizeToolCatalogEntry) };
+  },
+  convertRoleToAgent: (
+    roleId: string,
+    body: {
+      function_ids: string[];
+      autonomy: "manual" | "supervised";
+      activate: boolean;
+      tools_allowlist: string[];
+      name?: string;
+    },
+  ) => request<ConvertRoleToAgentResponse>(`/api/roles/${roleId}/agent`, { method: "POST", body }),
 };
 
 export type Api = typeof api;
