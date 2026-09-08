@@ -25,30 +25,43 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProviderCapabilities } from "@agentos/shared";
+import { errors, type AgentRuntime, type ProviderCapabilities } from "@agentos/shared";
 import { resolveDbPath } from "./client.js";
 import type { AnyDb } from "./facade.js";
 import { applyMigrations, closeAnyDb, openConfiguredDb } from "./open.js";
 import { launchModule } from "./modules/launch.js";
+import type { ProviderProfile } from "./types.js";
 import { loadAgentSeeds, loadMethodologySeeds, loadModuleSeeds, sha256 } from "./seed-sources.js";
 import {
   ConfigKeys,
   countDomainTables,
   createOrganization,
+  createOrgRole,
+  createOrgUnit,
   createPerson,
+  createProcess,
   createPromptVersion,
   domainCounts,
   getActivePrompt,
   getAgent,
   getConfig,
+  getDefaultProviderProfile,
   getOrganizationByName,
+  getOrgRole,
+  getOrgRoleByName,
+  getOrgUnitByName,
   getPersonByFullName,
   getProjectByName,
   getProviderProfileBySlug,
   isProviderConfigured,
+  listProcesses,
   listTasks,
+  replaceRoleFunctions,
+  replaceRolePeople,
+  replaceRoleProcesses,
   setConfig,
   updateAgent,
+  updateOrgRole,
   upsertAgentFromSeed,
   upsertMethodology,
   upsertPhaseModuleFromSeed,
@@ -76,6 +89,65 @@ export const FALLBACK_CLAUDE_MODEL = "sonnet";
 export function isAnthropicModel(model: string | null | undefined): boolean {
   if (!model) return false;
   return /^(sonnet|opus|haiku)\b/i.test(model) || /^claude[-_]/i.test(model);
+}
+
+export interface ResolveAgentProviderWanted {
+  /** Slug del perfil deseado; sin él, se usa el perfil por defecto (`is_default`). */
+  providerProfileSlug?: string;
+  runtime?: AgentRuntime;
+  model?: string | null;
+}
+
+export interface ResolvedAgentProvider {
+  profile: ProviderProfile;
+  runtime: AgentRuntime;
+  model: string | null;
+  /** true si tuvo que caer a claude_subscription/claude_code por falta de credencial. */
+  fallbackApplied: boolean;
+}
+
+/**
+ * Regla del fallback de arranque (ARCHITECTURE §3), extraída de `seedCatalog`
+ * para reutilizarla también al convertir un rol en agente (§"convertir en
+ * agente"): sin credencial configurada para el perfil deseado — o si el
+ * perfil por defecto ES `claude_subscription` pero el runtime pedido no es
+ * `claude_code` — cae a `claude_subscription`/`claude_code`, y el modelo cae
+ * a un alias Anthropic válido si el pedido no lo era (H5).
+ */
+export async function resolveAgentProvider(
+  db: AnyDb,
+  wanted: ResolveAgentProviderWanted = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ResolvedAgentProvider> {
+  const desired = wanted.providerProfileSlug
+    ? await getProviderProfileBySlug(db, wanted.providerProfileSlug)
+    : await getDefaultProviderProfile(db);
+  let runtime: AgentRuntime = wanted.runtime ?? "ai_sdk";
+  let model = wanted.model ?? null;
+  let profile = desired;
+
+  const needsFallback =
+    !desired ||
+    !isProviderConfigured(desired, env) ||
+    (desired.kind === "claude_subscription" && runtime !== "claude_code");
+
+  let fallbackApplied = false;
+  if (needsFallback) {
+    // Sin credencial (ni perfil por defecto usable) → suscripción Claude.
+    profile = await getProviderProfileBySlug(db, "claude_subscription");
+    if (runtime === "ai_sdk") {
+      runtime = "claude_code";
+      fallbackApplied = true;
+    }
+    // H5: el CLI de Claude no puede correr modelos no-Anthropic.
+    if (!isAnthropicModel(model)) model = FALLBACK_CLAUDE_MODEL;
+  }
+  if (!profile) {
+    throw errors.configuration(
+      "No hay proveedor disponible para el agente: falta el perfil por defecto y claude_subscription",
+    );
+  }
+  return { profile, runtime, model, fallbackApplied };
 }
 
 const caps = (over: Partial<ProviderCapabilities> = {}): ProviderCapabilities => ({
@@ -178,6 +250,208 @@ const SEED_DEMO_INPUTS: Record<string, unknown> = {
   sistemas_conocidos: "ERP básico, hojas de cálculo, WhatsApp",
 };
 
+// ── Organigrama de demostración de ACME (grafo organizacional) ─────────────
+// El rol es el centro (PRD v1.1 §3.1 y Parte II §5.3): cuelga de un área,
+// reporta a otro rol, lo ocupan personas y tiene funciones. Dos roles quedan
+// vacantes (Supervisor de Planta, Vendedor) para mostrar ese estado en la UI.
+
+const ACME_UNIT_SEEDS = ["Dirección", "Producción", "Comercial", "Administración"] as const;
+
+const ACME_PEOPLE_SEEDS = ["María Restrepo", "Carlos Pérez", "Laura Gómez", "Andrés Mora"] as const;
+
+interface AcmeRoleSeed {
+  name: string;
+  unit: (typeof ACME_UNIT_SEEDS)[number];
+  canvasX: number;
+  canvasY: number;
+  personFullName?: (typeof ACME_PEOPLE_SEEDS)[number];
+  reportsTo?: string;
+  functions: readonly string[];
+}
+
+const ACME_ROLE_SEEDS: readonly AcmeRoleSeed[] = [
+  {
+    name: "Gerente General",
+    unit: "Dirección",
+    canvasX: 400,
+    canvasY: 40,
+    personFullName: "María Restrepo",
+    functions: ["Definir prioridades del trimestre", "Aprobar inversiones y contrataciones"],
+  },
+  {
+    name: "Jefe de Producción",
+    unit: "Producción",
+    canvasX: 120,
+    canvasY: 220,
+    personFullName: "Carlos Pérez",
+    reportsTo: "Gerente General",
+    functions: [
+      "Planificar la producción semanal",
+      "Controlar calidad y mermas",
+      "Coordinar mantenimiento",
+    ],
+  },
+  {
+    name: "Jefe Comercial",
+    unit: "Comercial",
+    canvasX: 400,
+    canvasY: 220,
+    personFullName: "Laura Gómez",
+    reportsTo: "Gerente General",
+    functions: ["Gestionar la cartera de clientes", "Cotizar y cerrar pedidos"],
+  },
+  {
+    name: "Administrador",
+    unit: "Administración",
+    canvasX: 680,
+    canvasY: 220,
+    personFullName: "Andrés Mora",
+    reportsTo: "Gerente General",
+    functions: ["Facturación y cobranza", "Nómina y proveedores"],
+  },
+  {
+    // Vacante a propósito: muestra el estado "sin ocupar" en el lienzo.
+    name: "Supervisor de Planta",
+    unit: "Producción",
+    canvasX: 120,
+    canvasY: 400,
+    reportsTo: "Jefe de Producción",
+    functions: ["Asignar operarios por turno", "Registrar avance de órdenes"],
+  },
+  {
+    // Vacante a propósito.
+    name: "Vendedor",
+    unit: "Comercial",
+    canvasX: 400,
+    canvasY: 400,
+    reportsTo: "Jefe Comercial",
+    functions: ["Atender pedidos y consultas", "Hacer seguimiento a cotizaciones"],
+  },
+];
+
+interface AcmeProcessSeed {
+  name: string;
+  ownerRoleName: string;
+  steps: { step: string; responsible: string }[];
+  relations: readonly { role: string; relation: "owner" | "participant" }[];
+}
+
+const ACME_PROCESS_SEEDS: readonly AcmeProcessSeed[] = [
+  {
+    name: "Recepción y planificación de pedidos",
+    ownerRoleName: "Jefe Comercial",
+    steps: [
+      { step: "Recibir el pedido del cliente", responsible: "Vendedor" },
+      { step: "Verificar disponibilidad y precio", responsible: "Jefe Comercial" },
+      { step: "Programar la producción con planta", responsible: "Jefe de Producción" },
+    ],
+    relations: [
+      { role: "Jefe Comercial", relation: "owner" },
+      { role: "Vendedor", relation: "participant" },
+      { role: "Jefe de Producción", relation: "participant" },
+    ],
+  },
+  {
+    name: "Control de calidad en planta",
+    ownerRoleName: "Jefe de Producción",
+    steps: [
+      { step: "Inspeccionar materia prima al ingreso", responsible: "Supervisor de Planta" },
+      { step: "Verificar el producto en proceso", responsible: "Jefe de Producción" },
+      { step: "Registrar no conformidades y mermas", responsible: "Supervisor de Planta" },
+    ],
+    relations: [
+      { role: "Jefe de Producción", relation: "owner" },
+      { role: "Supervisor de Planta", relation: "participant" },
+    ],
+  },
+];
+
+/**
+ * Organigrama de demostración: SOLO para ACME, idempotente (get-or-create por
+ * nombre natural; `replace*` sobrescribe con el mismo contenido, nunca crece).
+ */
+async function seedOrgGraphAcme(db: AnyDb, orgId: string): Promise<void> {
+  const unitIdByName = new Map<string, string>();
+  for (const name of ACME_UNIT_SEEDS) {
+    const unit = (await getOrgUnitByName(db, orgId, name)) ?? (await createOrgUnit(db, { orgId, name }));
+    unitIdByName.set(name, unit.id);
+  }
+
+  for (const fullName of ACME_PEOPLE_SEEDS) {
+    if (!(await getPersonByFullName(db, fullName))) {
+      await createPerson(db, { orgId, fullName, isInternal: false });
+    }
+  }
+
+  const roleIdByName = new Map<string, string>();
+  for (const roleSeed of ACME_ROLE_SEEDS) {
+    const role =
+      (await getOrgRoleByName(db, orgId, roleSeed.name)) ??
+      (await createOrgRole(db, {
+        orgId,
+        name: roleSeed.name,
+        unitId: unitIdByName.get(roleSeed.unit) ?? null,
+        canvasX: roleSeed.canvasX,
+        canvasY: roleSeed.canvasY,
+      }));
+    roleIdByName.set(roleSeed.name, role.id);
+  }
+
+  // Segunda pasada: resuelve `reports_to` por nombre (el manager puede
+  // haberse creado después en la lista) — mismo patrón que la jerarquía de agentes.
+  for (const roleSeed of ACME_ROLE_SEEDS) {
+    if (!roleSeed.reportsTo) continue;
+    const roleId = roleIdByName.get(roleSeed.name)!;
+    const managerId = roleIdByName.get(roleSeed.reportsTo);
+    if (!managerId) continue;
+    const current = await getOrgRole(db, roleId);
+    if (current && current.reportsToRoleId !== managerId) {
+      await updateOrgRole(db, roleId, { reportsToRoleId: managerId }, current.version);
+    }
+  }
+
+  for (const roleSeed of ACME_ROLE_SEEDS) {
+    const roleId = roleIdByName.get(roleSeed.name)!;
+    await replaceRoleFunctions(
+      db,
+      roleId,
+      roleSeed.functions.map((name) => ({ name })),
+    );
+    const person = roleSeed.personFullName ? await getPersonByFullName(db, roleSeed.personFullName) : undefined;
+    await replaceRolePeople(db, roleId, person ? [{ personId: person.id }] : []);
+  }
+
+  const processIdByName = new Map<string, string>();
+  for (const procSeed of ACME_PROCESS_SEEDS) {
+    const existing = (await listProcesses(db, orgId)).find((p) => p.name === procSeed.name);
+    const process =
+      existing ??
+      (await createProcess(db, {
+        orgId,
+        name: procSeed.name,
+        variant: "as_is",
+        ownerPerson: procSeed.ownerRoleName,
+        steps: procSeed.steps,
+      }));
+    processIdByName.set(procSeed.name, process.id);
+  }
+
+  const roleProcessesByRole = new Map<string, { processId: string; relation: "owner" | "participant" }[]>();
+  for (const procSeed of ACME_PROCESS_SEEDS) {
+    const processId = processIdByName.get(procSeed.name)!;
+    for (const rel of procSeed.relations) {
+      const list = roleProcessesByRole.get(rel.role) ?? [];
+      list.push({ processId, relation: rel.relation });
+      roleProcessesByRole.set(rel.role, list);
+    }
+  }
+  for (const [roleName, relations] of roleProcessesByRole) {
+    const roleId = roleIdByName.get(roleName);
+    if (!roleId) continue;
+    await replaceRoleProcesses(db, roleId, relations);
+  }
+}
+
 /** Resultado de `seedCatalog`: lo único que aún necesita `seed()` para el conteo final. */
 export interface CatalogSeedResult {
   agentsFallback: string[];
@@ -215,30 +489,25 @@ export async function seedCatalog(
   const agentsFallback: string[] = [];
   const agentIdBySlug = new Map<string, string>();
   for (const seedDef of loadAgentSeeds()) {
-    const desired = await getProviderProfileBySlug(db, seedDef.meta.provider_profile);
-    let runtime = seedDef.meta.runtime;
-    let model = seedDef.meta.model;
-    let profile = desired;
-    if (!desired || !isProviderConfigured(desired, env)) {
-      // Sin credencial → suscripción Claude (runtime claude_code). La UI lo señalará.
-      profile = (await getProviderProfileBySlug(db, "claude_subscription"))!;
-      if (seedDef.meta.runtime === "ai_sdk") {
-        runtime = "claude_code";
-        agentsFallback.push(seedDef.meta.slug);
-      }
-      // H5: el CLI de Claude no puede correr modelos no-Anthropic (gpt-5, kimi,
-      // MiniMax...). Si el fallback cambia el proveedor, el modelo cae a un
-      // alias Anthropic válido — modelo y runtime SIEMPRE coherentes.
-      if (!isAnthropicModel(model)) model = FALLBACK_CLAUDE_MODEL;
-    }
+    const resolved = await resolveAgentProvider(
+      db,
+      {
+        providerProfileSlug: seedDef.meta.provider_profile,
+        runtime: seedDef.meta.runtime,
+        model: seedDef.meta.model,
+      },
+      env,
+    );
+    const { profile, runtime, model } = resolved;
+    if (resolved.fallbackApplied) agentsFallback.push(seedDef.meta.slug);
     // El hash incluye el resultado del fallback: si aparece la credencial, el seed se re-aplica.
-    const effectiveHash = sha256(`${seedDef.hash}|${profile!.slug}|${runtime}|${model}`);
+    const effectiveHash = sha256(`${seedDef.hash}|${profile.slug}|${runtime}|${model}`);
     const { agent, seedChanged } = await upsertAgentFromSeed(db, {
       slug: seedDef.meta.slug,
       name: seedDef.meta.name,
       layer: seedDef.meta.layer,
       runtime,
-      providerProfileId: profile!.id,
+      providerProfileId: profile.id,
       model,
       toolsAllowlist: seedDef.meta.tools,
       mcpAllowlist: [],
@@ -352,15 +621,15 @@ export async function seedDemo(
 ): Promise<void> {
   // La org demo se preserva con sus notas; el launch (abajo) la encuentra por
   // nombre exacto (get-or-create §13.3), no la duplica.
-  if (!(await getOrganizationByName(db, "ACME S.A."))) {
-    await createOrganization(db, {
+  const acme =
+    (await getOrganizationByName(db, "ACME S.A.")) ??
+    (await createOrganization(db, {
       name: "ACME S.A.",
       kind: "client",
       industry: "manufactura",
       employeeCount: 40,
       notes: "Organización demo del MVP. Quieren preparación ISO 9001.",
-    });
-  }
+    }));
 
   if (!(await getProjectByName(db, "Assessment ACME"))) {
     await launchModule(db, {
@@ -379,6 +648,9 @@ export async function seedDemo(
       now: SEED_DEMO_LAUNCH_NOW,
     });
   }
+
+  // Organigrama de demostración (grafo organizacional): SOLO ACME, idempotente.
+  await seedOrgGraphAcme(db, acme.id);
 }
 
 /**

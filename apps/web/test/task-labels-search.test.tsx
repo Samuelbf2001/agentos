@@ -146,7 +146,7 @@ describe("Filtro por etiqueta en el tablero", () => {
       board: { projectId: project.id, tasks: { "t-con": withLabel, "t-sin": withoutLabel } },
     });
 
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
 
     expect(screen.getByTestId("card-labels-t-con").textContent).toContain("cliente");
     expect(screen.getByTestId("task-card-t-con")).toBeTruthy();

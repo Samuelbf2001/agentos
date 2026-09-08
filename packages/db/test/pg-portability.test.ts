@@ -38,6 +38,16 @@ type _TaskAssigneeLiteToPg = AssertAssignable<pgTypes.TaskAssignee, liteTypes.Ta
 type _TaskAssigneePgToLite = AssertAssignable<liteTypes.TaskAssignee, pgTypes.TaskAssignee>;
 type _NotificationLiteToPg = AssertAssignable<pgTypes.TaskNotificationLog, liteTypes.TaskNotificationLog>;
 type _NotificationPgToLite = AssertAssignable<liteTypes.TaskNotificationLog, pgTypes.TaskNotificationLog>;
+type _OrgUnitLiteToPg = AssertAssignable<pgTypes.OrgUnit, liteTypes.OrgUnit>;
+type _OrgUnitPgToLite = AssertAssignable<liteTypes.OrgUnit, pgTypes.OrgUnit>;
+type _OrgRoleLiteToPg = AssertAssignable<pgTypes.OrgRole, liteTypes.OrgRole>;
+type _OrgRolePgToLite = AssertAssignable<liteTypes.OrgRole, pgTypes.OrgRole>;
+type _RoleFunctionLiteToPg = AssertAssignable<pgTypes.RoleFunction, liteTypes.RoleFunction>;
+type _RoleFunctionPgToLite = AssertAssignable<liteTypes.RoleFunction, pgTypes.RoleFunction>;
+type _RolePersonLiteToPg = AssertAssignable<pgTypes.RolePerson, liteTypes.RolePerson>;
+type _RolePersonPgToLite = AssertAssignable<liteTypes.RolePerson, pgTypes.RolePerson>;
+type _RoleProcessLiteToPg = AssertAssignable<pgTypes.RoleProcess, liteTypes.RoleProcess>;
+type _RoleProcessPgToLite = AssertAssignable<liteTypes.RoleProcess, pgTypes.RoleProcess>;
 
 function tableNames(mod: Record<string, unknown>): string[] {
   return Object.values(mod)
@@ -47,15 +57,15 @@ function tableNames(mod: Record<string, unknown>): string[] {
 }
 
 describe("esquema Postgres = esquema SQLite", () => {
-  it("las 31 tablas existen en los dos motores, con los mismos nombres", () => {
+  it("las 36 tablas existen en los dos motores, con los mismos nombres", () => {
     const lite = tableNames(liteSchema);
     const pg = tableNames(pgSchema);
-    expect(lite).toHaveLength(31);
+    expect(lite).toHaveLength(36);
     expect(pg).toEqual(lite);
   });
 
-  it("PG_TABLE_ORDER cubre las 31 tablas sin repetir", () => {
-    expect(new Set(PG_TABLE_ORDER).size).toBe(31);
+  it("PG_TABLE_ORDER cubre las 36 tablas sin repetir", () => {
+    expect(new Set(PG_TABLE_ORDER).size).toBe(36);
     expect([...PG_TABLE_ORDER].sort()).toEqual(tableNames(liteSchema));
   });
 
@@ -81,6 +91,11 @@ describe("esquema Postgres = esquema SQLite", () => {
       knowledge_docs: ["organizations", "projects"],
       project_sources: ["projects", "knowledge_docs"],
       processes: ["organizations"],
+      org_units: ["organizations"],
+      org_roles: ["organizations", "org_units", "agents"],
+      role_functions: ["org_roles"],
+      role_people: ["org_roles", "people"],
+      role_processes: ["org_roles", "processes"],
       module_launches: ["phase_modules", "organizations", "projects", "methodologies"],
     };
     const position = new Map(PG_TABLE_ORDER.map((t, i) => [t, i]));
@@ -94,8 +109,8 @@ describe("esquema Postgres = esquema SQLite", () => {
     }
   });
 
-  it("TABLE_PAIRS empareja las 31 tablas en el mismo orden topológico", () => {
-    expect(TABLE_PAIRS).toHaveLength(31);
+  it("TABLE_PAIRS empareja las 36 tablas en el mismo orden topológico", () => {
+    expect(TABLE_PAIRS).toHaveLength(36);
     expect(TABLE_PAIRS.map((p) => p.name)).toEqual([...PG_TABLE_ORDER]);
     for (const pair of TABLE_PAIRS) {
       expect(getTableName(pair.from)).toBe(pair.name);

@@ -32,8 +32,6 @@ import {
 
 // ── Vocabulario de la vista ─────────────────────────────────────────────────
 
-export type Vista = "tabla" | "tablero";
-
 export const AGRUPACIONES = [
   "ninguna",
   "cliente",
@@ -404,8 +402,9 @@ export function parseFiltros(params: URLSearchParams): Filtros {
   };
 }
 
+/** Por defecto se agrupa por cliente: es la base transversal de Sixteam. */
 export function parseAgrupacion(params: URLSearchParams): Agrupacion {
-  return pick(params.get("agrupar"), AGRUPACIONES) ?? "ninguna";
+  return pick(params.get("agrupar"), AGRUPACIONES) ?? "cliente";
 }
 
 export function parseOrden(params: URLSearchParams): { columna: Columna; direccion: Direccion } {
@@ -428,7 +427,9 @@ export function filtrosAParams(
   if (filtros.vencimiento) params.set("vencimiento", filtros.vencimiento);
   if (filtros.texto.trim()) params.set("q", filtros.texto.trim());
   if (filtros.cerradas) params.set("cerradas", "1");
-  if (extra.agrupacion && extra.agrupacion !== "ninguna") params.set("agrupar", extra.agrupacion);
+  // El default ya no es "ninguna" sino "cliente": sólo se omite de la URL
+  // cuando coincide con ese default; "ninguna" elegida a propósito sí viaja.
+  if (extra.agrupacion && extra.agrupacion !== "cliente") params.set("agrupar", extra.agrupacion);
   if (extra.orden && extra.orden.columna !== "vencimiento") params.set("orden", extra.orden.columna);
   if (extra.orden && extra.orden.direccion === "desc") params.set("dir", "desc");
   return params;
@@ -482,26 +483,6 @@ export function clientesDe(ctx: ClienteCtx): { id: string; label: string }[] {
   return ids
     .map((id) => ({ id, label: clienteLabel(id, ctx) }))
     .sort((a, b) => a.label.localeCompare(b.label, "es"));
-}
-
-// ── Persistencia del conmutador de vista ────────────────────────────────────
-
-export const VISTA_STORAGE_KEY = "agentos_tareas_vista";
-
-export function leerVista(): Vista {
-  try {
-    return localStorage.getItem(VISTA_STORAGE_KEY) === "tablero" ? "tablero" : "tabla";
-  } catch {
-    return "tabla";
-  }
-}
-
-export function guardarVista(vista: Vista): void {
-  try {
-    localStorage.setItem(VISTA_STORAGE_KEY, vista);
-  } catch {
-    // Sin almacenamiento la vista sigue funcionando: sólo no se recuerda.
-  }
 }
 
 export const PROYECTO_RECIENTE_KEY = "agentos_tareas_ultimo_proyecto";

@@ -1,31 +1,35 @@
 /**
  * Rutas de la aplicación en un solo sitio (PLAN-v1.5 §Navegación nueva).
  *
- * El proyecto es el objeto raíz: cuatro entradas globales y cinco pestañas
+ * El proyecto es el objeto raíz: cinco entradas globales y cinco pestañas
  * dentro del proyecto. Todo enlace se construye aquí para que los caminos de
  * vuelta (run → tarea → proyecto) no dependan de cadenas sueltas por la app.
  */
 
-export const PROJECT_TABS = ["ruta", "tablero", "contexto", "conversacion", "actividad"] as const;
+export const PROJECT_TABS = ["ruta", "tablero", "contexto", "organigrama", "conversacion", "actividad"] as const;
 export type ProjectTab = (typeof PROJECT_TABS)[number];
 
 export const PROJECT_TAB_LABELS: Record<ProjectTab, string> = {
   ruta: "Ruta",
   tablero: "Tablero",
   contexto: "Contexto",
+  organigrama: "Organigrama",
   conversacion: "Conversación",
   actividad: "Actividad",
 };
 
-export const SYSTEM_TABS = ["ahora", "actividad", "salud", "equipo", "ajustes"] as const;
+export const CONTEXT_SUBTABS = ["documentos", "procesos"] as const;
+export type ContextSubtab = (typeof CONTEXT_SUBTABS)[number];
+
+export const SYSTEM_TABS = ["ahora", "actividad", "fuentes", "equipo", "configuracion"] as const;
 export type SystemTab = (typeof SYSTEM_TABS)[number];
 
 export const SYSTEM_TAB_LABELS: Record<SystemTab, string> = {
   ahora: "Ahora mismo",
   actividad: "Actividad",
-  salud: "Salud",
+  fuentes: "Fuentes",
   equipo: "Equipo",
-  ajustes: "Ajustes",
+  configuracion: "Configuración",
 };
 
 /** Filtros que se pueden fijar desde un enlace a la vista Tareas. */
@@ -59,16 +63,21 @@ export const paths = {
   misTareas: () => "/tareas?responsable=yo",
   proyectos: () => "/proyectos",
   proyecto: (projectId: string, tab: ProjectTab = "ruta") => `/proyectos/${projectId}/${tab}`,
-  nuevoProyecto: (params?: { projectId?: string; phase?: string }) => {
+  contexto: (projectId: string, sub: ContextSubtab = "documentos") =>
+    `/proyectos/${projectId}/contexto/${sub}`,
+  nuevoProyecto: (params?: { projectId?: string; phase?: string; modulo?: string }) => {
     const search = new URLSearchParams();
     if (params?.projectId) search.set("proyecto", params.projectId);
     if (params?.phase) search.set("fase", params.phase);
+    if (params?.modulo) search.set("modulo", params.modulo);
     const qs = search.toString();
     return `/nuevo-proyecto${qs ? `?${qs}` : ""}`;
   },
   sistema: (tab: SystemTab = "ahora") => `/sistema/${tab}`,
   run: (runId: string) => `/sistema/actividad/${runId}`,
   activo: () => "/activo",
+  brain: () => "/2brain",
+  brainReuniones: () => "/2brain/reuniones",
   /**
    * Ficha de tarea como query global (`?tarea=<id>`): funciona desde cualquier
    * vista sin reescribir rutas. Recibe pathname+search y devuelve la misma

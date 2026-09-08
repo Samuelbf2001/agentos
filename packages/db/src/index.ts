@@ -46,6 +46,11 @@ export {
   seed,
   seedCatalog,
   seedDemo,
+  resolveAgentProvider,
+  FALLBACK_CLAUDE_MODEL,
+  isAnthropicModel,
   type SeedCounts,
   type CatalogSeedResult,
+  type ResolveAgentProviderWanted,
+  type ResolvedAgentProvider,
 } from "./seed.js";

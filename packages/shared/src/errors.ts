@@ -72,6 +72,9 @@ export function isAgentosError(err: unknown, code?: ErrorCode): err is AgentosEr
 export const errors = {
   notFound: (entity: string, id: string) =>
     new AgentosError(ErrorCodes.NOT_FOUND, `${entity} no encontrado: ${id}`, { entity, id }),
+  /** Conflicto de dominio genérico (409) que no es de versión ni de idempotencia. */
+  conflict: (message: string, details?: unknown) =>
+    new AgentosError(ErrorCodes.CONFLICT, message, details),
   versionConflict: (entity: string, id: string, expected: number) =>
     new AgentosError(
       ErrorCodes.VERSION_CONFLICT,

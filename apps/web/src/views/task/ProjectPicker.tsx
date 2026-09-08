@@ -66,7 +66,7 @@ export function ProjectPicker({ task, project, onNavigate }: { task: Task; proje
           <div className="max-h-72 overflow-y-auto" role="listbox" aria-label="Proyectos por cliente">
             {groups.map((client) => (
               <div key={client.id} role="group" aria-label={client.label}>
-                <p className="px-2 pb-0.5 pt-2 text-label font-bold uppercase text-faint">{client.label}</p>
+                <p className="px-2 pb-0.5 pt-2 text-label font-bold text-faint">{client.label}</p>
                 {client.projects.map((candidate) => (
                   <PopoverOption
                     key={candidate.id}

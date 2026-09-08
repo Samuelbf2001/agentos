@@ -57,6 +57,20 @@
       "when": 1788060000000,
       "tag": "0007_notion_linaje",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788120000000,
+      "tag": "0008_grafo_organizacional",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788180000000,
+      "tag": "0009_rol_agente",
+      "breakpoints": true
     }
   ]
 }

@@ -95,6 +95,49 @@ al equipo interno. No se tocó la regla sin visto bueno.
 | N-F | Piloto y conciliación | Piloto e importación completa ejecutados sobre COPIAS de la DB viva. La importación a producción está **pendiente de la aprobación de Ernesto** | ⏳ ver §11 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` |
 | N-G | Corte de escrituras de WhatsAppHub | Inventario verificado y documentado (§12 del mismo documento). **No implementado**: es la fase N5 | ⏳ pendiente |
 
+## Oleada "Amputación de estructura" — rama `feat/amputacion-ux` (2026-09-05)
+
+Revisión de estructura y UX de `apps/web` tras la sensación de desorden: las mismas cosas en varios
+sitios, jerarquía escondida en sub-pestañas sin URL, restos de la navegación anterior y un solo rol real.
+Mapa completo (módulos, pantallas, conexiones, duplicaciones, matriz de roles) en el artifact
+"AgentOS, mapa y amputación". Solo cliente: ninguna ruta de la API ni invariante del tablero cambió.
+
+| # | Corte | Piezas clave |
+|---|-------|--------------|
+| C1 | Hoy sin la tabla de proyectos | `HoyView` queda en decisiones + pulso; la tabla vive solo en `/proyectos` |
+| C2 | Tareas solo en modo tabla | Fuera el kanban por estado de `TareasView` y `leerVista/guardarVista`; el único tablero es el del proyecto |
+| C3 | Una sola búsqueda | Fuera el `TaskSearchBox` embebido del Tablero; queda la global (`/` y botón de cabecera) |
+| C4 | Kill switch en un solo control | Banner solo informativo; el botón de cabecera pausa y reanuda; Configuración muestra el estado |
+| C5 | Equipo absorbe Agentes | `AgentsSection.tsx` (tabla editable, columna "Reporta a") dentro de `SystemTeamView`; `ajustes` → `configuracion` con redirección |
+| C6 | Reuniones sale del proyecto | `MeetingProcessingView` se monta en Sistema › Fuentes; Contexto conserva las fuentes asociadas |
+| C7 | Salud pasa a Fuentes | Sin los seis contadores; `salud` → `fuentes` con redirección |
+| C8 | Activo sin Capacidades | "Lanzar este módulo" pasa `?modulo=<slug>` y el wizard arranca en el paso 2 |
+| C9 | Sub-pestañas de Contexto en la URL | `/proyectos/:id/contexto/documentos\|procesos`, `paths.contexto()`, `CONTEXT_SUBTABS` |
+| C10 | Proyecto solo desde la URL | Sin `agentos_project` en localStorage; los enlaces de la ficha usan `task.projectId`; `/board`, `/chat`, `/context` → `/proyectos` |
+| C11 | El wizard aterriza en Ruta | Única entrada al proyecto que caía en otra pestaña |
+| C14 | Estados vacíos obsoletos fuera | "Entra por un proyecto" y "Elige un proyecto (en el tablero)" |
+| C15 | Código huérfano fuera | `store.myTasks`, `GateMissing.to`, wrappers de `api.ts` sin uso, `patchTask` duplicado |
+| C16 | Shell por capacidades | `lib/capabilities.ts`: nav, pestañas de proyecto y sistema, buscar y pausar se filtran por un conjunto de capacidades; hoy todo el mundo las tiene todas |
+
+Descartados por ahora: C12 (filtros del Tablero en la URL) y C13 (pulso sin el contador de decisiones).
+La suite web queda en 24 archivos / 201 tests tras integrar la ficha estilo Notion de master.
+
+## Oleada Rediseño UI (rama `feat/amputacion-ux`, 2026-09-05)
+
+Segunda pasada sobre la misma rama, ya con la estructura amputada: lenguaje visual propio, el shell lateral
+con cambio de perspectiva Sixteam/cliente, Hoy y Clientes como tableros, 2brain integrado como módulo y
+Tareas/Tablero/Ruta con lo secundario plegado por defecto.
+
+| # | Área | Piezas clave |
+|---|------|--------------|
+| 1 | Lenguaje visual | Tokens propios, primitivas de `components/system.tsx`/`ui.tsx` sin borde, pastillas de estado en vez de texto plano |
+| 2 | Shell lateral con perspectiva | `Sidebar`/`Topbar`/`PerspectiveSwitch`: cambio Sixteam ↔ cliente por URL, selector de cliente con buscador |
+| 3 | Hoy y Clientes como tableros | `HoyView` y `ProjectsView` pintan tarjetas, no listas planas |
+| 4 | 2brain como módulo | Panorama y reuniones (`BrainView`/`BrainMeetingsView`) viven dentro de AgentOS; lo que no migró queda como enlace externo a WhatsAppHub |
+| 5 | Tareas/Tablero/Ruta más limpios y previsualización de cliente | Filtros plegados en Tareas, carriles fuera de la fase activa plegados en el Tablero, recibo de lanzamiento plegado en Ruta; botón "Ver como cliente" (`PreviewRole`, previsualización local, no un permiso real) que reduce el shell a Resumen/Contexto/Decisiones |
+
+Estado de la suite tras esta oleada: 29 archivos / 229 tests verdes, typecheck limpio.
+
 ## Pendientes
 
 - **Decisiones de la migración de Notion que Ernesto debe confirmar**: §13 de `docs/MIGRACION-NOTION-TASKS-PROJECTS.md` (stage/type uniformes, organización destino, `description` vacía, tabla de prioridad, correos de `people`).
@@ -104,3 +147,125 @@ al equipo interno. No se tocó la regla sin visto bueno.
 - H12 / `projects.create` con approval — diferido.
 - Fase 2 sin construir: WhatsApp (adaptador, el contrato de gateway ya existe), entrevistas IA masivas, auto-mejora de prompts, portal del cliente, MCPs externos reales, catálogo completo de ~50 actividades.
 - Postgres: ~~portar la app (repos async, motor de launch)~~ ✅ hecho en `feat/postgres-async`. Queda: RLS por cliente (disparador 4 de `POSTGRES.md` §1) y `FOR UPDATE SKIP LOCKED` como mejora opcional de rendimiento del claim en lote.
+
+## Entorno de pruebas (rama `feat/sandbox`, 2026-09-05)
+
+Modo pruebas reutilizable ✅ hecho: `AGENTOS_SANDBOX=1` habilita `POST
+/api/auth/sandbox-login` (fail-closed en producción, `resolveSandbox` en
+`apps/api/src/context.ts`); LoginView y el chip "Pruebas" del shell reaccionan
+a `sandbox` en `GET /api/health`; `scripts/sandbox.mjs` (+ `pnpm sandbox:*` y
+`.claude/launch.json`) copia `data/agentos.db` a `data/sandbox.db` y arranca
+api/web en `:4310`/`:4311`. Detalle de uso en `docs/SANDBOX.md`.
+
+## Grafo organizacional (rama `feat/organigrama`, 2026-09-07)
+
+Modelo (PRD v1.1 §3.1 y Parte II §5.3): **el rol es el centro**. Cuelga de un área, reporta a otro rol, lo
+ocupan personas, tiene funciones y participa en procesos (dueño único o participante). `apps/web` NO se
+tocó en esta rama: la construye en paralelo otro worktree contra este mismo contrato de API.
+
+**Índices de migración reservados**: SQLite `0008_grafo_organizacional` (idx 8) y Postgres
+`0004_grafo_organizacional` (idx 4), ambos con `when: 1788120000000` — ver
+`packages/db/drizzle/meta/_journal.json` y `packages/db/drizzle-pg/meta/_journal.json`.
+
+| Tabla | Contenido |
+|---|---|
+| `org_units` | Áreas del organigrama; `parent_unit_id` auto-FK para sub-áreas |
+| `org_roles` | El centro del grafo: `unit_id`, `reports_to_role_id` (auto-FK, ciclo rechazado), `canvas_x`/`canvas_y` (posición en el lienzo), `status` (`draft`/`validated`), `version` (optimistic locking, salvo el arrastre de canvas) |
+| `role_functions` | Funciones del rol, `position` ordena la lista |
+| `role_people` | Personas que ocupan el rol (unión, PK compuesta), `dedication_pct` opcional |
+| `role_processes` | Procesos en los que participa el rol (unión, PK compuesta), `relation` `owner`/`participant` |
+
+`packages/shared/src/schemas.ts`: `OrgRoleStatus` y `RoleProcessRelation`. Repos duales
+`packages/db/src/repositories/org-graph.ts` + `pg/repositories/org-graph.ts`, compuestos en `repos.ts`.
+Total de tablas de dominio: 31 → **36**.
+
+Rutas (`apps/api/src/routes/org-graph.ts`, `registerOrgGraphRoutes`), todas con sesión y `appendAudit`
+(`source: "ui"`, acciones `org_unit.*` / `org_role.*`):
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/orgs/:orgId/graph` | `{ units, roles, processes, people }` — 404 si la org no existe |
+| `POST /api/orgs/:orgId/units` · `PATCH /api/units/:id` · `DELETE /api/units/:id` | `{unit}` / `{unit}` / `{ok:true}` |
+| `POST /api/orgs/:orgId/roles` | `{role}` con `functions:[]`, `people:[]`, `processes:[]` |
+| `PATCH /api/roles/:id` | `{role}`; ciclo de reporte → 400 `validation_error`; `expected_version` desalineada → 409 `version_conflict`; solo `canvas_x`/`canvas_y` no sube `version` ni la exige |
+| `DELETE /api/roles/:id` | `{ok:true}`; subordinados quedan sin manager, se borran sus uniones |
+| `PUT /api/roles/:id/functions` | `{functions}` — conserva ids dados |
+| `PUT /api/roles/:id/people` | `{people}` — 400 si la persona no es de la organización del rol |
+| `PUT /api/roles/:id/processes` | `{processes}` — 400 si el proceso no es de la organización del rol |
+
+Seed (`packages/db/src/seed.ts`, `seedOrgGraphAcme`, SOLO org "ACME S.A.", idempotente): 4 áreas
+(Dirección, Producción, Comercial, Administración), 4 personas de ACME (María Restrepo, Carlos Pérez,
+Laura Gómez, Andrés Mora), 6 roles con posición en canvas y reporta-a (Gerente General en la raíz;
+Supervisor de Planta y Vendedor quedan vacantes a propósito), 2 procesos (`createProcess` idempotente por
+nombre) con sus uniones owner/participante.
+
+**Tests**: `packages/db/test/org-graph.test.ts` (6, repositorio: CRUD de áreas/roles, `getOrgGraph`, ciclo
+rechazado, conflicto de versión, borrado limpia uniones, `replaceRoleFunctions` conserva ids) +
+`apps/api/test/org-graph.test.ts` (5, REST: flujo completo, ciclo 400, versión 409, persona/proceso de otra
+org 400, auditoría) + caso nuevo en `migration-seed.test.ts` (ACME con 6 roles/4 áreas/2 procesos sin
+duplicar tras re-seed) + conteos de tabla (31→36) actualizados en `pg-portability.test.ts`,
+`pg-backend.test.ts`, `dual-facade.test.ts`, `apps/api/test/rest.test.ts` y `pg-end-to-end.test.ts`.
+## Procesos del cliente, tools del grafo y "convertir en agente" (rama `feat/organigrama`, 2026-09-07)
+
+Continuación del grafo organizacional: procesos como CRUD completo, el mismo grafo abierto a los agentes
+(tool de dominio + MCP admin) y el cierre del ciclo — un rol del organigrama nace agente. `apps/web` sigue
+SIN tocarse en esta rama; el frontend codifica contra este contrato.
+
+**Migración reservada**: SQLite `0009_rol_agente` (idx 9) y Postgres `0005_rol_agente` (idx 5), ambas con
+`when: 1788180000000`. Añaden `org_roles.agent_id` (FK `agents.id`, nullable) en los dos esquemas.
+`updateOrgRole` trata `agentId` igual que `canvasX`/`canvasY`: no sube `version` ni exige
+`expectedVersion` porque enlazar el agente no es una transición de dominio del rol.
+
+**Procesos** (`packages/db/src/{repositories,pg/repositories}/processes.ts`): nueva `deleteProcess`
+(borra primero sus `role_processes`, luego el proceso). Rutas (`apps/api/src/routes/processes.ts`,
+`registerProcessRoutes`), con sesión y `appendAudit` (acciones `process.create|update|delete`):
+
+| Ruta | Contrato |
+|---|---|
+| `POST /api/orgs/:orgId/processes` | `{process}` — 404 si la org no existe |
+| `PATCH /api/processes/:id` | `{process}` — 404 si no existe |
+| `DELETE /api/processes/:id` | `{ok:true}` — desvincula el proceso de cualquier rol antes de borrarlo |
+
+**Tools del grafo para agentes** (`packages/tools/src/tools/org-graph.ts`, catálogo `org_graph.*`):
+`org_graph.get` (lectura, nombres ya resueltos: área, jefe, funciones, personas, procesos) y
+`org_graph.upsert_unit` / `org_graph.upsert_role` (escritura POR NOMBRE — sin ids, como en una
+entrevista de consultoría; crean lo que falta —área padre, rol jefe—, y lo que no encuentran —persona o
+proceso— va en `warnings` sin romper la llamada). Ambas de escritura: `read_only:false`,
+`external_effect:false`, `requires_approval:false`, `projectScope:"none"` (entidades de organización, no
+de proyecto). Todo rol creado/actualizado por esta vía queda `status:"draft"`: un humano lo valida después
+en el Organigrama. `agents/sam.md` gana las tres tools; `agents/alex.md` gana solo `org_graph.get`.
+
+**MCP admin** (`apps/mcp-admin/src/tools/org-graph.ts`, `agentos.org_graph.get/upsert_unit/upsert_role`):
+reutiliza `buildOrgGraphView`/`upsertOrgUnitByName`/`upsertOrgRoleByName` exportadas desde
+`@agentos/tools` (la regla de resolución por nombre no vive en dos sitios). Las mutaciones exigen perfil
+`rw`, aceptan `reason` e `idempotency_key` (`findIdempotentMutation`), y auditan con `auditMutation`.
+`apps/mcp-admin/package.json` ganó `@agentos/tools` como dependencia (`pnpm-lock.yaml` actualizado).
+
+**Convertir un rol en agente** (`apps/api/src/routes/role-agent.ts`, `apps/api/src/routes/tool-catalog.ts`):
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/tools/catalog` | `{tools:[{name, description, read_only, external_effect, requires_approval}]}` — alimenta el picker de allowlist |
+| `POST /api/roles/:id/agent` | body `{function_ids, autonomy, activate, tools_allowlist, name?}` → `{agent, role, prompt_version}`; 404 si el rol no existe; 409 (`errors.conflict`, nuevo en `packages/shared/src/errors.ts`) si el rol ya tiene agente |
+
+El agente nace con `layer:"operacion"`, slug único (nombre pedido o el del rol; `-2`, `-3`... si colisiona),
+proveedor/runtime/modelo resueltos por `resolveAgentProvider` (extraído de `seedCatalog` a
+`packages/db/src/seed.ts` para no duplicar la regla del fallback a `claude_subscription`), `status`
+`active`/`paused` según `activate`, allowlist filtrada contra el catálogo real, y `reportsTo` apuntando al
+agente del rol jefe si ya existe. El prompt v1 (español) hereda propósito, funciones elegidas, procesos
+(dueño/participante) y personas del rol — deja claro que el agente asiste a quien ocupa el rol, nunca lo
+reemplaza. Cierra con `updateOrgRole(id, {agentId})` y dos entradas de auditoría
+(`agent.create_from_role`, `org_role.update`).
+
+**Tests**: `apps/api/test/processes.test.ts` (2), `packages/tools/test/org-graph.test.ts` (5, más
+`scope.test.ts` sigue verde con las tools de escritura sin aprobación), `apps/mcp-admin/test/org-graph.test.ts`
+(3), `apps/api/test/role-agent.test.ts` (7: creación con allowlist filtrada y prompt, `activate`, 409 por
+segunda conversión, 404 rol inexistente, slug único con colisión, `reports_to` heredado, catálogo expone
+`org_graph.get` como read-only), más el caso de enlace rol↔agente en `packages/db/test/org-graph.test.ts`
+y el ajuste de `pg-portability.test.ts` (`org_roles` ahora depende también de `agents`).
+
+`pnpm -r typecheck` limpio. `@agentos/db` 141 passed + 41 skipped (182), `@agentos/tools` 57 passed (8
+archivos), `@agentos/mcp-admin` 70 passed (7 archivos), `@agentos/api` 161 passed + 2 skipped (163).
+
+`pnpm -r typecheck` limpio; `@agentos/shared` (62), `@agentos/db` (140 + 41 PG auto-omitidos) y
+`@agentos/api` (152 + 2 PG auto-omitidos) verdes.

@@ -1,7 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type ProcessVariant } from "@agentos/shared";
 import type { AgentosSqliteDb } from "../client.js";
-import { processes } from "../schema.js";
+import { processes, roleProcesses } from "../schema.js";
 import type { NewProcess, Process } from "../types.js";
 
 /**
@@ -34,6 +34,12 @@ export function upsertProcess(
 
 export function getProcess(db: AgentosSqliteDb, id: string): Process | undefined {
   return db.select().from(processes).where(eq(processes.id, id)).get();
+}
+
+/** Borra el proceso; primero desvincula sus roles (`role_processes`). */
+export function deleteProcess(db: AgentosSqliteDb, id: string): void {
+  db.delete(roleProcesses).where(eq(roleProcesses.processId, id)).run();
+  db.delete(processes).where(eq(processes.id, id)).run();
 }
 
 export function listProcesses(db: AgentosSqliteDb, orgId?: string): Process[] {

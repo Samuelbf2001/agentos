@@ -47,7 +47,7 @@ export function InlinePopover({
             event.preventDefault();
             onOpenChange(false);
           }}
-          className={`z-[70] w-[min(92vw,20rem)] rounded-panel border border-line bg-surface p-2 text-body shadow-float focus:outline-none ${className}`}
+          className={`z-[70] w-[min(92vw,20rem)] rounded-panel bg-surface p-2 text-body shadow-float focus:outline-none ${className}`}
         >
           {children}
         </Popover.Content>

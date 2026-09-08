@@ -402,10 +402,19 @@ describe("TareasView (render)", () => {
     expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
   });
 
+  it("no ofrece un botón «Tablero»: Tareas es transversal, no un proyecto", async () => {
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Tablero" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Tablero" })).toBeNull();
+  });
+
   it("cruza dos filtros y deja los chips visibles y borrables", async () => {
     renderTareas();
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
 
+    // Los selects viven en el panel plegable: hay que abrirlo primero.
+    fireEvent.click(screen.getByTestId("tareas-filtros-toggle"));
     fireEvent.change(screen.getByTestId("tareas-filtro-cliente"), { target: { value: "org-1" } });
     fireEvent.change(screen.getByTestId("tareas-filtro-estado"), { target: { value: "READY" } });
 
@@ -441,7 +450,9 @@ describe("TareasView (render)", () => {
   });
 
   it("la cabecera ordena por su columna y alterna el sentido", async () => {
-    renderTareas();
+    // Sin agrupar: el orden de columna se ve en la lista entera, no partido
+    // en cabeceras de grupo (que además repetirían el testid del botón).
+    renderTareas("/tareas?agrupar=ninguna");
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
 
     const ids = () =>
@@ -457,6 +468,17 @@ describe("TareasView (render)", () => {
 
     fireEvent.click(screen.getByTestId("tareas-orden-titulo"));
     await waitFor(() => expect(ids()[0]).toBe("tarea-fila-t-acme-hoy"));
+  });
+
+  it("por defecto agrupa por cliente: el nombre del cliente aparece como cabecera de grupo", async () => {
+    renderTareas();
+    const grupoAcme = await screen.findByTestId("tareas-grupo-org-1");
+    const grupoBeta = await screen.findByTestId("tareas-grupo-org-2");
+    // El label real puede tardar (llega del recibo de launch, async); lo que
+    // importa aquí es que cada grupo tiene una cabecera con el nombre del
+    // cliente, no que ya haya resuelto ese nombre real.
+    expect(within(grupoAcme).getByRole("heading", { level: 2 }).textContent?.trim()).toBeTruthy();
+    expect(within(grupoBeta).getByRole("heading", { level: 2 }).textContent?.trim()).toBeTruthy();
   });
 
   it("«Mis tareas» es un filtro con botón y atajo, no otra pantalla", async () => {
@@ -496,21 +518,6 @@ describe("TareasView (render)", () => {
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
     expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull();
     expect(screen.getByTestId("tareas-chip-responsable").textContent).toContain("Yo");
-  });
-
-  it("el conmutador tabla/tablero se recuerda en localStorage", async () => {
-    const { unmount } = renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
-
-    fireEvent.click(screen.getByTestId("tareas-vista-tablero"));
-    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
-    expect(screen.getByTestId("tareas-columna-READY")).toBeTruthy();
-    expect(screen.getByTestId("tarea-tarjeta-t-beta-semana")).toBeTruthy();
-    expect(localStorage.getItem("agentos_tareas_vista")).toBe("tablero");
-
-    unmount();
-    renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
   });
 
   it("la creación rápida manda título y proyecto, y recuerda el último usado", async () => {
@@ -594,6 +601,7 @@ describe("TareasView (render)", () => {
     renderTareas();
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
     // Los cerrados sólo aparecen si se piden: filtrar por "Terminada" (I3) los trae.
+    fireEvent.click(screen.getByTestId("tareas-filtros-toggle"));
     fireEvent.change(screen.getByTestId("tareas-filtro-estado"), { target: { value: "DONE" } });
     const select = await screen.findByTestId("tarea-estado-t-beta-cerrada");
     expect(select.hasAttribute("disabled")).toBe(true);

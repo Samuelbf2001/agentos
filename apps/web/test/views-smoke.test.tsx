@@ -16,6 +16,7 @@ import SystemTeamView from "../src/views/SystemTeamView";
 import AssetView from "../src/views/AssetView";
 import ContextView from "../src/views/ContextView";
 import AdminView from "../src/views/AdminView";
+import { AgentsSection } from "../src/views/AgentsSection";
 import LoginView from "../src/views/LoginView";
 import {
   agents,
@@ -177,7 +178,7 @@ describe("smoke de vistas", () => {
   });
 
   it("BoardView pinta carriles, columnas y la tarjeta", () => {
-    ui(<BoardView />);
+    ui(<BoardView projectId={project.id} />);
     expect(screen.getByText("Entender")).toBeTruthy();
     expect(screen.getAllByText("Backlog").length).toBeGreaterThan(0);
     expect(screen.getByText("Mapear proceso de ventas")).toBeTruthy();
@@ -230,16 +231,20 @@ describe("smoke de vistas", () => {
     expect(screen.getByTestId("tareas-resumen").textContent).toContain("2 clientes");
   });
 
-  it("ProjectsView lista los proyectos con su posición en el ciclo", async () => {
+  it("ProjectsView lista los clientes con su posición en el ciclo", async () => {
     ui(<ProjectsView />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Proyectos" })).toBeTruthy();
-    expect(screen.getByText(project.name)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Clientes" })).toBeTruthy();
+    expect(screen.getAllByText(project.name).length).toBeGreaterThan(0);
   });
 
-  it("Sistema › Salud pinta contadores y fuentes (lo que era el Cerebro)", async () => {
+  it("Sistema › Fuentes pinta las fuentes (lo que era el Cerebro) y enlaza a la cola de 2brain", async () => {
     ui(<SystemHealthView />);
-    expect(await screen.findByText("Proyectos")).toBeTruthy();
-    expect(screen.getByText("AgentOS")).toBeTruthy();
+    expect(await screen.findByText("AgentOS")).toBeTruthy();
+    expect(screen.getByText("Núcleo de trabajo operativo.")).toBeTruthy();
+    expect(screen.queryByText("Cola de reuniones")).toBeNull();
+    expect(screen.getByRole("link", { name: "Ver la cola de reuniones en 2brain" }).getAttribute("href")).toBe(
+      "/2brain/reuniones",
+    );
   });
 
   it("Sistema › Equipo pinta personas y agentes", async () => {
@@ -248,21 +253,32 @@ describe("smoke de vistas", () => {
     expect(screen.getByText("Sixteam")).toBeTruthy();
   });
 
-  it("Activo Sixteam pinta módulos de fase y metodologías", async () => {
+  it("Sistema › Equipo pinta la tabla de agentes aunque /api/brain/overview falle", async () => {
+    mockFetch(baseRoutes.map((route) => (route.path === "/api/brain/overview" ? { ...route, status: 500 } : route)));
+    ui(<SystemTeamView />);
+    expect(await screen.findByText("Alex")).toBeTruthy();
+  });
+
+  it("Método pinta módulos de fase y metodologías", async () => {
     ui(<AssetView />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Activo Sixteam" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Método" })).toBeTruthy();
     expect(await screen.findByTestId("asset-module-consultoria")).toBeTruthy();
   });
 
   it("ContextView pinta pestañas y estado vacío", async () => {
-    ui(<ContextView />);
+    ui(<ContextView projectId={project.id} sub="documentos" />);
     expect(screen.getByText("Documentos")).toBeTruthy();
     expect(await screen.findByText("Sin documentos")).toBeTruthy();
   });
 
-  it("AdminView pinta la tabla de agentes con pausa", async () => {
-    ui(<AdminView />);
+  it("AgentsSection pinta la tabla de agentes con pausa", async () => {
+    ui(<AgentsSection />);
     expect(await screen.findByText("Alex")).toBeTruthy();
     expect(screen.getAllByText("⏸ Pausar").length).toBeGreaterThan(0);
+  });
+
+  it("AdminView pinta la configuración", async () => {
+    ui(<AdminView />);
+    expect(await screen.findByText("app_config (semáforos y presupuestos)")).toBeTruthy();
   });
 });

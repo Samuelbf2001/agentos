@@ -39,42 +39,57 @@ function fmtInputValue(v: unknown): string {
   return String(v);
 }
 
-/** Recibo del lanzamiento, expandido: qué módulo creó este proyecto y con qué. */
+/** Fecha corta ("28/8") para el resumen plegado del recibo: sin hora, sin año. */
+function fmtDateShort(ts: number): string {
+  return new Date(ts).toLocaleDateString("es", { day: "numeric", month: "numeric" });
+}
+
+/**
+ * Recibo del lanzamiento: qué módulo creó este proyecto y con qué. Plegado
+ * por defecto, un `<summary>` de una línea basta para el 99% de las visitas;
+ * el detalle completo (entradas, opciones, presupuesto) se abre a un clic.
+ */
 function LaunchReceiptPanel({ launch }: { launch: LaunchReceipt }) {
   const toggles = Object.entries(launch.toggles ?? {});
   return (
     <Card className="mt-4 p-4" data-testid="launch-receipt">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-small text-muted">
-        <span className="text-body font-semibold text-ink">
-          {launch.module_name} v{launch.module_version}
-        </span>
-        <span>
-          Lanzado por <span className="font-semibold text-ink-2">{launch.actor_name ?? launch.actor}</span>
-        </span>
-        <span>{fmtDate(launch.created_at)}</span>
-        <span>
-          <span className="font-semibold text-ink-2">{launch.task_count}</span> tareas creadas
-        </span>
-        <span>
-          Presupuesto ${launch.budget_phase_usd} por fase · ${launch.budget_per_run_usd} por ejecución
-        </span>
-      </div>
-      <div className="mt-3 border-t border-line-soft pt-3">
-        <p className="mb-1.5 text-label uppercase text-muted">Con qué se disparó</p>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-small">
-          {Object.entries(launch.inputs).map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt className="text-muted">{humanizeKind(k)}</dt>
-              <dd className="min-w-0 break-words text-ink-2">{fmtInputValue(v)}</dd>
-            </div>
-          ))}
-        </dl>
-        {toggles.length > 0 ? (
-          <p className="mt-2 text-small text-muted">
-            Opciones: {toggles.map(([k, v]) => `${humanizeKind(k)}: ${v ? "sí" : "no"}`).join(" · ")}
-          </p>
-        ) : null}
-      </div>
+      <details>
+        <summary className="cursor-pointer text-small text-muted">
+          Con qué se disparó: {launch.module_name} v{launch.module_version} · lanzado por{" "}
+          {launch.actor_name ?? launch.actor} el {fmtDateShort(launch.created_at)}
+        </summary>
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-small text-muted">
+          <span className="text-body font-semibold text-ink">
+            {launch.module_name} v{launch.module_version}
+          </span>
+          <span>
+            Lanzado por <span className="font-semibold text-ink-2">{launch.actor_name ?? launch.actor}</span>
+          </span>
+          <span>{fmtDate(launch.created_at)}</span>
+          <span>
+            <span className="font-semibold text-ink-2">{launch.task_count}</span> tareas creadas
+          </span>
+          <span>
+            Presupuesto ${launch.budget_phase_usd} por fase · ${launch.budget_per_run_usd} por ejecución
+          </span>
+        </div>
+        <div className="mt-3 border-t border-line-soft pt-3">
+          <p className="mb-1.5 text-label text-muted">Con qué se disparó</p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-small">
+            {Object.entries(launch.inputs).map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted">{humanizeKind(k)}</dt>
+                <dd className="min-w-0 break-words text-ink-2">{fmtInputValue(v)}</dd>
+              </div>
+            ))}
+          </dl>
+          {toggles.length > 0 ? (
+            <p className="mt-2 text-small text-muted">
+              Opciones: {toggles.map(([k, v]) => `${humanizeKind(k)}: ${v ? "sí" : "no"}`).join(" · ")}
+            </p>
+          ) : null}
+        </div>
+      </details>
     </Card>
   );
 }
@@ -128,6 +143,7 @@ export default function RutaView({ project }: { project: Project }) {
   const loadProjects = useStore((s) => s.loadProjects);
   const pushToast = useStore((s) => s.pushToast);
   const person = useStore((s) => s.person);
+  const previewing = useStore((s) => s.previewRole === "sponsor");
   const navigate = useNavigate();
 
   const [launch, setLaunch] = useState<LaunchReceipt | null>(null);
@@ -235,7 +251,7 @@ export default function RutaView({ project }: { project: Project }) {
         </div>
       ) : null}
 
-      {launch ? <LaunchReceiptPanel launch={launch} /> : null}
+      {launch && !previewing ? <LaunchReceiptPanel launch={launch} /> : null}
 
       <SectionHead label="Mapa del ciclo" hint="Los candados abren la fase siguiente" />
       <div className="grid gap-3 lg:grid-cols-3" data-testid="cycle-map">
@@ -246,18 +262,18 @@ export default function RutaView({ project }: { project: Project }) {
           return (
             <div key={column.stage} className="flex flex-col gap-3">
               <Card
-                className={`p-3.5 ${isCurrent ? "border-work-line bg-work-bg" : column.status === "closed" ? "opacity-80" : ""}`}
+                className={`p-4 ${isCurrent ? "ring-2 ring-link/30" : column.status === "blocked" ? "opacity-70" : ""}`}
                 data-testid={`cycle-column-${column.stage}`}
               >
                 <div className="flex items-center gap-2">
-                  <h3 className={`text-label uppercase ${isCurrent ? "text-work" : "text-muted"}`}>
+                  <h3 className={`text-label ${isCurrent ? "text-link" : "text-muted"}`}>
                     {STAGE_LABELS[column.stage]}
                   </h3>
                   <span className="ml-auto">
                     {column.status === "closed" ? (
                       <Chip tone="done">Cerrada</Chip>
                     ) : isCurrent ? (
-                      <Chip tone="work">Aquí</Chip>
+                      <Chip tone="link">Aquí</Chip>
                     ) : (
                       <Chip tone="quiet">Sin abrir</Chip>
                     )}
@@ -273,7 +289,7 @@ export default function RutaView({ project }: { project: Project }) {
                   <>
                     {/* Esto sale de tareas por activityType; el cierre oficial (documentos,
                         procesos, artefactos) es el panel de abajo, no esta columna. */}
-                    <p className="mt-3 text-label uppercase text-faint">Trabajo de la fase</p>
+                    <p className="mt-3 text-label text-faint">Trabajo de la fase</p>
                     <ul className="mt-1.5 grid gap-1.5">
                       {column.milestones.map((m) => (
                         <MilestoneRow
@@ -328,7 +344,7 @@ export default function RutaView({ project }: { project: Project }) {
       ) : null}
 
       <SectionHead label="Hito activo" />
-      <div className="grid gap-3 lg:grid-cols-[1.35fr_0.95fr]">
+      <div className={`grid gap-3 ${previewing ? "" : "lg:grid-cols-[1.35fr_0.95fr]"}`}>
         <Card className="p-4" data-testid="phase-closure">
           <div className="flex flex-wrap items-center gap-2">
             {/* "Entregables (Context Hub)": viene de phase-status (documentos, procesos,
@@ -379,7 +395,7 @@ export default function RutaView({ project }: { project: Project }) {
                       ) : (
                         <div
                           data-testid={`missing-${item.kind}`}
-                          className="flex items-center gap-2.5 rounded-tight border border-line-soft bg-surface px-3 py-2 text-small"
+                          className="flex items-center gap-2.5 rounded-tight bg-surface shadow-rest px-3 py-2 text-small"
                         >
                           <span
                             aria-hidden="true"
@@ -402,39 +418,41 @@ export default function RutaView({ project }: { project: Project }) {
           )}
         </Card>
 
-        <Card className="overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
-            <h3 className="text-label uppercase text-muted">Trabajando ahora</h3>
-          </div>
-          {workers.length === 0 ? (
-            <p className="px-4 py-4 text-small text-muted">
-              Ningún agente tiene una ejecución viva en este proyecto ahora mismo.
-            </p>
-          ) : (
-            workers.map(({ run, agent, task }) => (
-              <div key={run.id} className="flex items-center gap-2.5 border-b border-line-soft px-4 py-3 last:border-b-0">
-                <AgentAvatar name={agent!.name} slug={agent!.slug} size={6} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-small font-semibold text-ink-2">{agent!.name}</p>
-                  <p className="truncate text-small text-muted">
-                    {task ? task.title : `ejecución ${run.id.slice(0, 8)}`}
-                  </p>
+        {!previewing ? (
+          <Card className="overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
+              <h3 className="text-label text-muted">Trabajando ahora</h3>
+            </div>
+            {workers.length === 0 ? (
+              <p className="px-4 py-4 text-small text-muted">
+                Ningún agente tiene una ejecución viva en este proyecto ahora mismo.
+              </p>
+            ) : (
+              workers.map(({ run, agent, task }) => (
+                <div key={run.id} className="flex items-center gap-2.5 border-b border-line-soft px-4 py-3 last:border-b-0">
+                  <AgentAvatar name={agent!.name} slug={agent!.slug} size={6} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-small font-semibold text-ink-2">{agent!.name}</p>
+                    <p className="truncate text-small text-muted">
+                      {task ? task.title : `ejecución ${run.id.slice(0, 8)}`}
+                    </p>
+                  </div>
+                  <Link to={paths.run(run.id)} className="press shrink-0" aria-label={`Ver la ejecución de ${agent!.name}`}>
+                    <WorkingDot />
+                  </Link>
                 </div>
-                <Link to={paths.run(run.id)} className="press shrink-0" aria-label={`Ver la ejecución de ${agent!.name}`}>
-                  <WorkingDot />
-                </Link>
-              </div>
-            ))
-          )}
-          <div className="p-3">
-            <ActionButton
-              className="w-full"
-              onClick={() => navigate(paths.proyecto(project.id, "actividad"))}
-            >
-              Ver toda la actividad
-            </ActionButton>
-          </div>
-        </Card>
+              ))
+            )}
+            <div className="p-3">
+              <ActionButton
+                className="w-full"
+                onClick={() => navigate(paths.proyecto(project.id, "actividad"))}
+              >
+                Ver toda la actividad
+              </ActionButton>
+            </div>
+          </Card>
+        ) : null}
       </div>
     </div>
   );

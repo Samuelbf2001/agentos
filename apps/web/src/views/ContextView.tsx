@@ -6,20 +6,15 @@
  * Fase 2 — Fuentes del proyecto: sección para asociar reuniones y conversaciones
  * de WhatsApp de 2brain (WhatsAppHub) e ingerirlas como docs tipados del Hub.
  */
-import MeetingProcessingView from "./MeetingProcessingView";
 import { useEffect, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
-import type {
-  KnowledgeDoc,
-  Methodology,
-  ProcessEntity,
-  ProjectSource,
-  ProjectSourceKind,
-  SourceBrowseItem,
-} from "../lib/types";
-import { useStore } from "../state/store";
+import type { KnowledgeDoc, ProjectSource, ProjectSourceKind, SourceBrowseItem } from "../lib/types";
 import { Markdown } from "../components/Markdown";
 import { EmptyState, ErrorBox, fmtDate, Spinner } from "../components/ui";
+import { paths, type ContextSubtab } from "../lib/paths";
+import { useStore } from "../state/store";
+import ProcessesView from "./processes/ProcessesView";
 
 const KIND_LABELS: Record<string, string> = {
   org_profile: "Perfil de organización",
@@ -117,7 +112,7 @@ function SourcePickerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-soft border border-line bg-surface p-4 shadow-float">
+      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-soft bg-surface p-4 shadow-float">
         <div className="flex items-center justify-between">
           <h3 className="text-body font-bold">Asociar fuente de 2brain</h3>
           <button onClick={onClose} className="rounded px-2 py-1 text-small text-muted hover:bg-line-soft">
@@ -186,18 +181,16 @@ function SourcePickerModal({
 }
 
 /** Sección "Fuentes del proyecto": lista con estado + Re-ingerir + Asociar fuente. */
-function SourcesSection({ onIngested }: { onIngested: () => void }) {
-  const activeProjectId = useStore((s) => s.activeProjectId);
+function SourcesSection({ projectId, onIngested }: { projectId: string; onIngested: () => void }) {
   const [sources, setSources] = useState<ProjectSource[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   async function load() {
-    if (!activeProjectId) return;
     setError(null);
     try {
-      const res = await api.projectSources(activeProjectId);
+      const res = await api.projectSources(projectId);
       setSources(res.sources);
     } catch (err) {
       setError(errMessage(err, "Error cargando fuentes del proyecto"));
@@ -208,7 +201,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
     setSources(null);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjectId]);
+  }, [projectId]);
 
   async function reingest(source: ProjectSource) {
     setBusyId(source.id);
@@ -225,18 +218,10 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
     }
   }
 
-  if (!activeProjectId) {
-    return (
-      <div className="mb-3 rounded-soft border border-dashed border-line bg-surface p-3 text-small text-faint">
-        Elige un proyecto (en el tablero) para asociar fuentes de 2brain.
-      </div>
-    );
-  }
-
   return (
-    <div className="mb-3 rounded-soft border border-line bg-surface p-3">
+    <div className="mb-3 rounded-soft bg-surface shadow-rest p-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-label font-bold uppercase text-muted">
+        <h3 className="text-label font-bold text-muted">
           Fuentes del proyecto (2brain)
         </h3>
         <button
@@ -257,7 +242,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
       <ul className="mt-2 divide-y divide-line-soft">
         {(sources ?? []).map((s) => (
           <li key={s.id} className="flex items-center gap-2 py-1.5">
-            <span className="shrink-0 rounded bg-line px-1 py-0.5 text-label font-semibold">
+            <span className="shrink-0 rounded-full bg-line px-1 py-0.5 text-label font-semibold">
               {SOURCE_KIND_LABELS[s.kind]}
             </span>
             <div className="min-w-0 flex-1">
@@ -271,7 +256,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
               ) : null}
             </div>
             <span
-              className={`shrink-0 rounded px-1.5 py-0.5 text-label font-semibold ${
+              className={`shrink-0 rounded-full px-1.5 py-0.5 text-label font-semibold ${
                 SOURCE_STATUS_STYLES[s.status] ?? "bg-line text-ink-2"
               }`}
             >
@@ -289,7 +274,7 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
       </ul>
       {pickerOpen ? (
         <SourcePickerModal
-          projectId={activeProjectId}
+          projectId={projectId}
           onClose={() => setPickerOpen(false)}
           onDone={() => {
             void load();
@@ -301,8 +286,8 @@ function SourcesSection({ onIngested }: { onIngested: () => void }) {
   );
 }
 
-function DocsTab() {
-  const activeProjectId = useStore((s) => s.activeProjectId);
+function DocsTab({ projectId }: { projectId: string }) {
+  const previewing = useStore((s) => s.previewRole === "sponsor");
   const [docs, setDocs] = useState<KnowledgeDoc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -312,7 +297,7 @@ function DocsTab() {
   async function load() {
     setError(null);
     try {
-      const res = await api.knowledge(activeProjectId ? { project_id: activeProjectId } : {});
+      const res = await api.knowledge({ project_id: projectId });
       setDocs(res.docs);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Error cargando documentos");
@@ -323,7 +308,7 @@ function DocsTab() {
     setSelected(null);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjectId]);
+  }, [projectId]);
 
   async function search(e: React.FormEvent) {
     e.preventDefault();
@@ -345,7 +330,7 @@ function DocsTab() {
 
   return (
     <div>
-      <SourcesSection onIngested={() => void load()} />
+      {!previewing ? <SourcesSection projectId={projectId} onIngested={() => void load()} /> : null}
       <div className="flex gap-4">
       <div className="w-80 shrink-0">
         <form onSubmit={search} className="flex gap-1">
@@ -378,7 +363,7 @@ function DocsTab() {
                   selected?.id === d.id ? "bg-line font-medium" : "hover:bg-line-soft"
                 }`}
               >
-                <span className="mr-1 rounded bg-line px-1 py-0.5 text-label font-semibold">
+                <span className="mr-1 rounded-full bg-line px-1 py-0.5 text-label font-semibold">
                   {KIND_LABELS[d.kind] ?? d.kind}
                 </span>
                 {d.title}
@@ -389,15 +374,15 @@ function DocsTab() {
       </div>
       <div className="min-w-0 flex-1">
         {selected ? (
-          <div className="rounded-soft border border-line bg-surface p-4">
-            <p className="text-label uppercase text-faint">
+          <div className="rounded-soft bg-surface shadow-rest p-4">
+            <p className="text-label text-faint">
               {KIND_LABELS[selected.kind] ?? selected.kind} · actualizado {fmtDate(selected.updatedAt)}
             </p>
             <h2 className="text-body font-bold">{selected.title}</h2>
             {selected.tags && selected.tags.length > 0 ? (
               <p className="mt-1 flex flex-wrap gap-1">
                 {selected.tags.map((t) => (
-                  <span key={t} className="rounded bg-link-bg px-1.5 py-0.5 text-label text-link">
+                  <span key={t} className="rounded-full bg-link-bg px-1.5 py-0.5 text-label text-link">
                     #{t}
                   </span>
                 ))}
@@ -407,7 +392,7 @@ function DocsTab() {
               <Markdown>{selected.bodyMd}</Markdown>
             </div>
             <div className="mt-4 border-t border-line-soft pt-2">
-              <p className="text-label font-bold uppercase text-faint">
+              <p className="text-label font-bold text-faint">
                 Fuentes (provenance)
               </p>
               {selected.sourceRefs && selected.sourceRefs.length > 0 ? (
@@ -428,144 +413,39 @@ function DocsTab() {
   );
 }
 
-function ProcessesTab() {
-  const [processes, setProcesses] = useState<ProcessEntity[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<ProcessEntity | null>(null);
-
-  async function load() {
-    setError(null);
-    try {
-      const res = await api.processes();
-      setProcesses(res.processes);
-    } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Error cargando procesos");
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
-
-  if (error) return <ErrorBox message={error} onRetry={() => void load()} />;
-  if (processes === null) return <Spinner label="Cargando procesos…" />;
-  if (processes.length === 0) {
-    return (
-      <EmptyState
-        title="Sin procesos mapeados"
-        hint="Un proceso mapeado es una entidad de primera clase: nombre, dueño, as-is/to-be, pasos y fuentes."
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="overflow-x-auto rounded-soft border border-line bg-surface">
-        <table className="w-full text-left text-small">
-          <thead className="bg-surface-2 text-label uppercase text-faint">
-            <tr>
-              <th className="px-3 py-2">Nombre</th>
-              <th className="px-3 py-2">Dueño</th>
-              <th className="px-3 py-2">Variante</th>
-              <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Nº fuentes</th>
-              <th className="px-3 py-2">Pasos</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-soft">
-            {processes.map((p) => (
-              <tr
-                key={p.id}
-                onClick={() => setSelected(p)}
-                className={`cursor-pointer hover:bg-surface-2 ${selected?.id === p.id ? "bg-link-bg" : ""}`}
-              >
-                <td className="px-3 py-2 font-medium">{p.name}</td>
-                <td className="px-3 py-2">{p.ownerPerson ?? "—"}</td>
-                <td className="px-3 py-2">{p.variant === "as_is" ? "as-is" : "to-be"}</td>
-                <td className="px-3 py-2">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-label font-semibold ${
-                      p.status === "validated"
-                        ? "bg-done-bg text-done"
-                        : "bg-work-bg text-work"
-                    }`}
-                  >
-                    {p.status === "validated" ? "validado" : "borrador"}
-                  </span>
-                </td>
-                <td className="px-3 py-2">{p.sourceDocIds?.length ?? 0}</td>
-                <td className="px-3 py-2">{p.steps?.length ?? 0}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {selected ? (
-        <div className="rounded-soft border border-line bg-surface p-4">
-          <h3 className="text-body font-bold">
-            {selected.name} <span className="text-small font-normal text-faint">({selected.variant})</span>
-          </h3>
-          {selected.steps && selected.steps.length > 0 ? (
-            <ol className="mt-2 space-y-1">
-              {selected.steps.map((s, i) => (
-                <li key={i} className="rounded bg-surface-2 p-2 text-small">
-                  <span className="font-semibold">{i + 1}. {s.step}</span>
-                  <span className="ml-2 text-muted">
-                    {s.responsible ? `resp: ${s.responsible}` : ""}
-                    {s.system ? ` · sistema: ${s.system}` : ""}
-                    {s.input ? ` · entrada: ${s.input}` : ""}
-                    {s.output ? ` · salida: ${s.output}` : ""}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="mt-2 text-small text-faint">(sin pasos registrados)</p>
-          )}
-          {selected.painPoints && selected.painPoints.length > 0 ? (
-            <div className="mt-2">
-              <p className="text-label font-bold uppercase text-faint">Puntos de dolor</p>
-              <ul className="ml-4 list-disc text-small text-broken">
-                {selected.painPoints.map((p, i) => (
-                  <li key={i}>{p}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 /**
  * Contexto del proyecto. Las metodologías emigraron a Activo Sixteam, porque
- * son de Sixteam y no del cliente; a cambio, el panel de reuniones vive aquí,
- * junto a los documentos que produce.
+ * son de Sixteam y no del cliente; el panel de reuniones vive en Sistema ›
+ * Fuentes, porque es transversal a todos los proyectos.
  */
-export default function ContextView() {
-  const [tab, setTab] = useState<"docs" | "processes" | "meetings">("docs");
+export default function ContextView({ projectId, sub }: { projectId: string; sub: ContextSubtab }) {
+  const orgId = useStore((s) => s.projects.find((p) => p.id === projectId)?.orgId ?? "");
+  const readOnly = useStore((s) => s.previewRole === "sponsor");
   const tabs = [
-    { id: "docs" as const, label: "Documentos" },
-    { id: "processes" as const, label: "Procesos" },
-    { id: "meetings" as const, label: "Reuniones" },
+    { id: "documentos" as const, label: "Documentos" },
+    { id: "procesos" as const, label: "Procesos" },
   ];
   return (
     <div className="density-explorar mx-auto max-w-[1180px] px-4 pb-20 pt-5 sm:px-5">
       <div className="mb-4 flex gap-0.5">
         {tabs.map((t) => (
-          <button
+          <NavLink
             key={t.id}
-            onClick={() => setTab(t.id)}
-            aria-pressed={tab === t.id}
+            to={paths.contexto(projectId, t.id)}
+            aria-pressed={sub === t.id}
             className={`press inline-flex min-h-9 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
-              tab === t.id ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
+              sub === t.id ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
             }`}
           >
             {t.label}
-          </button>
+          </NavLink>
         ))}
       </div>
-      {tab === "docs" ? <DocsTab /> : tab === "processes" ? <ProcessesTab /> : <MeetingProcessingView />}
+      {sub === "documentos" ? (
+        <DocsTab projectId={projectId} />
+      ) : (
+        <ProcessesView orgId={orgId} projectId={projectId} readOnly={readOnly} />
+      )}
     </div>
   );
 }

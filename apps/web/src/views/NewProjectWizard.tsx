@@ -340,6 +340,8 @@ export default function NewProjectWizard() {
   const [search] = useSearchParams();
   /** La Ruta manda aqui la fase siguiente: el catalogo se acota a esa fase. */
   const phaseHint = search.get("fase") as Stage | null;
+  /** Activo Sixteam manda aquí el módulo que se quiere lanzar directamente. */
+  const moduloHint = search.get("modulo");
   const originProjectId = search.get("proyecto");
   const projects = useStore((s) => s.projects);
   const originProject = originProjectId ? projects.find((p) => p.id === originProjectId) : undefined;
@@ -460,6 +462,14 @@ export default function NewProjectWizard() {
     [details, pushToast],
   );
 
+  // Llegó con ?modulo=<slug> desde Activo Sixteam: si existe en el catálogo,
+  // se preselecciona y el wizard arranca directo en el paso 2.
+  useEffect(() => {
+    if (!moduloHint || !modules || selected) return;
+    const found = modules.find((m) => m.slug === moduloHint);
+    if (found) void selectModule(found);
+  }, [moduloHint, modules, selected, selectModule]);
+
   const missingLabels = useMemo(() => {
     if (!selected || !preview) return [];
     return preview.missing.map((key) => selected.inputs.find((d) => d.key === key)?.label ?? key);
@@ -510,7 +520,7 @@ export default function NewProjectWizard() {
       );
       await loadProjects();
       await setActiveProject(res.project.id);
-      navigate(paths.proyecto(res.project.id, "tablero"));
+      navigate(paths.proyecto(res.project.id, "ruta"));
     } catch (err) {
       setLaunchError(launchErrorMessage(err));
     } finally {
@@ -557,7 +567,7 @@ export default function NewProjectWizard() {
                 >
                   <div className="flex items-center gap-2">
                     <p className="text-body font-semibold">{m.name}</p>
-                    <span className="rounded bg-ink px-1.5 py-0.5 text-label font-bold uppercase text-surface">
+                    <span className="rounded-full bg-ink px-1.5 py-0.5 text-label font-bold text-surface">
                       {STAGE_LABEL[m.phase]}
                     </span>
                   </div>
@@ -575,12 +585,12 @@ export default function NewProjectWizard() {
 
       {/* ── Paso 2: formulario generado ───────────────────────────────────── */}
       {step === 2 && selected ? (
-        <div className="rounded-soft border border-line bg-surface p-4">
+        <div className="rounded-soft bg-surface shadow-rest p-4">
           <div className="mb-3 flex items-center gap-2">
             <p className="text-body font-semibold">
               {selected.name} <span className="text-faint">v{selected.version}</span>
             </p>
-            <span className="rounded bg-line-soft px-1.5 py-0.5 text-label text-muted">
+            <span className="rounded-full bg-line-soft px-1.5 py-0.5 text-label text-muted">
               fase {STAGE_LABEL[selected.phase]}
             </span>
           </div>
@@ -669,7 +679,7 @@ export default function NewProjectWizard() {
       {/* ── Paso 3: resumen del preview + Disparar ────────────────────────── */}
       {step === 3 && selected && preview?.ok && preview.plan ? (
         <div className="space-y-4">
-          <div className="rounded-soft border border-line bg-surface p-4">
+          <div className="rounded-soft bg-surface shadow-rest p-4">
             <p className="text-body font-semibold">{preview.plan.projectName}</p>
             <p className="mt-0.5 text-label text-muted">
               {selected.name} v{selected.version} · fase {STAGE_LABEL[selected.phase]} · workspace{" "}
@@ -677,13 +687,13 @@ export default function NewProjectWizard() {
             </p>
           </div>
 
-          <div className="rounded-soft border border-line bg-surface p-4">
-            <p className="mb-2 text-small font-bold uppercase text-faint">
+          <div className="rounded-soft bg-surface shadow-rest p-4">
+            <p className="mb-2 text-small font-bold text-faint">
               Tareas que se crearán ({preview.plan.tasks.length})
             </p>
             <table className="w-full text-left text-small">
               <thead>
-                <tr className="text-label uppercase text-faint">
+                <tr className="text-label text-faint">
                   <th className="py-1 pr-2 font-semibold">Tarea</th>
                   <th className="py-1 pr-2 font-semibold">Asignado</th>
                   <th className="py-1 pr-2 font-semibold">Prioridad</th>
@@ -698,7 +708,7 @@ export default function NewProjectWizard() {
                     <td className="py-1.5 pr-2">
                       <span className="font-medium">{t.title}</span>
                       {t.gate ? (
-                        <span className="ml-1 rounded bg-decide-bg px-1 py-0.5 text-label font-semibold text-decide">
+                        <span className="ml-1 rounded-full bg-decide-bg px-1 py-0.5 text-label font-semibold text-decide">
                           gate {t.gate}
                         </span>
                       ) : null}
@@ -713,7 +723,7 @@ export default function NewProjectWizard() {
                     </td>
                     <td className="py-1.5">
                       <span
-                        className={`rounded px-1.5 py-0.5 text-label font-semibold ${
+                        className={`rounded-full px-1.5 py-0.5 text-label font-semibold ${
                           t.status === "READY"
                             ? "bg-link-bg text-link"
                             : "bg-line text-muted"
@@ -729,8 +739,8 @@ export default function NewProjectWizard() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="rounded-soft border border-line bg-surface p-4">
-              <p className="mb-2 text-small font-bold uppercase text-faint">Gates</p>
+            <div className="rounded-soft bg-surface shadow-rest p-4">
+              <p className="mb-2 text-small font-bold text-faint">Gates</p>
               {preview.plan.gates.length === 0 ? (
                 <p className="text-small text-faint">Sin gates</p>
               ) : (
@@ -745,8 +755,8 @@ export default function NewProjectWizard() {
                 </ul>
               )}
             </div>
-            <div className="rounded-soft border border-line bg-surface p-4">
-              <p className="mb-2 text-small font-bold uppercase text-faint">
+            <div className="rounded-soft bg-surface shadow-rest p-4">
+              <p className="mb-2 text-small font-bold text-faint">
                 Entregables de cierre
               </p>
               {preview.plan.deliverables.length === 0 ? (
@@ -764,8 +774,8 @@ export default function NewProjectWizard() {
             </div>
           </div>
 
-          <div className="rounded-soft border border-line bg-surface p-4">
-            <p className="mb-2 text-small font-bold uppercase text-faint">
+          <div className="rounded-soft bg-surface shadow-rest p-4">
+            <p className="mb-2 text-small font-bold text-faint">
               Presupuesto y metodología
             </p>
             <p className="text-small text-muted">
@@ -789,7 +799,7 @@ export default function NewProjectWizard() {
 
           {preview.plan.cadenceProposals.length > 0 ? (
             <div className="rounded-soft border border-dashed border-line bg-surface-2 p-4">
-              <p className="mb-1 text-small font-bold uppercase text-faint">
+              <p className="mb-1 text-small font-bold text-faint">
                 Cadencia (se confirmará al disparar)
               </p>
               <ul className="space-y-1 text-small text-muted">

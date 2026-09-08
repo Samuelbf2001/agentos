@@ -92,12 +92,12 @@ describePg("API end-to-end sobre Postgres", () => {
     if (api) await api.close();
   });
 
-  it("arranca, migra y seedea contra Postgres (25 tablas y el demo ACME)", async () => {
+  it("arranca, migra y seedea contra Postgres (36 tablas y el demo ACME)", async () => {
     const res = await api.app.inject({ method: "GET", url: "/api/health" });
     expect(res.statusCode).toBe(200);
     const health = res.json() as { counts: Record<string, number> };
     const counts = health.counts;
-    expect(counts["tables"]).toBe(31);
+    expect(counts["tables"]).toBe(36);
     expect(counts["organizations"]).toBeGreaterThanOrEqual(2);
     expect(counts["agents"]).toBe(7);
     expect(counts["tasks"]).toBe(12); // el launch demo del seed (§13.6)

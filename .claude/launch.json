@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "sandbox-api", "runtimeExecutable": "node", "runtimeArgs": ["scripts/sandbox.mjs", "api"], "port": 4310 },
+    { "name": "sandbox-web", "runtimeExecutable": "node", "runtimeArgs": ["scripts/sandbox.mjs", "web"], "port": 4311 }
+  ]
+}

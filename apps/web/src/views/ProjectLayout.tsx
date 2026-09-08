@@ -2,18 +2,27 @@
  * Espacio de trabajo de un proyecto (PLAN-v1.5 §Navegación nueva).
  *
  * El proyecto es el contexto, así que el selector del header desaparece: la
- * URL manda y el store se sincroniza con ella. En la barra viven siempre el
- * nombre del cliente y el chip de fase; debajo, las cinco pestañas.
+ * URL manda y el store se sincroniza con ella. Las pestañas se mudaron al
+ * menú lateral (`lib/nav.ts` → `clientNav`); aquí sólo queda la cabecera de
+ * página con el nombre, la fase y el gate.
  */
 import { useEffect } from "react";
-import { Link, NavLink, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useStore } from "../state/store";
 import { EmptyState, Spinner } from "../components/ui";
 import { Chip, PhaseChip } from "../components/system";
-import { PROJECT_TAB_LABELS, PROJECT_TABS, paths, type ProjectTab } from "../lib/paths";
+import {
+  CONTEXT_SUBTABS,
+  PROJECT_TABS,
+  paths,
+  type ContextSubtab,
+  type ProjectTab,
+} from "../lib/paths";
+import { useCapabilities } from "../lib/capabilities";
 import BoardView from "./BoardView";
 import ChatView from "./ChatView";
 import ContextView from "./ContextView";
+import OrgChartView from "./orgchart/OrgChartView";
 import RunsView from "./RunsView";
 import RutaView from "./RutaView";
 
@@ -24,25 +33,56 @@ function GateChip({ state }: { state: "pending" | "approved" | "rejected" }) {
 }
 
 export default function ProjectLayout() {
-  const { projectId, tab } = useParams<{ projectId: string; tab?: string }>();
+  const { projectId, tab, sub } = useParams<{ projectId: string; tab?: string; sub?: string }>();
+  const location = useLocation();
   const projects = useStore((s) => s.projects);
-  const activeProjectId = useStore((s) => s.activeProjectId);
   const setActiveProject = useStore((s) => s.setActiveProject);
   const bootstrapped = useStore((s) => s.bootstrapped);
+  const previewRole = useStore((s) => s.previewRole);
+  const caps = useCapabilities();
+  const tabs = PROJECT_TABS.filter((t) => caps.has(`proyecto:${t}`));
 
-  // La URL es la fuente de verdad del proyecto activo.
+  // La URL es la fuente de verdad del proyecto activo. Al salir del layout
+  // (desmontar) se limpia el proyecto activo: fuera de /proyectos/:id/* no
+  // hay proyecto activo.
   useEffect(() => {
-    if (projectId && projectId !== activeProjectId) void setActiveProject(projectId);
-  }, [projectId, activeProjectId, setActiveProject]);
+    if (projectId && projectId !== useStore.getState().activeProjectId) {
+      void setActiveProject(projectId);
+    }
+    return () => {
+      void useStore.getState().setActiveProject(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
-  if (!projectId) return <Navigate to={paths.proyectos()} replace />;
-  if (!tab) return <Navigate to={paths.proyecto(projectId, "ruta")} replace />;
+  if (!projectId) return <Navigate to={{ pathname: paths.proyectos(), search: location.search }} replace />;
+  if (!tab) return <Navigate to={{ pathname: paths.proyecto(projectId, "ruta"), search: location.search }} replace />;
   if (!PROJECT_TABS.includes(tab as ProjectTab)) {
-    return <Navigate to={paths.proyecto(projectId, "ruta")} replace />;
+    return <Navigate to={{ pathname: paths.proyecto(projectId, "ruta"), search: location.search }} replace />;
   }
 
-  const project = projects.find((p) => p.id === projectId);
   const current = tab as ProjectTab;
+
+  if (!tabs.includes(current)) {
+    return tabs.length > 0 ? (
+      <Navigate to={{ pathname: paths.proyecto(projectId, tabs[0]), search: location.search }} replace />
+    ) : (
+      <Navigate to={{ pathname: paths.proyectos(), search: location.search }} replace />
+    );
+  }
+
+  if (current !== "contexto" && sub) {
+    return <Navigate to={{ pathname: paths.proyecto(projectId, current), search: location.search }} replace />;
+  }
+  if (current === "contexto" && sub && !CONTEXT_SUBTABS.includes(sub as ContextSubtab)) {
+    return <Navigate to={{ pathname: paths.contexto(projectId), search: location.search }} replace />;
+  }
+  const contextSub: ContextSubtab =
+    current === "contexto" && sub && CONTEXT_SUBTABS.includes(sub as ContextSubtab)
+      ? (sub as ContextSubtab)
+      : "documentos";
+
+  const project = projects.find((p) => p.id === projectId);
 
   if (!project) {
     return projects.length === 0 && bootstrapped ? (
@@ -66,48 +106,19 @@ export default function ProjectLayout() {
 
   return (
     <div className="density-operar flex min-h-full flex-col">
-      <div className="border-b border-line-soft bg-surface/70">
-        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3 sm:px-5">
-          <Link to={paths.proyectos()} className="press text-small text-muted hover:text-ink-2">
-            Proyectos
-          </Link>
-          <span className="text-faint" aria-hidden="true">
-            ›
-          </span>
-          <h1 className="text-title text-ink">{project.name}</h1>
-          <PhaseChip stage={project.stage} />
-          <GateChip state={project.gateState} />
-          <Link
-            to={paths.hoy(project.id)}
-            className="press ml-auto text-small font-semibold text-link hover:underline"
-          >
-            Decisiones de este proyecto
-          </Link>
-        </div>
-        <nav
-          aria-label="Secciones del proyecto"
-          className="mx-auto flex max-w-[1180px] gap-0.5 overflow-x-auto px-4 pb-2 pt-2 sm:px-5"
-        >
-          {PROJECT_TABS.map((entry) => (
-            <NavLink
-              key={entry}
-              to={paths.proyecto(project.id, entry)}
-              className={({ isActive }) =>
-                `press inline-flex min-h-9 shrink-0 items-center rounded-tight px-3 py-1.5 text-small font-semibold ${
-                  isActive ? "bg-canvas-deep text-ink" : "text-muted hover:text-ink-2"
-                }`
-              }
-            >
-              {PROJECT_TAB_LABELS[entry]}
-            </NavLink>
-          ))}
-        </nav>
+      <div className="mx-auto flex w-full max-w-[1180px] flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-4 pb-2 sm:px-5">
+        <h1 className="mt-2 text-display text-ink">{project.name}</h1>
+        <PhaseChip stage={project.stage} />
+        <GateChip state={project.gateState} />
       </div>
 
       <div className="min-h-0 flex-1">
         {current === "ruta" ? <RutaView project={project} /> : null}
-        {current === "tablero" ? <BoardView /> : null}
-        {current === "contexto" ? <ContextView /> : null}
+        {current === "tablero" ? <BoardView projectId={project.id} /> : null}
+        {current === "contexto" ? <ContextView projectId={project.id} sub={contextSub} /> : null}
+        {current === "organigrama" ? (
+          <OrgChartView orgId={project.orgId} readOnly={previewRole === "sponsor"} />
+        ) : null}
         {current === "conversacion" ? <ChatView /> : null}
         {current === "actividad" ? <RunsView projectId={project.id} /> : null}
       </div>

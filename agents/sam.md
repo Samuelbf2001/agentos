@@ -26,6 +26,9 @@ tools:
   - iso.gap_matrix_template
   - sources.list
   - sources.ingest
+  - org_graph.get
+  - org_graph.upsert_unit
+  - org_graph.upsert_role
   - ask_human
 ---
 

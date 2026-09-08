@@ -16,6 +16,7 @@ import {
   wsUrl,
 } from "../lib/api";
 import { WsClient, type WsStatus } from "../lib/ws";
+import type { PreviewRole } from "../lib/capabilities";
 import type {
   Agent,
   Approval,
@@ -107,6 +108,10 @@ export interface AppStore extends EventState {
   token: string | null;
   wsStatus: WsStatus;
   bootstrapped: boolean;
+  /** Modo pruebas: copia local de datos, entrada sin contraseña (ver docs/SANDBOX.md). */
+  sandbox: boolean;
+  /** "Ver como cliente": previsualización local, no un rol de sesión real. */
+  previewRole: PreviewRole;
 
   // datos
   projects: Project[];
@@ -153,9 +158,6 @@ export interface AppStore extends EventState {
   taskSearchResults: TaskSearchHit[];
   taskSearchLoading: boolean;
   taskSearchError: string | null;
-  myTasks: Task[];
-  myTasksLoading: boolean;
-  myTasksError: string | null;
   chatSending: boolean;
 
   toasts: Toast[];
@@ -163,7 +165,11 @@ export interface AppStore extends EventState {
   // acciones
   init(): Promise<void>;
   login(password: string, personId: string): Promise<void>;
+  /** Modo pruebas: mismo flujo que login() pero sin contraseña. */
+  loginSandbox(personId: string): Promise<void>;
   logout(): void;
+  /** "Ver como cliente": reduce el shell a las capacidades de un sponsor. */
+  setPreviewRole(role: PreviewRole): void;
   pushToast(kind: Toast["kind"], text: string): void;
   dismissToast(id: number): void;
 
@@ -186,7 +192,6 @@ export interface AppStore extends EventState {
   uploadTaskArtifact(taskId: string, file: File, title?: string): Promise<boolean>;
   searchTasks(query: string, opts?: { projectId?: string; mine?: boolean }): Promise<void>;
   clearTaskSearch(): void;
-  loadMyTasks(opts?: { label?: string; status?: TaskStatus }): Promise<void>;
 
   openTask(taskId: string): Promise<void>;
   retryTaskDetail(): Promise<void>;
@@ -419,6 +424,8 @@ export const useStore = create<AppStore>()((set, get) => {
     token: null,
     wsStatus: "closed",
     bootstrapped: false,
+    sandbox: false,
+    previewRole: null,
 
     projects: [],
     activeProjectId: null,
@@ -451,9 +458,6 @@ export const useStore = create<AppStore>()((set, get) => {
     taskSearchResults: [],
     taskSearchLoading: false,
     taskSearchError: null,
-    myTasks: [],
-    myTasksLoading: false,
-    myTasksError: null,
     chatSending: false,
     toasts: [],
 
@@ -461,6 +465,15 @@ export const useStore = create<AppStore>()((set, get) => {
       setOnUnauthorized(() => {
         if (get().token) get().logout();
       });
+      // El chip "Pruebas" y el botón sin contraseña dependen de esto incluso
+      // antes de iniciar sesión (LoginView). Si la API no responde, queda en
+      // false: nunca rompe el arranque normal.
+      try {
+        const health = await api.health();
+        set({ sandbox: health.sandbox === true });
+      } catch {
+        set({ sandbox: false });
+      }
       const session = loadSession();
       if (!session) {
         set({ bootstrapped: true });
@@ -478,15 +491,26 @@ export const useStore = create<AppStore>()((set, get) => {
         get().loadKillSwitch(),
         get().refreshBadges(),
       ]);
-      const savedProject = localStorage.getItem("agentos_project");
-      const projects = get().projects;
-      const target =
-        (savedProject && projects.find((p) => p.id === savedProject)?.id) ?? projects[0]?.id ?? null;
-      if (target) await get().setActiveProject(target);
     },
 
     async login(password, personId) {
       const res = await api.login(password, personId);
+      setToken(res.token);
+      saveSession(res.token, res.person);
+      set({ token: res.token, person: res.person });
+      connectWs(res.token);
+      await Promise.allSettled([
+        get().loadProjects(),
+        get().loadPeople(),
+        get().loadApprovals(),
+        get().loadAgents(),
+        get().loadKillSwitch(),
+        get().refreshBadges(),
+      ]);
+    },
+
+    async loginSandbox(personId) {
+      const res = await api.sandboxLogin(personId);
       setToken(res.token);
       saveSession(res.token, res.person);
       set({ token: res.token, person: res.person });
@@ -513,6 +537,7 @@ export const useStore = create<AppStore>()((set, get) => {
         person: null,
         token: null,
         wsStatus: "closed",
+        previewRole: null,
         projects: [],
         people: [],
         peopleLoading: false,
@@ -536,9 +561,12 @@ export const useStore = create<AppStore>()((set, get) => {
         blockedMove: null,
         taskSearchQuery: "",
         taskSearchResults: [],
-        myTasks: [],
         activeProjectId: null,
       });
+    },
+
+    setPreviewRole(role) {
+      set({ previewRole: role });
     },
 
     pushToast(kind, text) {
@@ -612,11 +640,6 @@ export const useStore = create<AppStore>()((set, get) => {
         taskDetailError: null,
         taskMutationError: null,
       });
-      try {
-        if (projectId) localStorage.setItem("agentos_project", projectId);
-      } catch {
-        /* ignore */
-      }
       if (!projectId) {
         wires.offBoard?.();
         wires.offBoard = null;
@@ -853,23 +876,6 @@ export const useStore = create<AppStore>()((set, get) => {
 
     clearTaskSearch() {
       set({ taskSearchQuery: "", taskSearchResults: [], taskSearchError: null, taskSearchLoading: false });
-    },
-
-    async loadMyTasks(opts = {}) {
-      set({ myTasksLoading: true, myTasksError: null });
-      try {
-        const { tasks } = await api.tasks({
-          mine: "1",
-          ...(opts.label ? { label: opts.label } : {}),
-          ...(opts.status ? { status: opts.status } : {}),
-        });
-        set({ myTasks: tasks, myTasksLoading: false });
-      } catch (err) {
-        set({
-          myTasksLoading: false,
-          myTasksError: normalizeMutationError(err, "No se pudieron cargar tus tareas"),
-        });
-      }
     },
 
     async openTask(taskId) {

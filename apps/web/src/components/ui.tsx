@@ -32,7 +32,7 @@ export function AgentAvatar({ name, slug, size = 6 }: { name: string; slug: stri
     <span
       title={name}
       data-agent={slug}
-      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-ink-2 font-semibold text-surface ring-2 ring-line ${AVATAR_SIZES[size]}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-ink font-semibold text-surface ${AVATAR_SIZES[size]}`}
     >
       {initialsOf(name)}
     </span>
@@ -45,7 +45,7 @@ export function PersonAvatar({ name, size = 6 }: { name: string; size?: 5 | 6 | 
     <span
       title={name}
       aria-hidden="true"
-      className={`inline-flex shrink-0 items-center justify-center rounded-full border border-line bg-canvas-deep font-semibold text-ink-2 ${AVATAR_SIZES[size]}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-canvas-deep font-semibold text-ink-2 ${AVATAR_SIZES[size]}`}
     >
       {initialsOf(name) || "?"}
     </span>
@@ -172,7 +172,7 @@ export function RunStatusPill({ status }: { status: string }) {
 
 export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-panel border border-dashed border-line bg-surface/60 p-10 text-center">
+    <div className="flex flex-col items-center justify-center gap-2 rounded-panel bg-canvas-deep/50 p-10 text-center">
       <p className="text-body font-semibold text-ink-2">{title}</p>
       {hint ? <p className="max-w-prose text-small text-muted">{hint}</p> : null}
       {action}
@@ -182,7 +182,7 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div role="alert" className="rounded-panel border border-broken-line bg-broken-bg p-4 text-small text-broken">
+    <div role="alert" className="rounded-panel bg-broken-bg p-4 text-small text-broken">
       <p className="font-semibold">Algo falló</p>
       <p className="mt-1">{message}</p>
       {onRetry ? (
@@ -217,12 +217,8 @@ export function Toasts() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`enter-rise flex items-start justify-between gap-2 rounded-soft border p-3 text-small shadow-float ${
-            t.kind === "error"
-              ? "border-broken-line bg-broken-bg text-broken"
-              : t.kind === "ok"
-                ? "border-done-line bg-done-bg text-done"
-                : "border-line bg-surface text-ink-2"
+          className={`enter-rise flex items-start justify-between gap-2 rounded-soft p-3 text-small shadow-float ${
+            t.kind === "error" ? "bg-broken text-surface" : "bg-ink text-surface"
           }`}
         >
           <span className="break-words">{t.text}</span>

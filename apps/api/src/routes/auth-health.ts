@@ -11,6 +11,11 @@ const LoginBody = z.object({
   person_id: z.string().min(1),
 });
 
+/** Modo pruebas: mismo cuerpo que el login normal pero sin contraseña. */
+const SandboxLoginBody = z.object({
+  person_id: z.string().min(1),
+});
+
 /** Ventana del límite de tasa en el formato que espera @fastify/rate-limit. */
 function limit(rule: { max: number; timeWindowMs: number }) {
   return { rateLimit: { max: rule.max, timeWindow: rule.timeWindowMs } };
@@ -32,6 +37,7 @@ export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): vo
       version: API_VERSION,
       now: Date.now(),
       uptime_ms: Date.now() - ctx.startedAt,
+      sandbox: ctx.sandbox,
       kill_switch: await ctx.engine.isKillSwitchActive(),
       recovery: {
         interrupted_runs: ctx.recovery.interruptedRuns.length,
@@ -67,6 +73,24 @@ export function registerAuthAndHealth(app: FastifyInstance, ctx: ApiContext): vo
     reply.header("set-cookie", ctx.auth.cookieFor(token));
     return { token, person: { id: person.id, full_name: person.fullName, role: person.role } };
   });
+
+  /**
+   * Entrada sin contraseña del modo pruebas. Solo existe cuando `ctx.sandbox`
+   * está activo: con sandbox apagado la ruta no se registra (404), ni siquiera
+   * llega a comprobar nada — no hay superficie que probar desde fuera.
+   */
+  if (ctx.sandbox) {
+    app.post("/api/auth/sandbox-login", { config: limit(ctx.rateLimits.login) }, async (req, reply) => {
+      const body = parse(SandboxLoginBody, req.body);
+      const person = await getPerson(ctx.db, body.person_id);
+      if (!person || !person.isInternal) {
+        throw errors.notFound("person", body.person_id);
+      }
+      const token = ctx.auth.issueToken({ id: person.id, fullName: person.fullName });
+      reply.header("set-cookie", ctx.auth.cookieFor(token));
+      return { token, person: { id: person.id, full_name: person.fullName, role: person.role } };
+    });
+  }
 
   app.get("/api/auth/me", async (req) => ({ session: req.session }));
 

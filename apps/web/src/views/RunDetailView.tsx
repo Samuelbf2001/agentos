@@ -36,7 +36,7 @@ function SpanNode({ span, all, depth }: { span: Span; all: Span[]; depth: number
         <span className="text-faint">{duration}</span>
         {span.status ? (
           <span
-            className={`rounded px-1 py-0.5 text-label font-semibold ${
+            className={`rounded-full px-1 py-0.5 text-label font-semibold ${
               span.status === "ok" || span.status === "succeeded"
                 ? "bg-done-bg text-done"
                 : "bg-broken-bg text-broken"
@@ -158,7 +158,7 @@ function Replay({ runId }: { runId: string }) {
   if (!events) return <Spinner label="Leyendo eventos persistidos…" />;
 
   return (
-    <div className="rounded-soft border border-line bg-surface p-3">
+    <div className="rounded-soft bg-surface shadow-rest p-3">
       <div className="flex items-center gap-2 text-small">
         <button
           onClick={() => setPlaying((v) => !v)}
@@ -293,7 +293,7 @@ export default function RunDetailView() {
         <span className="font-mono text-ink-2">{run.id.slice(0, 8)}</span>
       </nav>
 
-      <div className="rounded-panel border border-line-soft bg-surface p-4 shadow-rest">
+      <div className="rounded-panel bg-surface p-4 shadow-rest">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-title text-ink">
             Ejecución <span className="font-mono text-body">{run.id.slice(0, 8)}</span>
@@ -392,8 +392,8 @@ export default function RunDetailView() {
 
       {showReplay && runId ? <Replay runId={runId} /> : null}
 
-      <div className="rounded-soft border border-line bg-surface p-4">
-        <h2 className="text-small font-bold uppercase text-faint">
+      <div className="rounded-soft bg-surface shadow-rest p-4">
+        <h2 className="text-small font-bold text-faint">
           Árbol de spans ({spans.length})
         </h2>
         <div className="mt-2">

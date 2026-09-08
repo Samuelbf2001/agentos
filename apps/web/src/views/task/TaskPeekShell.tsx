@@ -183,7 +183,7 @@ export function TaskPeekShell() {
     isMobile || mode === "full"
       ? "fixed inset-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-surface shadow-float focus:outline-none"
       : mode === "center"
-        ? "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[min(90vw,860px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-panel border border-line bg-surface shadow-float focus:outline-none"
+        ? "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[min(90vw,860px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-panel bg-surface shadow-float focus:outline-none"
         : "fixed inset-y-0 right-0 z-50 flex h-full max-w-[100vw] flex-col overflow-hidden border-l border-line bg-surface shadow-float focus:outline-none";
 
   return (
@@ -248,7 +248,7 @@ export function TaskPeekShell() {
                 ))}
               </div>
             ) : null}
-            <span className="ml-2 min-w-0 flex-1 truncate text-label font-bold uppercase text-faint">Ficha de tarea</span>
+            <span className="ml-2 min-w-0 flex-1 truncate text-label font-bold text-faint">Ficha de tarea</span>
             <Dialog.Close
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-soft text-title text-faint hover:bg-line-soft hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
               aria-label="Cerrar ficha"

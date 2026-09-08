@@ -4,11 +4,11 @@
  *
  * Tres bloques en este orden: las decisiones que te esperan —las tres más
  * urgentes arriba, el resto agrupado por proyecto y por gate, ordenado por
- * riesgo y con aprobación en lote para las de riesgo bajo—, tus proyectos con
- * su posición en el ciclo, y el pulso del día.
+ * riesgo y con aprobación en lote para las de riesgo bajo—, y el pulso del
+ * día en una columna aparte.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "../state/store";
 import { api, ApiError } from "../lib/api";
 import { paths } from "../lib/paths";
@@ -18,96 +18,56 @@ import {
   daysWaiting,
   groupDecisions,
   KIND_LABELS,
-  RISK_LABELS,
   sortByRisk,
   summarizePayload,
   type Decision,
 } from "../lib/decisions";
-import { useProjectSummaries } from "../state/useProjectSummaries";
 import { ActionButton, Card, Chip, LateChip, SectionHead, Stat } from "../components/system";
-import { EmptyState, fmtCost, Spinner, timeAgo } from "../components/ui";
-import { ArtifactBlock } from "./TaskDrawer";
-import ProjectsTable from "./ProjectsTable";
+import { EmptyState, fmtCost } from "../components/ui";
 
 const LATE_AFTER_DAYS = 2;
 
-function riskTone(decision: Decision): "broken" | "decide" | "quiet" {
-  if (decision.risk === "alto") return "broken";
-  if (decision.risk === "medio") return "decide";
-  return "quiet";
+/** Campos que ya tienen su propio sitio en la tarjeta: no se repiten en el detalle técnico. */
+const FEATURED_PAYLOAD_KEYS = new Set(["type", "title", "body", "task_id"]);
+
+function payloadText(payload: Record<string, unknown> | undefined, key: string): string | null {
+  if (!payload) return null;
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
-/** El payload literal sigue disponible: el digest liga la aprobación a él. */
-function PayloadSummary({ decision }: { decision: Decision }) {
-  const approval = decision.approval;
-  if (!approval) return null;
-  const lines = summarizePayload(approval.payload);
-  return (
-    <div className="mt-3">
-      {lines.length > 0 ? (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-small">
-          {lines.map((line) => (
-            <div key={line.label} className="contents">
-              <dt className="text-muted">{line.label}</dt>
-              <dd className="min-w-0 break-words text-ink-2">{line.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="text-small text-muted">La aprobación no trae parámetros.</p>
-      )}
-      <details className="mt-2">
-        <summary className="press cursor-pointer text-small text-link">Ver el payload literal</summary>
-        <pre className="mt-1.5 max-h-52 overflow-auto rounded-tight border border-line-soft bg-canvas-deep p-3 text-label leading-relaxed text-ink-2">
-          {JSON.stringify(approval.payload, null, 2)}
-        </pre>
-      </details>
-    </div>
-  );
-}
-
-function DecisionBody({ decision }: { decision: Decision }) {
-  if (decision.approval) return <PayloadSummary decision={decision} />;
-  if (decision.artifacts.length === 0) {
-    return (
-      <p className="mt-3 text-small text-broken">
-        Llegó a revisión sin evidencia adjunta. Abre la tarjeta antes de aprobar.
-      </p>
-    );
-  }
-  return (
-    <div className="mt-3 space-y-2">
-      {decision.artifacts.map((a) => (
-        <ArtifactBlock key={a.id} artifact={a} />
-      ))}
-    </div>
-  );
+function waitingLabel(days: number): string {
+  return days === 1 ? "Hace 1 día" : `Hace ${days} días`;
 }
 
 function DecisionCard({
   decision,
-  projectName,
+  clientName,
   selectable,
   selected,
   onToggle,
-  defaultOpen = false,
 }: {
   decision: Decision;
-  projectName: string;
+  clientName: string;
   selectable: boolean;
   selected: boolean;
   onToggle: (id: string) => void;
-  defaultOpen?: boolean;
 }) {
   const decideApproval = useStore((s) => s.decideApproval);
   const approveTaskReview = useStore((s) => s.approveTaskReview);
   const rejectTaskReview = useStore((s) => s.rejectTaskReview);
   const openTask = useStore((s) => s.openTask);
-  const [open, setOpen] = useState(defaultOpen);
-  const [note, setNote] = useState("");
+  const [bodyExpanded, setBodyExpanded] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const late = daysWaiting(decision) >= LATE_AFTER_DAYS ? daysWaiting(decision) : 0;
+
+  const days = daysWaiting(decision);
+  const late = days >= LATE_AFTER_DAYS ? days : 0;
+  const payload = decision.approval?.payload;
+  const question = payloadText(payload, "title") ?? decision.title;
+  const body = payloadText(payload, "body");
+  const technicalLines = payload ? summarizePayload(payload).filter((l) => !FEATURED_PAYLOAD_KEYS.has(l.label)) : [];
 
   async function decide(action: "approve" | "reject") {
     setBusy(true);
@@ -128,67 +88,57 @@ function DecisionCard({
   }
 
   return (
-    <Card
-      as="article"
-      className={`overflow-hidden ${late ? "late" : ""}`}
-      data-testid={`decision-${decision.id}`}
-    >
-      <div className="flex items-start gap-3 p-4">
+    <Card as="article" className={`p-5 ${late ? "late overflow-hidden" : ""}`} data-testid={`decision-${decision.id}`}>
+      <div className="flex flex-wrap items-center gap-2 text-small text-muted">
         {selectable ? (
-          <label className="flex min-h-9 items-center gap-2 pt-0.5 text-small text-muted">
-            <input
-              type="checkbox"
-              checked={selected}
-              onChange={() => onToggle(decision.id)}
-              aria-label={`Seleccionar «${decision.title}» para aprobar en lote`}
-              data-testid={`decision-select-${decision.id}`}
-              className="h-4 w-4 accent-[var(--color-link)]"
-            />
-          </label>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggle(decision.id)}
+            aria-label={`Seleccionar «${decision.title}» para aprobar en lote`}
+            data-testid={`decision-select-${decision.id}`}
+            className="h-4 w-4 accent-[var(--color-link)]"
+          />
         ) : null}
-        <div className="min-w-0 flex-1">
-          <h3 className="text-body font-semibold text-ink">{decision.title}</h3>
-          <p className="mt-1 text-small text-muted">{decision.unlocks}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-small text-muted">
-            <Chip tone="quiet">{projectName}</Chip>
-            <Chip tone="quiet">{KIND_LABELS[decision.kind]}</Chip>
-            <span>espera desde {timeAgo(decision.waitingSince)}</span>
-            <LateChip days={late} />
-          </div>
-          <div className="mt-2 flex flex-wrap gap-3 text-small">
-            {decision.projectId ? (
-              <Link
-                to={paths.proyecto(decision.projectId, "ruta")}
-                className="press font-semibold text-link hover:underline"
-              >
-                Ver la ruta y el gate
-              </Link>
-            ) : null}
-            {decision.taskId ? (
-              <button
-                onClick={() => void openTask(decision.taskId!)}
-                className="press font-semibold text-link hover:underline"
-              >
-                Abrir la tarjeta
-              </button>
-            ) : null}
-            {decision.runId ? (
-              <Link to={paths.run(decision.runId)} className="press font-semibold text-link hover:underline">
-                Ver la ejecución
-              </Link>
-            ) : null}
-            <button onClick={() => setOpen((v) => !v)} className="press text-muted hover:text-ink-2">
-              {open ? "Ocultar el detalle" : "Ver el detalle"}
-            </button>
-          </div>
-          {open ? <DecisionBody decision={decision} /> : null}
-        </div>
-        <Chip tone={riskTone(decision)} className="mt-0.5 shrink-0">
-          {RISK_LABELS[decision.risk]}
-        </Chip>
+        <span>{clientName}</span>
+        <span>·</span>
+        <span>{KIND_LABELS[decision.kind]}</span>
+        <span className="ml-auto">
+          {late ? <LateChip days={late} /> : <Chip tone="quiet">{waitingLabel(days)}</Chip>}
+        </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-line-soft bg-surface-2 p-3">
+      <h3 className="mt-2 text-title text-ink">{question}</h3>
+      <p className="mt-1 text-body text-muted">{decision.unlocks}</p>
+
+      {decision.kind === "review" ? (
+        <div className="mt-3">
+          <p className="text-label text-muted">Evidencia entregada</p>
+          {decision.artifacts.length > 0 ? (
+            <ul className="mt-1 space-y-0.5">
+              {decision.artifacts.map((artifact) => (
+                <li key={artifact.id} className="text-body text-ink-2">
+                  {artifact.title} <span className="text-muted">· {artifact.kind}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-body text-muted">Sin evidencia adjunta</p>
+          )}
+        </div>
+      ) : body ? (
+        <div className="mt-3">
+          <p className={`whitespace-pre-line text-body text-ink-2 ${bodyExpanded ? "" : "line-clamp-4"}`}>{body}</p>
+          <button
+            onClick={() => setBodyExpanded((v) => !v)}
+            className="press mt-1 text-small font-semibold text-link hover:underline"
+          >
+            {bodyExpanded ? "Leer menos" : "Leer completo"}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <ActionButton
           variant="primary"
           disabled={busy}
@@ -198,18 +148,41 @@ function DecisionCard({
           Aprobar
         </ActionButton>
         {!rejecting ? (
-          <ActionButton variant="danger" disabled={busy} onClick={() => setRejecting(true)}>
-            Rechazar…
+          <ActionButton variant="quiet" disabled={busy} onClick={() => setRejecting(true)}>
+            Rechazar
           </ActionButton>
         ) : null}
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder={rejecting ? "Nota de rechazo: el agente la recibe" : "Nota opcional"}
-          aria-label={rejecting ? "Nota de rechazo" : "Nota opcional"}
-          className="min-h-9 min-w-40 flex-1 rounded-tight border border-line bg-surface px-2.5 py-1.5 text-small"
-        />
-        {rejecting ? (
+        <div className="ml-auto flex flex-wrap gap-3 text-small">
+          {decision.projectId ? (
+            <Link to={paths.proyecto(decision.projectId, "ruta")} className="press font-semibold text-link hover:underline">
+              Ver la ruta
+            </Link>
+          ) : null}
+          {decision.task ? (
+            <button
+              onClick={() => void openTask(decision.taskId!)}
+              className="press font-semibold text-link hover:underline"
+            >
+              Abrir la tarjeta
+            </button>
+          ) : null}
+          {decision.runId ? (
+            <Link to={paths.run(decision.runId)} className="press font-semibold text-link hover:underline">
+              Ver la ejecución
+            </Link>
+          ) : null}
+        </div>
+      </div>
+
+      {rejecting ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Motivo del rechazo"
+            aria-label="Motivo del rechazo"
+            className="min-h-9 min-w-40 flex-1 rounded-tight border border-line bg-surface px-2.5 py-1.5 text-small"
+          />
           <ActionButton
             variant="danger"
             disabled={busy || (!decision.approval && !note.trim())}
@@ -217,8 +190,34 @@ function DecisionCard({
           >
             Confirmar rechazo
           </ActionButton>
-        ) : null}
-      </div>
+          <button
+            onClick={() => {
+              setRejecting(false);
+              setNote("");
+            }}
+            className="press text-small text-muted hover:text-ink-2"
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : null}
+
+      {payload ? (
+        <details className="mt-4">
+          <summary className="press cursor-pointer text-label text-faint">Detalle técnico</summary>
+          {technicalLines.length > 0 ? (
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-small">
+              {technicalLines.map((line) => (
+                <div key={line.label} className="contents">
+                  <dt className="text-muted">{line.label}</dt>
+                  <dd className="min-w-0 break-words text-ink-2">{line.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          <pre className="text-label">{JSON.stringify(payload, null, 2)}</pre>
+        </details>
+      ) : null}
     </Card>
   );
 }
@@ -269,16 +268,26 @@ export default function HoyView() {
   const projects = useStore((s) => s.projects);
   const loadApprovals = useStore((s) => s.loadApprovals);
   const pushToast = useStore((s) => s.pushToast);
+  const previewing = useStore((s) => s.previewRole === "sponsor");
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const projectFilter = params.get("proyecto");
   const [selected, setSelected] = useState<string[]>([]);
   const [batching, setBatching] = useState(false);
   const pulse = usePulse();
-  const { summaries, loading: summariesLoading } = useProjectSummaries(projects);
 
   useEffect(() => {
     void loadApprovals();
   }, [loadApprovals]);
+
+  // En previsualización, "Decisiones" siempre es la de un proyecto: si se
+  // llega sin `?proyecto=` se completa con el proyecto activo.
+  useEffect(() => {
+    if (previewing && !projectFilter && activeProjectId) {
+      navigate(paths.hoy(activeProjectId), { replace: true });
+    }
+  }, [previewing, projectFilter, activeProjectId, navigate]);
 
   const all = useMemo(
     () => sortByRisk(buildDecisions(approvals, reviewTasks, projects)),
@@ -292,12 +301,17 @@ export default function HoyView() {
   const rest = decisions.slice(3);
   const groups = useMemo(() => groupDecisions(rest, projects), [rest, projects]);
   const batchCandidates = useMemo(() => batchable(decisions), [decisions]);
-  const projectNames = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
+  const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
   const filteredProject = projectFilter ? projects.find((p) => p.id === projectFilter) : undefined;
-  const visibleSummaries = projectFilter ? summaries.filter((s) => s.project.id === projectFilter) : summaries;
+
+  function clientNameFor(projectId: string | null): string {
+    if (!projectId) return "Sin proyecto";
+    const project = projectsById.get(projectId);
+    return project?.orgName ?? project?.name ?? "Proyecto";
+  }
 
   function nameOf(decision: Decision): string {
-    return decision.projectId ? (projectNames.get(decision.projectId) ?? "Proyecto") : "Sin proyecto";
+    return clientNameFor(decision.projectId);
   }
 
   function toggle(id: string) {
@@ -349,11 +363,13 @@ export default function HoyView() {
   return (
     <div className="density-operar mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
       <h1 className="text-display text-ink">
-        {total === 0
-          ? "Nada espera tu decisión"
-          : total === 1
-            ? "Te espera 1 decisión"
-            : `Te esperan ${total} decisiones`}
+        {previewing
+          ? "Decisiones que te esperan"
+          : total === 0
+            ? "Nada espera tu decisión"
+            : total === 1
+              ? "Te espera 1 decisión"
+              : `Te esperan ${total} decisiones`}
       </h1>
       <p className="mt-1.5 max-w-[62ch] text-body text-muted">
         {total === 0
@@ -378,123 +394,120 @@ export default function HoyView() {
         </div>
       ) : null}
 
-      <SectionHead label="Decisiones" count={total} />
+      <div className={previewing ? undefined : "lg:grid lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-8"}>
+        <div className="min-w-0">
+          <SectionHead label="Decisiones" count={total} />
 
-      {total === 0 ? (
-        <EmptyState
-          title="Bandeja limpia"
-          hint="Aquí llegan los gates de fase, las acciones que tocan sistemas del cliente y los entregables que los agentes dejan listos para tu visto bueno."
-        />
-      ) : (
-        <>
-          <div className="grid gap-2.5">
-            {top.map((decision) => (
-              <DecisionCard
-                key={decision.id}
-                decision={decision}
-                projectName={nameOf(decision)}
-                selectable={decision.risk === "bajo"}
-                selected={selected.includes(decision.id)}
-                onToggle={toggle}
-                defaultOpen
-              />
-            ))}
-          </div>
-
-          {batchCandidates.length > 1 ? (
-            <div
-              className="mt-3 flex flex-wrap items-center gap-3 rounded-soft border border-line-soft bg-surface-2 px-3.5 py-2.5"
-              data-testid="batch-bar"
-            >
-              <p className="text-small text-muted">
-                {batchCandidates.length} decisiones de riesgo bajo se pueden aprobar juntas.
-              </p>
-              <button
-                onClick={() =>
-                  setSelected(
-                    selected.length === batchCandidates.length ? [] : batchCandidates.map((d) => d.id),
-                  )
-                }
-                className="press text-small font-semibold text-link hover:underline"
-              >
-                {selected.length === batchCandidates.length ? "Quitar la selección" : "Seleccionarlas todas"}
-              </button>
-              <ActionButton
-                variant="primary"
-                disabled={selected.length === 0 || batching}
-                onClick={() => void approveSelected()}
-                data-testid="batch-approve"
-              >
-                {batching
-                  ? "Aprobando…"
-                  : selected.length === 0
-                    ? "Aprobar en lote"
-                    : `Aprobar ${selected.length} en lote`}
-              </ActionButton>
-            </div>
-          ) : null}
-
-          {groups.map((group) => (
-            <section key={group.key} className="mt-6" data-testid={`decision-group-${group.key}`}>
-              <div className="mb-2 flex flex-wrap items-baseline gap-2">
-                <h3 className="text-body font-semibold text-ink-2">{group.projectName}</h3>
-                <span className="text-small text-muted">{KIND_LABELS[group.kind]}</span>
-                <span className="text-small text-faint">{group.decisions.length}</span>
-              </div>
+          {total === 0 ? (
+            <EmptyState
+              title="Nada espera tu decisión"
+              hint="Los agentes siguen trabajando; te avisaremos aquí cuando necesiten algo de ti."
+            />
+          ) : (
+            <>
               <div className="grid gap-2.5">
-                {group.decisions.map((decision) => (
+                {top.map((decision) => (
                   <DecisionCard
                     key={decision.id}
                     decision={decision}
-                    projectName={group.projectName}
+                    clientName={nameOf(decision)}
                     selectable={decision.risk === "bajo"}
                     selected={selected.includes(decision.id)}
                     onToggle={toggle}
                   />
                 ))}
               </div>
-            </section>
-          ))}
-        </>
-      )}
 
-      <SectionHead label="Tus proyectos" count={visibleSummaries.length} />
-      {summariesLoading && visibleSummaries.length === 0 ? (
-        <Spinner label="Leyendo el estado de cada proyecto…" />
-      ) : (
-        <ProjectsTable summaries={visibleSummaries} />
-      )}
+              {batchCandidates.length > 1 ? (
+                <div
+                  className="mt-3 flex flex-wrap items-center gap-3 rounded-soft border border-line-soft bg-surface-2 px-3.5 py-2.5"
+                  data-testid="batch-bar"
+                >
+                  <p className="text-small text-muted">
+                    {batchCandidates.length} decisiones de riesgo bajo se pueden aprobar juntas.
+                  </p>
+                  <button
+                    onClick={() =>
+                      setSelected(
+                        selected.length === batchCandidates.length ? [] : batchCandidates.map((d) => d.id),
+                      )
+                    }
+                    className="press text-small font-semibold text-link hover:underline"
+                  >
+                    {selected.length === batchCandidates.length ? "Quitar la selección" : "Seleccionarlas todas"}
+                  </button>
+                  <ActionButton
+                    variant="primary"
+                    disabled={selected.length === 0 || batching}
+                    onClick={() => void approveSelected()}
+                    data-testid="batch-approve"
+                  >
+                    {batching
+                      ? "Aprobando…"
+                      : selected.length === 0
+                        ? "Aprobar en lote"
+                        : `Aprobar ${selected.length} en lote`}
+                  </ActionButton>
+                </div>
+              ) : null}
 
-      <SectionHead label="Pulso" />
-      <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat
-          value={pulse ? pulse.working : "—"}
-          label="Agentes trabajando"
-          {...(pulse && pulse.working > 0 ? { tone: "work" as const } : {})}
-        />
-        <Stat
-          value={pulse ? pulse.failed : "—"}
-          label={pulse?.failed === 1 ? "Ejecución fallida" : "Ejecuciones fallidas"}
-          tone={pulse && pulse.failed > 0 ? "broken" : undefined}
-        />
-        <Stat
-          value={pulse ? (pulse.spentToday === null ? "no reportado" : fmtCost(pulse.spentToday)) : "—"}
-          label="Gasto de hoy"
-        />
-        <Stat value={total} label={total === 1 ? "Decisión esperando" : "Decisiones esperando"} />
+              {groups.map((group) => (
+                <section key={group.key} data-testid={`decision-group-${group.key}`}>
+                  <SectionHead
+                    label={clientNameFor(group.projectId)}
+                    count={group.decisions.length}
+                    hint={KIND_LABELS[group.kind]}
+                  />
+                  <div className="grid gap-2.5">
+                    {group.decisions.map((decision) => (
+                      <DecisionCard
+                        key={decision.id}
+                        decision={decision}
+                        clientName={clientNameFor(group.projectId)}
+                        selectable={decision.risk === "bajo"}
+                        selected={selected.includes(decision.id)}
+                        onToggle={toggle}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </>
+          )}
+        </div>
+
+        {!previewing ? (
+          <aside className="mt-8 lg:mt-0">
+            <SectionHead label="Pulso" />
+            <div className="grid gap-3">
+              <Stat
+                value={pulse ? pulse.working : "—"}
+                label="Agentes trabajando"
+                {...(pulse && pulse.working > 0 ? { tone: "work" as const } : {})}
+              />
+              <Stat
+                value={pulse ? pulse.failed : "—"}
+                label={pulse?.failed === 1 ? "Ejecución fallida" : "Ejecuciones fallidas"}
+                tone={pulse && pulse.failed > 0 ? "broken" : undefined}
+              />
+              <Stat
+                value={pulse ? (pulse.spentToday === null ? "no reportado" : fmtCost(pulse.spentToday)) : "—"}
+                label="Gasto de hoy"
+              />
+            </div>
+
+            <SectionHead label="Atajos" />
+            <div className="flex flex-col items-start gap-2">
+              <Link to={paths.misTareas()} className="press text-small font-semibold text-link hover:underline">
+                Mis tareas
+              </Link>
+              <Link to={paths.tareas()} className="press text-small font-semibold text-link hover:underline">
+                Todas las tareas
+              </Link>
+            </div>
+          </aside>
+        ) : null}
       </div>
-
-      <p className="mt-6 text-small text-muted">
-        ¿Buscabas el trabajo y no la decisión?{" "}
-        <Link to={paths.tareas()} className="press font-semibold text-link hover:underline">
-          Ver todas las tareas
-        </Link>{" "}
-        de todos los clientes, o sólo{" "}
-        <Link to={paths.misTareas()} className="press font-semibold text-link hover:underline">
-          Ver mis tareas
-        </Link>
-        .
-      </p>
     </div>
   );
 }

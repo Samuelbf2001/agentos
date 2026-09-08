@@ -22,6 +22,10 @@ import { registerSourcesRoutes } from "./routes/sources.js";
 import { registerNotificationRoutes } from "./routes/notifications.js";
 import { registerNotionOriginRoutes } from "./routes/notion-origin.js";
 import { registerBrainRoutes } from "./routes/brain.js";
+import { registerOrgGraphRoutes } from "./routes/org-graph.js";
+import { registerProcessRoutes } from "./routes/processes.js";
+import { registerToolCatalogRoutes } from "./routes/tool-catalog.js";
+import { registerRoleAgentRoutes } from "./routes/role-agent.js";
 import { registerWebChannel } from "./routes/channel-web.js";
 import { registerWs } from "./ws.js";
 
@@ -84,6 +88,13 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
     const path = req.url.split("?")[0] ?? req.url;
     if (!path.startsWith("/api") && !path.startsWith("/v1")) return; // /ws hace su propia auth
     if (PUBLIC_PATHS.has(path)) return;
+    // Esta ruta solo EXISTE cuando el modo pruebas está activo (registrada
+    // condicionalmente en registerAuthAndHealth); dejarla pasar aquí no la
+    // hace pública con sandbox apagado, porque entonces no hay handler y
+    // Fastify responde 404 en vez del 401 fail-closed de esta guarda.
+    // Doble cerrojo: además de no existir el handler, la guarda solo la deja
+    // pasar cuando el contexto arrancó en modo pruebas.
+    if (ctx.sandbox && path === "/api/auth/sandbox-login") return;
 
     const headers = req.headers as { authorization?: string; cookie?: string };
     const token = extractToken(headers);
@@ -117,6 +128,10 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   registerNotificationRoutes(app, ctx);
   registerNotionOriginRoutes(app, ctx);
   registerBrainRoutes(app, ctx);
+  registerOrgGraphRoutes(app, ctx);
+  registerProcessRoutes(app, ctx);
+  registerToolCatalogRoutes(app, ctx);
+  registerRoleAgentRoutes(app, ctx);
   registerWebChannel(app, ctx);
   registerWs(app, ctx);
 

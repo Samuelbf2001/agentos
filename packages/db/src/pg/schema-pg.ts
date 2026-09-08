@@ -48,6 +48,7 @@ import type {
   ModuleBlueprint,
   ModuleStatus,
   OrgKind,
+  OrgRoleStatus,
   ProcessStatus,
   ProcessStep,
   ProcessVariant,
@@ -57,6 +58,7 @@ import type {
   ProjectType,
   ProviderCapabilities,
   ProviderKind,
+  RoleProcessRelation,
   RunStatus,
   RunTrigger,
   SpanKind,
@@ -543,6 +545,93 @@ export const processes = pgTable(
   (t) => [index("idx_processes_org").on(t.orgId)],
 );
 
+// ── Grafo organizacional (el rol es el centro: PRD v1.1 §3.1 y Parte II §5.3) ─
+
+export const orgUnits = pgTable(
+  "org_units",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    name: text("name").notNull(),
+    parentUnitId: text("parent_unit_id").references((): AnyPgColumn => orgUnits.id),
+    description: text("description"),
+    createdAt: epochMs("created_at").notNull(),
+    updatedAt: epochMs("updated_at").notNull(),
+  },
+  (t) => [index("idx_org_units_org").on(t.orgId)],
+);
+
+export const orgRoles = pgTable(
+  "org_roles",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id),
+    unitId: text("unit_id").references(() => orgUnits.id),
+    name: text("name").notNull(),
+    purpose: text("purpose"),
+    reportsToRoleId: text("reports_to_role_id").references((): AnyPgColumn => orgRoles.id),
+    canvasX: doublePrecision("canvas_x"),
+    canvasY: doublePrecision("canvas_y"),
+    status: text("status").$type<OrgRoleStatus>().notNull().default("draft"),
+    version: integer("version").notNull().default(1),
+    /** Agente que ejecuta este rol ("convertir en rol en agente"), o null si aún lo ocupa solo una persona. */
+    agentId: text("agent_id").references(() => agents.id),
+    createdAt: epochMs("created_at").notNull(),
+    updatedAt: epochMs("updated_at").notNull(),
+  },
+  (t) => [index("idx_org_roles_org").on(t.orgId), index("idx_org_roles_unit").on(t.unitId)],
+);
+
+export const roleFunctions = pgTable(
+  "role_functions",
+  {
+    id: text("id").primaryKey(),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => orgRoles.id),
+    name: text("name").notNull(),
+    description: text("description"),
+    position: integer("position").notNull().default(0),
+    createdAt: epochMs("created_at").notNull(),
+    updatedAt: epochMs("updated_at").notNull(),
+  },
+  (t) => [index("idx_role_functions_role").on(t.roleId)],
+);
+
+export const rolePeople = pgTable(
+  "role_people",
+  {
+    roleId: text("role_id")
+      .notNull()
+      .references(() => orgRoles.id),
+    personId: text("person_id")
+      .notNull()
+      .references(() => people.id),
+    dedicationPct: integer("dedication_pct"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roleId, t.personId], name: "pk_role_people" })],
+);
+
+export const roleProcesses = pgTable(
+  "role_processes",
+  {
+    roleId: text("role_id")
+      .notNull()
+      .references(() => orgRoles.id),
+    processId: text("process_id")
+      .notNull()
+      .references(() => processes.id),
+    relation: text("relation").$type<RoleProcessRelation>().notNull().default("participant"),
+    createdAt: epochMs("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.roleId, t.processId], name: "pk_role_processes" })],
+);
+
 export const methodologies = pgTable(
   "methodologies",
   {
@@ -783,6 +872,11 @@ export const PG_TABLE_ORDER = [
   "knowledge_docs",
   "project_sources",
   "processes",
+  "org_units",
+  "org_roles",
+  "role_functions",
+  "role_people",
+  "role_processes",
   "methodologies",
   "phase_modules",
   "tasks",

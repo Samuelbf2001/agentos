@@ -101,6 +101,8 @@ export interface TaskAssignee {
 export interface Project {
   id: string;
   orgId: string;
+  /** Nombre real del cliente (tabla orgs), cuando la API lo enriquece. */
+  orgName?: string | null;
   name: string;
   type: "assessment" | "transform" | "ops";
   stage: Stage;
@@ -787,6 +789,118 @@ export interface TopicEvent {
   payload: Record<string, unknown>;
   runId: string | null;
   createdAt: number;
+}
+
+// ── Organigrama del cliente ─────────────────────────────────────────────────
+// Espejo del contrato REST de apps/orgs/roles (camelCase como el resto de la
+// API). El rol es el centro: pertenece a un área, reporta a otro rol, lo
+// ocupan personas, tiene funciones y participa en procesos.
+
+export interface OrgUnit {
+  id: string;
+  orgId: string;
+  name: string;
+  parentUnitId: string | null;
+  description: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RoleFunction {
+  id: string;
+  roleId: string;
+  name: string;
+  description: string | null;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Persona asignada a un rol (tabla puente): dedicación opcional. */
+export interface OrgRolePerson {
+  personId: string;
+  dedicationPct: number | null;
+}
+
+/** Proceso vinculado a un rol: dueño o solo participante. */
+export interface OrgRoleProcessLink {
+  processId: string;
+  relation: "owner" | "participant";
+}
+
+export interface OrgRole {
+  id: string;
+  orgId: string;
+  unitId: string | null;
+  name: string;
+  purpose: string | null;
+  reportsToRoleId: string | null;
+  canvasX: number | null;
+  canvasY: number | null;
+  status: "draft" | "validated";
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  /** null si el rol todavía no se convirtió en agente. */
+  agentId: string | null;
+}
+
+/** Rol con sus relaciones cargadas, tal como lo sirve el grafo y el detalle. */
+export interface OrgRoleFull extends OrgRole {
+  functions: RoleFunction[];
+  people: OrgRolePerson[];
+  processes: OrgRoleProcessLink[];
+}
+
+/** Proyección mínima de proceso usada en el grafo (no el ProcessEntity completo). */
+export interface OrgGraphProcess {
+  id: string;
+  name: string;
+  variant: "as_is" | "to_be";
+  status: "draft" | "validated";
+  ownerPerson: string | null;
+}
+
+/** Proyección mínima de persona usada en el grafo del organigrama. */
+export interface OrgGraphPerson {
+  id: string;
+  fullName: string;
+  role: string | null;
+  isInternal: boolean;
+}
+
+/** Respuesta de GET /api/orgs/:orgId/graph: todo lo que pinta el canvas. */
+export interface OrgGraph {
+  units: OrgUnit[];
+  roles: OrgRoleFull[];
+  processes: OrgGraphProcess[];
+  people: OrgGraphPerson[];
+}
+
+// ── Convertir un rol en agente ──────────────────────────────────────────────
+
+/** Espejo camelCase de GET /api/tools/catalog (el wire llega en snake_case). */
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  externalEffect: boolean;
+  requiresApproval: boolean;
+}
+
+/** Lo mínimo del agente que devuelve POST /api/roles/:id/agent. */
+export interface RoleAgentSummary {
+  id: string;
+  slug: string;
+  name: string;
+  status: AgentStatus;
+  autonomy: "manual" | "supervised" | "auto";
+}
+
+export interface ConvertRoleToAgentResponse {
+  agent: RoleAgentSummary;
+  role: OrgRoleFull;
+  prompt_version: unknown;
 }
 
 /** Extrae el payload de dominio (busSink envuelve en {type, timestamp, payload}). */

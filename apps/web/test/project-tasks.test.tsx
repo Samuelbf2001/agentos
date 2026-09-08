@@ -210,9 +210,36 @@ describe("contrato visual de proyectos y tareas", () => {
       { path: "/api/projects/proj-1/launches", body: { launches: [] } },
       { path: "/api/projects/proj-1/phase-status", body: { status: { reason: "no_launch" } } },
     ]);
-    render(<BoardView />);
+    render(<BoardView projectId={project.id} />);
     const card = screen.getByTestId("task-card-t1");
     expect(card.getAttribute("role")).toBe("button");
     expect(card.getAttribute("tabindex")).toBe("0");
+  });
+
+  it("con stage ENTENDER el carril Construir nace plegado y «Mostrar» lo abre", () => {
+    useStore.setState({
+      board: {
+        projectId: project.id,
+        tasks: {
+          t1: makeTask({ id: "t1", stage: "ENTENDER" }),
+          t2: makeTask({ id: "t2", stage: "CONSTRUIR" }),
+        },
+      },
+    });
+    mockFetch([
+      { path: "/api/projects/proj-1/launches", body: { launches: [] } },
+      { path: "/api/projects/proj-1/phase-status", body: { status: { reason: "no_launch" } } },
+    ]);
+    render(<BoardView projectId={project.id} />);
+
+    // Entender es la etapa activa del proyecto: se ve abierta de entrada.
+    expect(screen.getByTestId("task-card-t1")).toBeTruthy();
+    // Construir no es la etapa actual: nace plegado, sin su tarjeta visible.
+    expect(screen.getByTestId("lane-CONSTRUIR-plegado")).toBeTruthy();
+    expect(screen.queryByTestId("task-card-t2")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("lane-CONSTRUIR-mostrar"));
+    expect(screen.getByTestId("task-card-t2")).toBeTruthy();
+    expect(screen.queryByTestId("lane-CONSTRUIR-plegado")).toBeNull();
   });
 });

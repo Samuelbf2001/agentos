@@ -56,6 +56,19 @@ export type ProjectSource = typeof s.projectSources.$inferSelect;
 export type NewProjectSource = typeof s.projectSources.$inferInsert;
 export type Process = typeof s.processes.$inferSelect;
 export type NewProcess = typeof s.processes.$inferInsert;
+
+// ── Grafo organizacional ─────────────────────────────────────────────────────
+export type OrgUnit = typeof s.orgUnits.$inferSelect;
+export type NewOrgUnit = typeof s.orgUnits.$inferInsert;
+export type OrgRole = typeof s.orgRoles.$inferSelect;
+export type NewOrgRole = typeof s.orgRoles.$inferInsert;
+export type RoleFunction = typeof s.roleFunctions.$inferSelect;
+export type NewRoleFunction = typeof s.roleFunctions.$inferInsert;
+export type RolePerson = typeof s.rolePeople.$inferSelect;
+export type NewRolePerson = typeof s.rolePeople.$inferInsert;
+export type RoleProcess = typeof s.roleProcesses.$inferSelect;
+export type NewRoleProcess = typeof s.roleProcesses.$inferInsert;
+
 export type Methodology = typeof s.methodologies.$inferSelect;
 export type NewMethodology = typeof s.methodologies.$inferInsert;
 export type PhaseModule = typeof s.phaseModules.$inferSelect;

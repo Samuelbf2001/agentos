@@ -1,15 +1,24 @@
 /**
- * El shell (PLAN-v1.5 §2). El proyecto es el objeto raíz cuando se trabaja
- * dentro de un cliente, pero la puerta del trabajo diario es Hoy más Tareas:
- * cinco entradas globales, cinco pestañas dentro del proyecto, y ni un emoji de
- * navegación ni la ruta del navegador impresa en pantalla.
+ * El shell (menú lateral + cambio de perspectiva). El proyecto es el objeto
+ * raíz cuando se trabaja dentro de un cliente, pero la puerta del trabajo
+ * diario es Hoy más Tareas: el lateral pinta agencia o cliente según la URL,
+ * y ni un emoji de navegación ni la ruta del navegador impresa en pantalla.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import App from "../src/App";
 import { useStore } from "../src/state/store";
 import { agents, makeTask, mockFetch, person, project } from "./helpers";
+
+const locationProbe: { pathname: string; search: string } = { pathname: "", search: "" };
+
+function LocationProbe() {
+  const location = useLocation();
+  locationProbe.pathname = location.pathname;
+  locationProbe.search = location.search;
+  return null;
+}
 
 const routes = [
   { path: "/api/waiting", body: { approvals: [], review_tasks: [] } },
@@ -23,6 +32,24 @@ const routes = [
   { path: "/api/tasks", body: { tasks: [] } },
   { path: "/api/auth/people", body: { people: [person] } },
   { path: "/api/brain/overview", body: { generated_at: null, core: { counts: {}, people: [] }, agents: { items: [], tree: null, health: [] }, sources: [], modules: [] } },
+  { path: "/api/knowledge", body: { docs: [] } },
+  { path: /^\/api\/projects\/[^/]+\/sources$/, body: { sources: [] } },
+  { path: "/api/processes", body: { processes: [] } },
+  {
+    path: "/api/meetings/processing",
+    body: {
+      source: "2brain / WhatsAppHub",
+      mode: "remote_read_only",
+      page: 1,
+      page_size: 20,
+      status: "all",
+      total: 0,
+      has_more: false,
+      queue: { pending: 0, errors: 0, complete: 0 },
+      agentos_context: { linked: 0, ingested: 0, errors: 0 },
+      meetings: [],
+    },
+  },
 ];
 
 function renderApp(entry: string) {
@@ -42,6 +69,7 @@ function renderApp(entry: string) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <App />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -55,25 +83,28 @@ describe("shell y navegación", () => {
     localStorage.clear();
   });
 
-  it("tiene exactamente cinco entradas globales, sin emoji ni ruta impresa", async () => {
+  it("el menú lateral pinta las entradas de agencia, sin emoji ni ruta impresa", async () => {
     const { container } = renderApp("/hoy");
     const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
-    const labels = within(nav)
-      .getAllByRole("link")
-      .map((a) => a.textContent?.trim());
-    expect(labels).toEqual(["Hoy", "Tareas", "Proyectos", "Sistema", "Activo Sixteam"]);
+    for (const label of [
+      "Hoy",
+      "Tareas",
+      "Clientes",
+      "Panorama",
+      "Reuniones",
+      "Método",
+      "Equipo",
+      "Ahora mismo",
+      "Actividad",
+      "Fuentes",
+      "Configuración",
+    ]) {
+      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    }
 
     // Los destinos hermanos que se desmontaron ya no son entradas de menú.
     // "Mis tareas" tampoco: ahora es un filtro dentro de Tareas.
-    for (const gone of [
-      "Chat",
-      "Cerebro",
-      "Enjambre",
-      "Esperando por ti",
-      "Admin",
-      "Reuniones",
-      "Mis tareas",
-    ]) {
+    for (const gone of ["Chat", "Cerebro", "Enjambre", "Esperando por ti", "Admin", "Mis tareas"]) {
       expect(within(nav).queryByText(gone)).toBeNull();
     }
     expect(container.textContent).not.toContain("/hoy");
@@ -84,24 +115,22 @@ describe("shell y navegación", () => {
     expect(await screen.findByRole("heading", { level: 1, name: /decisi/i })).toBeTruthy();
   });
 
-  it("dentro del proyecto muestra cliente, fase y las cinco pestañas", async () => {
+  it("dentro del proyecto muestra cliente, fase y el menú de cliente en el lateral", async () => {
     renderApp(`/proyectos/${project.id}/ruta`);
     expect(await screen.findByRole("heading", { name: project.name })).toBeTruthy();
-    const tabs = await screen.findByRole("navigation", { name: "Secciones del proyecto" });
-    expect(
-      within(tabs)
-        .getAllByRole("link")
-        .map((a) => a.textContent?.trim()),
-    ).toEqual(["Ruta", "Tablero", "Contexto", "Conversación", "Actividad"]);
-    // El chip de fase vive en la barra, siempre visible.
-    expect(screen.getByTitle("Fase Entender")).toBeTruthy();
+    const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+    for (const label of ["Resumen", "Tablero", "Contexto", "Conversación", "Actividad", "Decisiones"]) {
+      expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    }
+    // El chip de fase vive en la cabecera de la página y en la miga de pan.
+    expect(screen.getAllByTitle("Fase Entender").length).toBeGreaterThan(0);
     expect(screen.getByText("Gate pendiente")).toBeTruthy();
   });
 
   it("las rutas viejas redirigen a su nuevo sitio en vez de romperse", async () => {
     renderApp("/brain");
-    expect(await screen.findByRole("heading", { name: "Sistema" })).toBeTruthy();
-    expect(screen.getByText("Contadores y fuentes de datos.")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Fuentes" })).toBeTruthy();
+    expect(screen.getByText("Estado de las fuentes externas de las que dependen los agentes.")).toBeTruthy();
   });
 
   it("el enjambre vive en Sistema y ya no es entrada de menú", async () => {
@@ -109,11 +138,66 @@ describe("shell y navegación", () => {
     expect(await screen.findByText("Quién está trabajando en este segundo y con qué herramienta.")).toBeTruthy();
   });
 
-  it("la barra superior flota con desenfoque y el contenido pasa por debajo", async () => {
+  it("el shell pinta el menú lateral y la barra superior con la miga de pan", async () => {
     const { container } = renderApp("/hoy");
     await screen.findByRole("navigation", { name: "Navegación principal" });
-    expect(container.querySelector("header.chrome")).toBeTruthy();
-    expect(container.querySelector(".scroll-edge")).toBeTruthy();
+    expect(container.querySelector("aside")).toBeTruthy();
+    expect(container.querySelector("header")).toBeTruthy();
+    expect(screen.getAllByText("Sixteam").length).toBeGreaterThan(0);
+  });
+
+  it("la sub-pestaña de Contexto vive en la URL y el lateral la refleja", async () => {
+    renderApp(`/proyectos/${project.id}/contexto/procesos`);
+    const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+    const contextoLink = within(nav).getByRole("link", { name: "Contexto" });
+    expect(contextoLink.className).toContain("bg-link");
+    // El hijo del lateral sólo se pinta con el padre activo.
+    expect(within(nav).getByRole("link", { name: "Procesos" })).toBeTruthy();
+    expect(await screen.findByText("Todavía no hay procesos mapeados")).toBeTruthy();
+  });
+
+  it("una sub-pestaña de Contexto inválida redirige a documentos", async () => {
+    renderApp(`/proyectos/${project.id}/contexto/otra`);
+    expect(await screen.findByText("Sin documentos")).toBeTruthy();
+  });
+
+  it("/board redirige a /proyectos", async () => {
+    renderApp("/board");
+    expect(await screen.findByRole("heading", { name: "Clientes" })).toBeTruthy();
+  });
+
+  it("/context redirige a /proyectos", async () => {
+    renderApp("/context");
+    expect(await screen.findByRole("heading", { name: "Clientes" })).toBeTruthy();
+  });
+
+  it("/meetings redirige a 2brain › Reuniones", async () => {
+    renderApp("/meetings");
+    expect(await screen.findByRole("heading", { name: "Reuniones" })).toBeTruthy();
+  });
+
+  it("/sistema/salud redirige a Sistema › Fuentes", async () => {
+    renderApp("/sistema/salud");
+    expect(await screen.findByText("Estado de las fuentes externas de las que dependen los agentes.")).toBeTruthy();
+  });
+
+  it("/sistema/ajustes redirige a Sistema › Configuración", async () => {
+    renderApp("/sistema/ajustes");
+    expect(await screen.findByText("Configuración de la aplicación y estado de los agentes.")).toBeTruthy();
+  });
+
+  it("/admin redirige a Sistema › Configuración", async () => {
+    renderApp("/admin");
+    expect(await screen.findByText("Configuración de la aplicación y estado de los agentes.")).toBeTruthy();
+  });
+
+  it("/?tarea=t1 termina en /hoy conservando la query", async () => {
+    renderApp("/?tarea=t1");
+    await screen.findByRole("heading", { level: 1, name: /decisi/i });
+    await waitFor(() => {
+      expect(locationProbe.pathname).toBe("/hoy");
+      expect(locationProbe.search).toBe("?tarea=t1");
+    });
   });
 
   it("«/» abre el buscador de tareas desde cualquier pantalla y Esc lo cierra", async () => {

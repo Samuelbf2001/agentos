@@ -9,6 +9,7 @@ import type {
   Approval,
   Artifact,
   BrainOverview,
+  ConvertRoleToAgentResponse,
   KnowledgeDoc,
   LaunchReceipt,
   LaunchResponse,
@@ -20,6 +21,7 @@ import type {
   PhaseClosureStatus,
   PreviewResult,
   ProcessEntity,
+  ProcessStep,
   Project,
   ProjectSource,
   ProjectSourceExternalRef,
@@ -28,6 +30,12 @@ import type {
   SourceBrowseItem,
   MeetingProcessingFilter,
   MeetingProcessingOverview,
+  OrgGraph,
+  OrgRoleFull,
+  OrgRolePerson,
+  OrgRoleProcessLink,
+  OrgUnit,
+  RoleFunction,
   Run,
   Span,
   Stage,
@@ -40,6 +48,7 @@ import type {
   TaskSearchHit,
   TaskStatus,
   Thread,
+  ToolCatalogEntry,
 } from "./types";
 
 const configuredApiBase =
@@ -172,6 +181,24 @@ function normalizeTaskDetail(raw: TaskDetailResponse): TaskDetailResponse {
   return response;
 }
 
+interface WireToolCatalogEntry {
+  name: string;
+  description: string;
+  read_only: boolean;
+  external_effect: boolean;
+  requires_approval: boolean;
+}
+
+function normalizeToolCatalogEntry(entry: WireToolCatalogEntry): ToolCatalogEntry {
+  return {
+    name: entry.name,
+    description: entry.description,
+    readOnly: entry.read_only,
+    externalEffect: entry.external_effect,
+    requiresApproval: entry.requires_approval,
+  };
+}
+
 /** Hook para 401: la shell lo usa para volver al login. */
 export let onUnauthorized: (() => void) | null = null;
 export function setOnUnauthorized(fn: (() => void) | null): void {
@@ -217,18 +244,22 @@ async function request<T>(
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 export const api = {
-  request,
-
   people: () => request<{ people: Person[] }>("/api/auth/people"),
   login: (password: string, personId: string) =>
     request<{ token: string; person: Person }>("/api/auth/login", {
       method: "POST",
       body: { password, person_id: personId },
     }),
-  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  /** Modo pruebas (sandbox): entrada sin contraseña, misma forma que login(). */
+  sandboxLogin: (personId: string) =>
+    request<{ token: string; person: Person }>("/api/auth/sandbox-login", {
+      method: "POST",
+      body: { person_id: personId },
+    }),
   health: () =>
     request<{
       ok: boolean;
+      sandbox: boolean;
       kill_switch: boolean;
       counts: Record<string, number>;
     }>("/api/health"),
@@ -327,29 +358,6 @@ export const api = {
         ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
       }),
     })),
-  /** Alias explícito para callers que nombran la mutación por verbo HTTP. */
-  patchTask: (
-    id: string,
-    body: {
-      expected_version: number;
-      title?: string;
-      description?: string | null;
-      definition_of_done?: string | null;
-      activity_type?: string | null;
-      priority?: Task["priority"];
-      due_at?: number | null;
-    },
-  ) =>
-    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}`, {
-      method: "PATCH",
-      body,
-    }).then((result) => ({
-      ...result,
-      task: normalizeTask({
-        ...(result.task as WireTask),
-        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
-      }),
-    })),
   assignTask: (
     id: string,
     body: {
@@ -359,21 +367,6 @@ export const api = {
       /** Optional: kept separate from people; the UI does not edit it. */
       agent_slug?: string | null;
     },
-  ) =>
-    request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/assign`, {
-      method: "POST",
-      body,
-    }).then((result) => ({
-      ...result,
-      task: normalizeTask({
-        ...(result.task as WireTask),
-        ...(result.assignees && !result.task.assignees ? { assignees: result.assignees } : {}),
-      }),
-    })),
-  /** Nombre de dominio alternativo usado por algunos consumidores del módulo. */
-  assignPeople: (
-    id: string,
-    body: { expected_version: number; assignee_person_ids: string[]; primary_assignee_person_id?: string | null },
   ) =>
     request<{ task: Task; assignees?: TaskAssignee[] }>(`/api/tasks/${id}/assign`, {
       method: "POST",
@@ -480,7 +473,6 @@ export const api = {
   cancelRun: (id: string) => request<{ run: Run }>(`/api/runs/${id}/cancel`, { method: "POST" }),
 
   // ── Approvals / bandeja ───────────────────────────────────────────────────
-  approvalsPending: () => request<{ approvals: Approval[] }>("/api/approvals/pending"),
   /** Bandeja completa (CA-4.2, H10): aprobaciones + entregables en REVIEW con artefactos. */
   waiting: () =>
     request<{ approvals: Approval[]; review_tasks: { task: Task; artifacts: Artifact[] }[] }>(
@@ -540,13 +532,35 @@ export const api = {
     request<{ hits: KnowledgeDoc[] }>(
       `/api/knowledge/search?q=${encodeURIComponent(query)}&limit=${limit}`,
     ),
-  knowledgeDoc: (id: string) => request<{ doc: KnowledgeDoc }>(`/api/knowledge/${id}`),
   processes: (orgId?: string) =>
     request<{ processes: ProcessEntity[] }>(`/api/processes${orgId ? `?org_id=${orgId}` : ""}`),
-  process: (id: string) => request<{ process: ProcessEntity }>(`/api/processes/${id}`),
+  createProcess: (
+    orgId: string,
+    body: {
+      name: string;
+      variant?: "as_is" | "to_be";
+      owner_person?: string | null;
+      steps?: ProcessStep[];
+      systems?: string[];
+      pain_points?: string[];
+      iso_refs?: string[];
+    },
+  ) => request<{ process: ProcessEntity }>(`/api/orgs/${orgId}/processes`, { method: "POST", body }),
+  updateProcess: (
+    id: string,
+    body: {
+      name?: string;
+      variant?: "as_is" | "to_be";
+      owner_person?: string | null;
+      steps?: ProcessStep[];
+      systems?: string[];
+      pain_points?: string[];
+      iso_refs?: string[];
+      status?: "draft" | "validated";
+    },
+  ) => request<{ process: ProcessEntity }>(`/api/processes/${id}`, { method: "PATCH", body }),
+  deleteProcess: (id: string) => request<{ ok: boolean }>(`/api/processes/${id}`, { method: "DELETE" }),
   methodologies: () => request<{ methodologies: Methodology[] }>("/api/methodologies"),
-  methodology: (slug: string) =>
-    request<{ methodology: Methodology }>(`/api/methodologies/${slug}`),
 
   // ── Módulos de Fase (M4 — wizard "Nuevo proyecto") ────────────────────────
   modules: () => request<{ modules: ModuleSummary[] }>("/api/modules"),
@@ -604,6 +618,73 @@ export const api = {
     const params = new URLSearchParams({ status, page: String(page) });
     return request<MeetingProcessingOverview>(`/api/meetings/processing?${params.toString()}`);
   },
+
+  // ── Organigrama ────────────────────────────────────────────────────────────
+  orgGraph: (orgId: string) => request<OrgGraph>(`/api/orgs/${orgId}/graph`),
+  createOrgUnit: (
+    orgId: string,
+    body: { name: string; parent_unit_id?: string | null; description?: string | null },
+  ) => request<{ unit: OrgUnit }>(`/api/orgs/${orgId}/units`, { method: "POST", body }),
+  updateOrgUnit: (
+    id: string,
+    body: { name?: string; parent_unit_id?: string | null; description?: string | null },
+  ) => request<{ unit: OrgUnit }>(`/api/units/${id}`, { method: "PATCH", body }),
+  deleteOrgUnit: (id: string) => request<{ ok: boolean }>(`/api/units/${id}`, { method: "DELETE" }),
+  createOrgRole: (
+    orgId: string,
+    body: {
+      name: string;
+      unit_id?: string | null;
+      purpose?: string | null;
+      reports_to_role_id?: string | null;
+      canvas_x?: number;
+      canvas_y?: number;
+    },
+  ) => request<{ role: OrgRoleFull }>(`/api/orgs/${orgId}/roles`, { method: "POST", body }),
+  updateOrgRole: (
+    id: string,
+    body: {
+      name?: string;
+      unit_id?: string | null;
+      purpose?: string | null;
+      reports_to_role_id?: string | null;
+      canvas_x?: number;
+      canvas_y?: number;
+      status?: "draft" | "validated";
+      expected_version?: number;
+    },
+  ) => request<{ role: OrgRoleFull }>(`/api/roles/${id}`, { method: "PATCH", body }),
+  deleteOrgRole: (id: string) => request<{ ok: boolean }>(`/api/roles/${id}`, { method: "DELETE" }),
+  replaceRoleFunctions: (
+    id: string,
+    functions: { id?: string; name: string; description?: string | null }[],
+  ) => request<{ functions: RoleFunction[] }>(`/api/roles/${id}/functions`, { method: "PUT", body: { functions } }),
+  replaceRolePeople: (id: string, people: { person_id: string; dedication_pct?: number | null }[]) =>
+    request<{ people: OrgRolePerson[] }>(`/api/roles/${id}/people`, { method: "PUT", body: { people } }),
+  replaceRoleProcesses: (
+    id: string,
+    processes: { process_id: string; relation: "owner" | "participant" }[],
+  ) =>
+    request<{ processes: OrgRoleProcessLink[] }>(`/api/roles/${id}/processes`, {
+      method: "PUT",
+      body: { processes },
+    }),
+
+  // ── Convertir un rol en agente ────────────────────────────────────────────
+  toolCatalog: async () => {
+    const { tools } = await request<{ tools: WireToolCatalogEntry[] }>("/api/tools/catalog");
+    return { tools: tools.map(normalizeToolCatalogEntry) };
+  },
+  convertRoleToAgent: (
+    roleId: string,
+    body: {
+      function_ids: string[];
+      autonomy: "manual" | "supervised";
+      activate: boolean;
+      tools_allowlist: string[];
+      name?: string;
+    },
+  ) => request<ConvertRoleToAgentResponse>(`/api/roles/${roleId}/agent`, { method: "POST", body }),
 };
 
 export type Api = typeof api;

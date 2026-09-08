@@ -196,10 +196,11 @@ describe.skipIf(!PG_URL)("paridad SQLite ↔ Postgres", () => {
       const readyPg = (await listTasks(pg, { status: "READY" })).length;
 
       // Todos los conteos coinciden, `tables` incluido: se cuenta con catálogos
-      // distintos (sqlite_master vs information_schema) y aun así da 31 en ambos
-      // (25 originales + task_labels de la 0006 + las 5 de linaje de Notion de la 0007).
+      // distintos (sqlite_master vs information_schema) y aun así da 36 en ambos
+      // (25 originales + task_labels de la 0006 + las 5 de linaje de Notion de la
+      // 0007 + las 5 del grafo organizacional de la 0008).
       expect(conteosPg).toEqual(conteosLite);
-      expect(conteosPg.tables).toBe(31);
+      expect(conteosPg.tables).toBe(36);
       expect(readyPg).toBe(readyLite);
 
       // NM-1 en Postgres.
