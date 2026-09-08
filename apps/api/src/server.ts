@@ -24,6 +24,8 @@ import { registerNotionOriginRoutes } from "./routes/notion-origin.js";
 import { registerBrainRoutes } from "./routes/brain.js";
 import { registerOrgGraphRoutes } from "./routes/org-graph.js";
 import { registerProcessRoutes } from "./routes/processes.js";
+import { registerToolCatalogRoutes } from "./routes/tool-catalog.js";
+import { registerRoleAgentRoutes } from "./routes/role-agent.js";
 import { registerWebChannel } from "./routes/channel-web.js";
 import { registerWs } from "./ws.js";
 
@@ -128,6 +130,8 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   registerBrainRoutes(app, ctx);
   registerOrgGraphRoutes(app, ctx);
   registerProcessRoutes(app, ctx);
+  registerToolCatalogRoutes(app, ctx);
+  registerRoleAgentRoutes(app, ctx);
   registerWebChannel(app, ctx);
   registerWs(app, ctx);
 

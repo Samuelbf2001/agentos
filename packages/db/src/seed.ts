@@ -25,11 +25,12 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ProviderCapabilities } from "@agentos/shared";
+import { errors, type AgentRuntime, type ProviderCapabilities } from "@agentos/shared";
 import { resolveDbPath } from "./client.js";
 import type { AnyDb } from "./facade.js";
 import { applyMigrations, closeAnyDb, openConfiguredDb } from "./open.js";
 import { launchModule } from "./modules/launch.js";
+import type { ProviderProfile } from "./types.js";
 import { loadAgentSeeds, loadMethodologySeeds, loadModuleSeeds, sha256 } from "./seed-sources.js";
 import {
   ConfigKeys,
@@ -44,6 +45,7 @@ import {
   getActivePrompt,
   getAgent,
   getConfig,
+  getDefaultProviderProfile,
   getOrganizationByName,
   getOrgRole,
   getOrgRoleByName,
@@ -87,6 +89,65 @@ export const FALLBACK_CLAUDE_MODEL = "sonnet";
 export function isAnthropicModel(model: string | null | undefined): boolean {
   if (!model) return false;
   return /^(sonnet|opus|haiku)\b/i.test(model) || /^claude[-_]/i.test(model);
+}
+
+export interface ResolveAgentProviderWanted {
+  /** Slug del perfil deseado; sin él, se usa el perfil por defecto (`is_default`). */
+  providerProfileSlug?: string;
+  runtime?: AgentRuntime;
+  model?: string | null;
+}
+
+export interface ResolvedAgentProvider {
+  profile: ProviderProfile;
+  runtime: AgentRuntime;
+  model: string | null;
+  /** true si tuvo que caer a claude_subscription/claude_code por falta de credencial. */
+  fallbackApplied: boolean;
+}
+
+/**
+ * Regla del fallback de arranque (ARCHITECTURE §3), extraída de `seedCatalog`
+ * para reutilizarla también al convertir un rol en agente (§"convertir en
+ * agente"): sin credencial configurada para el perfil deseado — o si el
+ * perfil por defecto ES `claude_subscription` pero el runtime pedido no es
+ * `claude_code` — cae a `claude_subscription`/`claude_code`, y el modelo cae
+ * a un alias Anthropic válido si el pedido no lo era (H5).
+ */
+export async function resolveAgentProvider(
+  db: AnyDb,
+  wanted: ResolveAgentProviderWanted = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ResolvedAgentProvider> {
+  const desired = wanted.providerProfileSlug
+    ? await getProviderProfileBySlug(db, wanted.providerProfileSlug)
+    : await getDefaultProviderProfile(db);
+  let runtime: AgentRuntime = wanted.runtime ?? "ai_sdk";
+  let model = wanted.model ?? null;
+  let profile = desired;
+
+  const needsFallback =
+    !desired ||
+    !isProviderConfigured(desired, env) ||
+    (desired.kind === "claude_subscription" && runtime !== "claude_code");
+
+  let fallbackApplied = false;
+  if (needsFallback) {
+    // Sin credencial (ni perfil por defecto usable) → suscripción Claude.
+    profile = await getProviderProfileBySlug(db, "claude_subscription");
+    if (runtime === "ai_sdk") {
+      runtime = "claude_code";
+      fallbackApplied = true;
+    }
+    // H5: el CLI de Claude no puede correr modelos no-Anthropic.
+    if (!isAnthropicModel(model)) model = FALLBACK_CLAUDE_MODEL;
+  }
+  if (!profile) {
+    throw errors.configuration(
+      "No hay proveedor disponible para el agente: falta el perfil por defecto y claude_subscription",
+    );
+  }
+  return { profile, runtime, model, fallbackApplied };
 }
 
 const caps = (over: Partial<ProviderCapabilities> = {}): ProviderCapabilities => ({
@@ -428,30 +489,25 @@ export async function seedCatalog(
   const agentsFallback: string[] = [];
   const agentIdBySlug = new Map<string, string>();
   for (const seedDef of loadAgentSeeds()) {
-    const desired = await getProviderProfileBySlug(db, seedDef.meta.provider_profile);
-    let runtime = seedDef.meta.runtime;
-    let model = seedDef.meta.model;
-    let profile = desired;
-    if (!desired || !isProviderConfigured(desired, env)) {
-      // Sin credencial → suscripción Claude (runtime claude_code). La UI lo señalará.
-      profile = (await getProviderProfileBySlug(db, "claude_subscription"))!;
-      if (seedDef.meta.runtime === "ai_sdk") {
-        runtime = "claude_code";
-        agentsFallback.push(seedDef.meta.slug);
-      }
-      // H5: el CLI de Claude no puede correr modelos no-Anthropic (gpt-5, kimi,
-      // MiniMax...). Si el fallback cambia el proveedor, el modelo cae a un
-      // alias Anthropic válido — modelo y runtime SIEMPRE coherentes.
-      if (!isAnthropicModel(model)) model = FALLBACK_CLAUDE_MODEL;
-    }
+    const resolved = await resolveAgentProvider(
+      db,
+      {
+        providerProfileSlug: seedDef.meta.provider_profile,
+        runtime: seedDef.meta.runtime,
+        model: seedDef.meta.model,
+      },
+      env,
+    );
+    const { profile, runtime, model } = resolved;
+    if (resolved.fallbackApplied) agentsFallback.push(seedDef.meta.slug);
     // El hash incluye el resultado del fallback: si aparece la credencial, el seed se re-aplica.
-    const effectiveHash = sha256(`${seedDef.hash}|${profile!.slug}|${runtime}|${model}`);
+    const effectiveHash = sha256(`${seedDef.hash}|${profile.slug}|${runtime}|${model}`);
     const { agent, seedChanged } = await upsertAgentFromSeed(db, {
       slug: seedDef.meta.slug,
       name: seedDef.meta.name,
       layer: seedDef.meta.layer,
       runtime,
-      providerProfileId: profile!.id,
+      providerProfileId: profile.id,
       model,
       toolsAllowlist: seedDef.meta.tools,
       mcpAllowlist: [],
