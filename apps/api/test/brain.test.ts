@@ -55,6 +55,10 @@ describe("GET /api/brain/overview", () => {
   });
 
   it("expone datos locales reales sin correos/teléfonos y conserva el catálogo de etapas Notion", async () => {
+    // Sin esto el test lee `<cwd>/data/notion-snapshots` y el resultado depende
+    // de si la máquina tiene snapshots reales en disco: verde desde el paquete,
+    // rojo desde la raíz del monorepo.
+    vi.stubEnv("AGENTOS_NOTION_SNAPSHOT_PATH", path.join(os.tmpdir(), "agentos-brain-no-snapshot"));
     const fx = await makeFixture({ whatsappHub: emptyConnector() });
     try {
       const response = await overview(fx);
