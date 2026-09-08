@@ -16,7 +16,7 @@
  * entera con sus responsables, así que los filtros se cruzan en el navegador y
  * ninguna combinación cuesta una ida y vuelta.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronsUpDown, Search, SlidersHorizontal } from "lucide-react";
 import {
@@ -58,6 +58,7 @@ import {
   AGRUPACION_LABELS,
   COLUMNAS,
   COLUMNA_LABELS,
+  ESTADOS_CERRADOS,
   FILTROS_VACIOS,
   VENCIMIENTOS,
   VENCIMIENTO_LABELS,
@@ -93,11 +94,66 @@ const selectClass =
   "min-h-8 rounded-tight border border-line bg-surface px-2 py-1 text-small text-ink-2 focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
 
 /**
+ * Filtro rápido de la barra: los tres cortes que se usan a diario —responsable,
+ * cliente y vencimiento— no viven detrás del plegable "Filtros", porque
+ * esconderlos es esconder la base. Son los MISMOS filtros del panel (la misma
+ * `Filtros` y la misma escritura en la URL), sólo que a la mano; por eso
+ * salieron del panel en vez de duplicarse allí.
+ */
+function FiltroRapido({
+  id,
+  testid,
+  etiqueta,
+  value,
+  onChange,
+  children,
+}: {
+  id: string;
+  testid: string;
+  etiqueta: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
+  const activo = value !== "";
+  return (
+    <div className="relative min-w-0">
+      <label className="sr-only" htmlFor={id}>
+        {etiqueta}
+      </label>
+      <select
+        id={id}
+        data-testid={testid}
+        aria-label={etiqueta}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={`min-h-10 max-w-[9.5rem] appearance-none truncate rounded-full py-1 pl-3 pr-7 text-small focus:outline-none focus:ring-2 focus:ring-link ${
+          activo ? "bg-link-bg font-semibold text-link" : "bg-surface text-muted shadow-rest"
+        }`}
+      >
+        {children}
+      </select>
+      <ChevronsUpDown
+        size={14}
+        strokeWidth={1.75}
+        aria-hidden="true"
+        className={`pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 ${
+          activo ? "text-link" : "text-faint"
+        }`}
+      />
+    </div>
+  );
+}
+
+/**
  * Tope de render (I2): con miles de tareas la base entera se pide de una
  * sola vez, pero pintar todas las filas de golpe cuesta. Filtros y contadores
  * siguen viendo el total; sólo la tabla/tablero se sirve por páginas.
  */
 const RENDER_STEP = 200;
+
+/** Filtros que ya se ven en la barra: no cuentan para el badge del plegable. */
+const FILTROS_EN_LA_BARRA: (keyof Filtros)[] = ["texto", "cliente", "responsable", "vencimiento"];
 
 // ── Estado en línea: el motor puede decir que no, y entonces se revierte ────
 
@@ -610,6 +666,28 @@ export default function TareasView() {
     return ordenar(filtrar(tasks, filtros, ctx), orden.columna, orden.direccion, ctx);
   }, [tasks, filtros, ctx, orden]);
 
+  /**
+   * Cuántas tareas terminadas está escondiendo el filtro por defecto AQUÍ, con
+   * los demás filtros puestos: se cuenta sobre la misma base ya filtrada por
+   * cliente, responsable, texto… y sólo se cambia `cerradas`. Si filtras por un
+   * cliente, el número es el de ESE cliente, no el de las 1005 de la base.
+   *
+   * Esconder lo terminado es lo correcto —el trabajo pendiente es lo que
+   * importa—, pero hacerlo en silencio no: con 1005 de 1232 tareas ocultas, el
+   * humano concluye que "le faltan tareas". Por eso el número se dice y se
+   * puede desactivar de un clic.
+   */
+  const conCerradas = useMemo(() => {
+    if (!tasks || filtros.cerradas) return visibles;
+    return filtrar(tasks, { ...filtros, cerradas: true }, ctx);
+  }, [tasks, filtros, ctx, visibles]);
+  const cerradasOcultas = filtros.cerradas ? 0 : conCerradas.length - visibles.length;
+  const cerradasIncluidas = useMemo(
+    () =>
+      filtros.cerradas ? visibles.filter((task) => ESTADOS_CERRADOS.includes(task.status)).length : 0,
+    [filtros.cerradas, visibles],
+  );
+
   // El tope de render vuelve a 200 cuando cambian filtros, agrupación u
   // orden: si no, "Mostrar más" de una vista anterior se arrastraría a otra.
   useEffect(() => {
@@ -644,9 +722,13 @@ export default function TareasView() {
   /** Orden de recorrido del teclado: el mismo que se ve, grupo a grupo. */
   const recorrido = useMemo(() => grupos.flatMap((grupo) => grupo.tasks), [grupos]);
   const chips = useMemo(() => chipsActivos(filtros, ctx), [filtros, ctx]);
-  // El texto vive en el buscador, siempre visible: el badge de "Filtros"
-  // cuenta sólo lo que está dentro del panel plegable.
-  const filtrosPanelCount = useMemo(() => chips.filter((chip) => chip.key !== "texto").length, [chips]);
+  // El texto vive en el buscador y responsable/cliente/vencimiento en la barra,
+  // todos siempre visibles: el badge de "Filtros" cuenta sólo lo que está
+  // dentro del panel plegable y, por tanto, no se ve si no se abre.
+  const filtrosPanelCount = useMemo(
+    () => chips.filter((chip) => !FILTROS_EN_LA_BARRA.includes(chip.key)).length,
+    [chips],
+  );
   const clientes = useMemo(() => clientesDe(ctx), [ctx]);
   const proyectosDelCliente = useMemo(
     () => (filtros.cliente ? projects.filter((p) => p.orgId === filtros.cliente) : projects),
@@ -752,7 +834,7 @@ export default function TareasView() {
 
       {/* ── Buscar, filtrar y agrupar: todo en una fila ───────────────────── */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-52 flex-1">
+        <div className="relative min-w-[11rem] flex-1">
           <label htmlFor="tareas-buscar" className="sr-only">
             Buscar entre todas las tareas
           </label>
@@ -770,7 +852,7 @@ export default function TareasView() {
             value={filtros.texto}
             onChange={(event) => setFiltro("texto", event.target.value)}
             placeholder="Buscar en todas las tareas…"
-            className="min-h-8 w-full rounded-full bg-surface pl-8 pr-8 py-1 text-small shadow-rest focus:outline-none focus:ring-2 focus:ring-link"
+            className="min-h-10 w-full rounded-full bg-surface pl-8 pr-8 py-1 text-small shadow-rest focus:outline-none focus:ring-2 focus:ring-link"
           />
           <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">
             /
@@ -783,13 +865,60 @@ export default function TareasView() {
           aria-pressed={mine}
           title="Sólo lo asignado a ti (m)"
           onClick={() => setFiltro("responsable", mine ? null : YO)}
-          className={`press inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 py-1 text-small font-semibold ${
+          className={`press inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 py-1 text-small font-semibold ${
             mine ? "bg-link text-surface" : "bg-surface text-muted shadow-rest"
           }`}
         >
           Mis tareas
           <kbd className="rounded border border-line bg-canvas-deep px-1 font-sans text-label text-faint">m</kbd>
         </button>
+
+        {/* Los tres cortes de cada día, a la mano: no hay que desplegar nada. */}
+        <FiltroRapido
+          id="tareas-barra-responsable"
+          testid="tareas-filtro-responsable"
+          etiqueta="Responsable"
+          value={filtros.responsable ?? ""}
+          onChange={(value) => setFiltro("responsable", value || null)}
+        >
+          <option value="">Responsable</option>
+          <option value={YO}>Yo</option>
+          {people.map((person) => (
+            <option key={person.id} value={person.id}>
+              {person.full_name || person.fullName}
+            </option>
+          ))}
+        </FiltroRapido>
+
+        <FiltroRapido
+          id="tareas-barra-cliente"
+          testid="tareas-filtro-cliente"
+          etiqueta="Cliente"
+          value={filtros.cliente ?? ""}
+          onChange={(value) => setFiltro("cliente", value || null)}
+        >
+          <option value="">Cliente</option>
+          {clientes.map((cliente) => (
+            <option key={cliente.id} value={cliente.id}>
+              {cliente.label}
+            </option>
+          ))}
+        </FiltroRapido>
+
+        <FiltroRapido
+          id="tareas-barra-vencimiento"
+          testid="tareas-filtro-vencimiento"
+          etiqueta="Vencimiento"
+          value={filtros.vencimiento ?? ""}
+          onChange={(value) => setFiltro("vencimiento", (value || null) as Filtros["vencimiento"])}
+        >
+          <option value="">Vence</option>
+          {VENCIMIENTOS.map((value) => (
+            <option key={value} value={value}>
+              {VENCIMIENTO_LABELS[value]}
+            </option>
+          ))}
+        </FiltroRapido>
 
         {/* La misma base, en dos formas. El modo viaja en la URL (`vista`). */}
         <div
@@ -827,7 +956,7 @@ export default function TareasView() {
             disabled={vista === "tablero"}
             aria-describedby={vista === "tablero" ? "tareas-agrupar-nota" : undefined}
             onChange={(event) => aplicar(filtros, { agrupacion: event.target.value as Agrupacion })}
-            className={`min-h-8 appearance-none rounded-full bg-surface py-1 pl-3 pr-7 text-small text-ink-2 shadow-rest focus:outline-none focus:ring-2 focus:ring-link ${
+            className={`min-h-10 appearance-none rounded-full bg-surface py-1 pl-3 pr-7 text-small text-ink-2 shadow-rest focus:outline-none focus:ring-2 focus:ring-link ${
               vista === "tablero" ? "opacity-45" : ""
             }`}
           >
@@ -857,7 +986,7 @@ export default function TareasView() {
           aria-expanded={filtersOpen}
           aria-pressed={filtersOpen}
           onClick={() => setFiltersOpen((open) => !open)}
-          className={`press inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 py-1 text-small font-semibold ${
+          className={`press inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 py-1 text-small font-semibold ${
             filtersOpen ? "bg-link-bg text-link" : "bg-surface text-muted shadow-rest"
           }`}
         >
@@ -874,30 +1003,12 @@ export default function TareasView() {
         </button>
       </div>
 
-      {/* ── Panel plegable: los seis selects + cerradas, ocultos por defecto ─ */}
+      {/* ── Panel plegable: lo que NO está en la barra (proyecto, estado,
+          etiqueta y cerradas). Responsable, cliente y vencimiento subieron a la
+          barra y por eso ya no están aquí: un mismo filtro, un solo control. ─ */}
       {filtersOpen ? (
         <Card className="mt-2 p-4" data-testid="tareas-filtros-panel">
           <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <label className="block text-label text-muted" htmlFor="tareas-cliente">
-                Cliente
-              </label>
-              <select
-                id="tareas-cliente"
-                data-testid="tareas-filtro-cliente"
-                value={filtros.cliente ?? ""}
-                onChange={(event) => setFiltro("cliente", event.target.value || null)}
-                className={`${selectClass} mt-1 w-full`}
-              >
-                <option value="">Todos los clientes</option>
-                {clientes.map((cliente) => (
-                  <option key={cliente.id} value={cliente.id}>
-                    {cliente.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             <div>
               <label className="block text-label text-muted" htmlFor="tareas-proyecto">
                 Proyecto
@@ -913,27 +1024,6 @@ export default function TareasView() {
                 {proyectosDelCliente.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-label text-muted" htmlFor="tareas-responsable">
-                Responsable
-              </label>
-              <select
-                id="tareas-responsable"
-                data-testid="tareas-filtro-responsable"
-                value={filtros.responsable ?? ""}
-                onChange={(event) => setFiltro("responsable", event.target.value || null)}
-                className={`${selectClass} mt-1 w-full`}
-              >
-                <option value="">Cualquier responsable</option>
-                <option value={YO}>Yo</option>
-                {people.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.full_name || person.fullName}
                   </option>
                 ))}
               </select>
@@ -979,29 +1069,7 @@ export default function TareasView() {
               </select>
             </div>
 
-            <div>
-              <label className="block text-label text-muted" htmlFor="tareas-vencimiento">
-                Vencimiento
-              </label>
-              <select
-                id="tareas-vencimiento"
-                data-testid="tareas-filtro-vencimiento"
-                value={filtros.vencimiento ?? ""}
-                onChange={(event) =>
-                  setFiltro("vencimiento", (event.target.value || null) as Filtros["vencimiento"])
-                }
-                className={`${selectClass} mt-1 w-full`}
-              >
-                <option value="">Cualquier vencimiento</option>
-                {VENCIMIENTOS.map((value) => (
-                  <option key={value} value={value}>
-                    {VENCIMIENTO_LABELS[value]}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <label className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 self-end text-label text-muted">
+            <label className="inline-flex min-h-10 cursor-pointer items-center gap-1.5 self-end text-label text-muted">
               <input
                 type="checkbox"
                 data-testid="tareas-incluir-cerradas"
@@ -1104,6 +1172,70 @@ export default function TareasView() {
       <div className="mt-4">
         {loading && !tasks ? <Spinner label="Leyendo la base de tareas…" /> : null}
         {error ? <ErrorBox message={error} onRetry={() => void cargar()} /> : null}
+
+        {/*
+          Un solo contador, arriba y en una sola frase: cuántas se están
+          viendo, cuántas terminadas se están escondiendo y cómo dejar de
+          esconderlas. Va ANTES de la lista a propósito: un aviso debajo de 200
+          filas no avisa de nada, y el problema que resuelve es justamente que
+          alguien mire la vista y crea que le faltan tareas.
+        */}
+        {!error && tasks ? (
+          <p
+            data-testid="tareas-contador"
+            className="mb-3 flex flex-wrap items-center gap-x-2 text-small text-muted"
+          >
+            {visibles.length > renderLimit ? (
+              <span
+                data-testid="tareas-mostrar-mas"
+                className="inline-flex flex-wrap items-center gap-x-2"
+              >
+                <span>
+                  Mostrando {visiblesRender.length} de {visibles.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRenderLimit((n) => Math.min(n + RENDER_STEP, visibles.length))}
+                  className="press min-h-10 rounded-tight font-semibold text-link hover:underline focus:outline-none focus:ring-2 focus:ring-link"
+                >
+                  Mostrar más
+                </button>
+              </span>
+            ) : (
+              <span>
+                {visibles.length} {visibles.length === 1 ? "tarea" : "tareas"}
+              </span>
+            )}
+            {cerradasOcultas > 0 ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  data-testid="tareas-cerradas-ocultas"
+                  title="Mostrar también las terminadas y canceladas"
+                  onClick={() => setFiltro("cerradas", true)}
+                  className="press min-h-10 rounded-tight font-semibold text-ink-2 underline decoration-dotted underline-offset-2 hover:text-link focus:outline-none focus:ring-2 focus:ring-link"
+                >
+                  {cerradasOcultas} terminadas ocultas
+                </button>
+              </>
+            ) : null}
+            {cerradasIncluidas > 0 ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  data-testid="tareas-cerradas-incluidas"
+                  title="Volver a esconder las terminadas y canceladas"
+                  onClick={() => setFiltro("cerradas", false)}
+                  className="press min-h-10 rounded-tight font-semibold text-link underline decoration-dotted underline-offset-2 hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
+                >
+                  {cerradasIncluidas} terminadas incluidas
+                </button>
+              </>
+            ) : null}
+          </p>
+        ) : null}
 
         {!error && tasks && visibles.length === 0 ? (
           <EmptyState
@@ -1219,20 +1351,6 @@ export default function TareasView() {
           </div>
         ) : null}
 
-        {!error && visibles.length > renderLimit ? (
-          <div className="mt-3 flex items-center gap-2 text-small text-muted" data-testid="tareas-mostrar-mas">
-            <span>
-              Mostrando {visiblesRender.length} de {visibles.length}
-            </span>
-            <button
-              type="button"
-              onClick={() => setRenderLimit((n) => Math.min(n + RENDER_STEP, visibles.length))}
-              className="press font-semibold text-link hover:underline"
-            >
-              Mostrar más
-            </button>
-          </div>
-        ) : null}
       </div>
 
       <p className="mt-5 flex flex-wrap items-center gap-2 text-small text-muted">

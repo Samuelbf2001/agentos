@@ -1030,3 +1030,220 @@ describe("Tareas en la navegación global", () => {
     expect(document.activeElement).toBe(screen.getByTestId("tareas-buscar"));
   });
 });
+
+// ── El filtro por defecto deja de ser invisible ──────────────────────────────
+
+/**
+ * En producción el filtro por defecto esconde 1005 de 1232 tareas sin decirlo:
+ * el humano mira la vista y concluye que "le faltan tareas". Aquí la misma
+ * situación en pequeño —terminadas repartidas entre los dos clientes— para
+ * poder comprobar que el número que se anuncia es el correcto y que respeta
+ * los demás filtros.
+ */
+function baseConCerradas() {
+  return [
+    ...base(),
+    makeTask({
+      id: "t-acme-cerrada",
+      projectId: project.id,
+      title: "Acta del kick-off firmada",
+      status: "DONE",
+      dueAt: null,
+    }),
+    makeTask({
+      id: "t-acme-cancelada",
+      projectId: project.id,
+      title: "Taller que no se hizo",
+      status: "CANCELLED",
+      dueAt: null,
+    }),
+  ];
+}
+
+/** Las rutas de la vista, pero con esa base más ancha. */
+function rutasConCerradas() {
+  return [{ method: "GET", path: "/api/tasks", body: { tasks: baseConCerradas() } }, ...viewRoutes];
+}
+
+describe("TareasView (las terminadas ocultas se anuncian)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("dice cuántas terminadas está escondiendo, y el número las muestra y las vuelve a esconder", async () => {
+    mockFetch(rutasConCerradas());
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+
+    // Cuatro pendientes a la vista; tres terminadas escondidas y contadas.
+    expect(screen.getByTestId("tareas-contador").textContent).toContain("4 tareas");
+    const aviso = screen.getByTestId("tareas-cerradas-ocultas");
+    expect(aviso.textContent).toBe("3 terminadas ocultas");
+    expect(screen.queryByTestId("tarea-fila-t-acme-cerrada")).toBeNull();
+
+    // El número es el botón: un clic y están.
+    fireEvent.click(aviso);
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-cerrada")).toBeTruthy());
+    expect(screen.getByTestId("tarea-fila-t-acme-cancelada")).toBeTruthy();
+    expect(screen.getByTestId("tarea-fila-t-beta-cerrada")).toBeTruthy();
+    expect(screen.getByTestId("tareas-contador").textContent).toContain("7 tareas");
+    expect(screen.getByTestId("ubicacion").textContent).toContain("cerradas=1");
+    expect(screen.queryByTestId("tareas-cerradas-ocultas")).toBeNull();
+
+    // Y al revés: el mismo sitio las vuelve a esconder.
+    const incluidas = screen.getByTestId("tareas-cerradas-incluidas");
+    expect(incluidas.textContent).toBe("3 terminadas incluidas");
+    fireEvent.click(incluidas);
+    await waitFor(() => expect(screen.queryByTestId("tarea-fila-t-acme-cerrada")).toBeNull());
+    expect(screen.getByTestId("tareas-cerradas-ocultas").textContent).toBe("3 terminadas ocultas");
+    expect(screen.getByTestId("ubicacion").textContent).not.toContain("cerradas=1");
+  });
+
+  it("el número de ocultas cuenta sobre la base ya filtrada, no sobre el total", async () => {
+    mockFetch(rutasConCerradas());
+    // ACME tiene dos de las tres terminadas; con su filtro puesto, el aviso
+    // tiene que hablar de ESE cliente y no de la base entera.
+    renderTareas(`/tareas?cliente=${project.orgId}`);
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+
+    expect(screen.getByTestId("tareas-contador").textContent).toContain("2 tareas");
+    expect(screen.getByTestId("tareas-cerradas-ocultas").textContent).toBe("2 terminadas ocultas");
+
+    // El texto también recorta: sólo una de las dos terminadas de ACME es un acta.
+    fireEvent.change(screen.getByTestId("tareas-buscar"), { target: { value: "acta" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("tareas-cerradas-ocultas").textContent).toBe("1 terminadas ocultas"),
+    );
+
+    // Y con el otro cliente, la única terminada suya.
+    fireEvent.change(screen.getByTestId("tareas-buscar"), { target: { value: "" } });
+    fireEvent.change(screen.getByTestId("tareas-filtro-cliente"), {
+      target: { value: projectB.orgId },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("tareas-cerradas-ocultas").textContent).toBe("1 terminadas ocultas"),
+    );
+  });
+
+  it("en tablero avisa igual y el número reparte las terminadas por columna", async () => {
+    mockFetch(rutasConCerradas());
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+
+    expect(screen.getByTestId("tareas-contador").textContent).toContain("4 tareas");
+    expect(screen.getByTestId("tareas-cerradas-ocultas").textContent).toBe("3 terminadas ocultas");
+    expect(screen.getByTestId("tareas-conteo-DONE").textContent).toBe("0");
+    expect(screen.getByTestId("tareas-conteo-CANCELLED").textContent).toBe("0");
+
+    fireEvent.click(screen.getByTestId("tareas-cerradas-ocultas"));
+    await waitFor(() => expect(screen.getByTestId("tareas-conteo-DONE").textContent).toBe("2"));
+    expect(screen.getByTestId("tareas-conteo-CANCELLED").textContent).toBe("1");
+    expect(screen.getByTestId("tarea-tarjeta-t-acme-cerrada")).toBeTruthy();
+    // Y sigue siendo el tablero: no se ha cambiado de modo por el camino.
+    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tablero");
+  });
+});
+
+// ── Filtros rápidos: responsable, cliente y vencimiento en la barra ──────────
+
+describe("TareasView (filtros rápidos en la barra)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("están a la mano, sin desplegar el panel, y escriben la misma query que el panel", async () => {
+    mockFetch(viewRoutes);
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+
+    // No hace falta abrir nada: el panel sigue cerrado.
+    expect(screen.queryByTestId("tareas-filtros-panel")).toBeNull();
+    for (const testid of [
+      "tareas-filtro-responsable",
+      "tareas-filtro-cliente",
+      "tareas-filtro-vencimiento",
+    ]) {
+      expect(screen.getByTestId(testid)).toBeTruthy();
+    }
+
+    // Cliente: filtra la lista y deja en la URL exactamente lo que escribiría
+    // `filtrosAParams` para ese mismo filtro. Es el mismo filtro, no otro.
+    fireEvent.change(screen.getByTestId("tareas-filtro-cliente"), {
+      target: { value: projectB.orgId },
+    });
+    await waitFor(() => expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull());
+    expect(screen.getByTestId("tarea-fila-t-beta-semana")).toBeTruthy();
+    expect(screen.getByTestId("ubicacion").textContent).toBe(
+      `?${filtrosAParams({ ...FILTROS_VACIOS, cliente: projectB.orgId }).toString()}`,
+    );
+
+    // Responsable: se combina con el anterior, no lo reemplaza.
+    fireEvent.change(screen.getByTestId("tareas-filtro-responsable"), { target: { value: YO } });
+    await waitFor(() => expect(screen.queryByTestId("tarea-fila-t-beta-sin-fecha")).toBeNull());
+    expect(screen.getByTestId("tarea-fila-t-beta-semana")).toBeTruthy();
+    expect(screen.getByTestId("ubicacion").textContent).toBe(
+      `?${filtrosAParams({
+        ...FILTROS_VACIOS,
+        cliente: projectB.orgId,
+        responsable: YO,
+      }).toString()}`,
+    );
+
+    // Vencimiento: los mismos cortes de siempre.
+    fireEvent.change(screen.getByTestId("tareas-filtro-vencimiento"), {
+      target: { value: "sin-fecha" },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("ubicacion").textContent).toBe(
+        `?${filtrosAParams({
+          ...FILTROS_VACIOS,
+          cliente: projectB.orgId,
+          responsable: YO,
+          vencimiento: "sin-fecha",
+        }).toString()}`,
+      ),
+    );
+    expect(screen.queryByTestId("tarea-fila-t-beta-semana")).toBeNull();
+
+    // Y los chips siguen siendo los de siempre: quitar uno vacía su control.
+    fireEvent.click(screen.getByTestId("tareas-chip-cliente"));
+    await waitFor(() =>
+      expect((screen.getByTestId("tareas-filtro-cliente") as HTMLSelectElement).value).toBe(""),
+    );
+  });
+
+  it("reflejan al montar lo que venga en la URL (enlace compartido)", async () => {
+    mockFetch(viewRoutes);
+    renderTareas(`/tareas?cliente=${project.orgId}&responsable=yo&vencimiento=vencidas`);
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+
+    expect((screen.getByTestId("tareas-filtro-cliente") as HTMLSelectElement).value).toBe(
+      project.orgId,
+    );
+    expect((screen.getByTestId("tareas-filtro-responsable") as HTMLSelectElement).value).toBe(YO);
+    expect((screen.getByTestId("tareas-filtro-vencimiento") as HTMLSelectElement).value).toBe(
+      "vencidas",
+    );
+    // Y la lista es la de ese enlace, no la base entera.
+    expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull();
+    expect(screen.queryByTestId("tarea-fila-t-beta-semana")).toBeNull();
+  });
+
+  it("en tablero son los mismos tres controles y recortan las columnas", async () => {
+    mockFetch(viewRoutes);
+    renderTareas("/tareas?vista=tablero");
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+
+    fireEvent.change(screen.getByTestId("tareas-filtro-cliente"), {
+      target: { value: project.orgId },
+    });
+    await waitFor(() => expect(screen.queryByTestId("tarea-tarjeta-t-beta-semana")).toBeNull());
+    expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy();
+    expect(screen.getByTestId("tareas-conteo-READY").textContent).toBe("1");
+    expect(screen.getByTestId("tareas-conteo-BACKLOG").textContent).toBe("0");
+    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tablero");
+    expect(screen.getByTestId("ubicacion").textContent).toContain(`cliente=${project.orgId}`);
+  });
+});
