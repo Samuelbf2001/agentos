@@ -30,6 +30,8 @@ import type {
   ApprovalStatus,
   AuditSource,
   BlockedReason,
+  CanvasNoteScene,
+  CanvasNoteStatus,
   GateState,
   KnowledgeKind,
   MessageRole,
@@ -951,5 +953,46 @@ export const notionImportQuarantine = sqliteTable(
       t.rawReference,
     ),
     index("idx_notion_import_quarantine_state").on(t.resolutionState, t.reason),
+  ],
+);
+
+
+// ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
+
+/**
+ * Una sesión de escritura a mano en el lienzo. La escena de Excalidraw se
+ * guarda íntegra y opaca (`scene`); el PNG exportado al pulsar "Terminar
+ * notas" NO entra en la base: se escribe bajo la raíz de artefactos y aquí
+ * queda su ruta relativa (`image_path`), igual que hace `artifacts.path`.
+ *
+ * `image_artifact_id` existe para cuando la nota se ancla a una tarea: sólo
+ * entonces puede haber fila en `artifacts` (su `task_id` es NOT NULL). Sin
+ * tarea, la nota se basta con `image_path` y su propia ruta de descarga.
+ */
+export const canvasNotes = sqliteTable(
+  "canvas_notes",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").references(() => organizations.id),
+    projectId: text("project_id").references(() => projects.id),
+    title: text("title").notNull(),
+    scene: text("scene", { mode: "json" }).$type<CanvasNoteScene>().notNull(),
+    status: text("status").$type<CanvasNoteStatus>().notNull().default("draft"),
+    imageArtifactId: text("image_artifact_id").references(() => artifacts.id),
+    /** Ruta RELATIVA a la raíz de artefactos del PNG exportado (nunca absoluta). */
+    imagePath: text("image_path"),
+    imageBytes: integer("image_bytes"),
+    capturedAt: integer("captured_at"),
+    /** La rellena la fase 2 (transcripción); en fase 1 siempre null. */
+    transcription: text("transcription"),
+    createdByPersonId: text("created_by_person_id").references(() => people.id),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("idx_canvas_notes_project").on(t.projectId),
+    index("idx_canvas_notes_org").on(t.orgId),
+    index("idx_canvas_notes_updated").on(t.updatedAt),
   ],
 );

@@ -97,3 +97,7 @@ export type NotionIdentityMapping = typeof s.notionIdentityMappings.$inferSelect
 export type NewNotionIdentityMapping = typeof s.notionIdentityMappings.$inferInsert;
 export type NotionImportQuarantine = typeof s.notionImportQuarantine.$inferSelect;
 export type NewNotionImportQuarantine = typeof s.notionImportQuarantine.$inferInsert;
+
+// ── Notas manuscritas (lienzo Excalidraw) ────────────────────────────────────
+export type CanvasNote = typeof s.canvasNotes.$inferSelect;
+export type NewCanvasNote = typeof s.canvasNotes.$inferInsert;

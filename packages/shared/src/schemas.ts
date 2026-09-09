@@ -133,6 +133,31 @@ export type OrgRoleStatus = z.infer<typeof OrgRoleStatus>;
 export const RoleProcessRelation = z.enum(["owner", "participant"]);
 export type RoleProcessRelation = z.infer<typeof RoleProcessRelation>;
 
+// ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
+/**
+ * `draft` = se sigue escribiendo; `captured` = la escena ya se exportó a PNG;
+ * `transcribed` = la fase 2 leyó ese PNG y dejó la transcripción.
+ */
+export const CanvasNoteStatus = z.enum(["draft", "captured", "transcribed"]);
+export type CanvasNoteStatus = z.infer<typeof CanvasNoteStatus>;
+
+/**
+ * Escena de Excalidraw tal cual la entrega la librería (`elements`, `appState`,
+ * `files`). AgentOS la guarda OPACA: no la interpreta ni depende de su forma
+ * — quien la entiende es el lienzo, y la fase 2 trabajará sobre el PNG
+ * exportado, nunca sobre este JSON.
+ */
+export interface CanvasNoteScene {
+  elements: readonly unknown[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+}
+
+/** Escena vacía — lo que se guarda al crear una nota. */
+export function emptyCanvasScene(): CanvasNoteScene {
+  return { elements: [] };
+}
+
 // ── Canales / conversación (ARCHITECTURE §9) ────────────────────────────────
 export const MessageRole = z.enum(["user", "assistant", "system", "tool"]);
 export type MessageRole = z.infer<typeof MessageRole>;

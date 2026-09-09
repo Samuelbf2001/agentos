@@ -8,6 +8,8 @@ import type {
   AppConfigRow,
   Approval,
   Artifact,
+  CanvasNote,
+  CanvasScene,
   BrainOverview,
   ConvertRoleToAgentResponse,
   KnowledgeDoc,
@@ -619,6 +621,23 @@ export const api = {
     return request<MeetingProcessingOverview>(`/api/meetings/processing?${params.toString()}`);
   },
 
+  // ── Notas manuscritas (lienzo Excalidraw) ─────────────────────────────────
+  notes: (projectId?: string) =>
+    request<{ notes: CanvasNote[] }>(
+      `/api/notes${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
+  note: (id: string) => request<{ note: CanvasNote }>(`/api/notes/${id}`),
+  createNote: (body: { title?: string; project_id?: string } = {}) =>
+    request<{ note: CanvasNote }>("/api/notes", { method: "POST", body }),
+  /** Autoguardado: `expected_version` convierte la carrera en 409, no en pérdida. */
+  saveNote: (
+    id: string,
+    body: { title?: string; scene?: CanvasScene; expected_version?: number },
+  ) => request<{ note: CanvasNote }>(`/api/notes/${id}`, { method: "PATCH", body }),
+  /** "Terminar notas": el PNG ya exportado por el lienzo, en base64. */
+  captureNote: (id: string, body: { image_base64: string; task_id?: string }) =>
+    request<{ note: CanvasNote }>(`/api/notes/${id}/capture`, { method: "POST", body }),
+  noteImageUrl: (id: string) => `${API_BASE}/api/notes/${id}/image`,
   // ── Organigrama ────────────────────────────────────────────────────────────
   orgGraph: (orgId: string) => request<OrgGraph>(`/api/orgs/${orgId}/graph`),
   createOrgUnit: (

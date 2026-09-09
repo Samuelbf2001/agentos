@@ -903,6 +903,36 @@ export interface ConvertRoleToAgentResponse {
   prompt_version: unknown;
 }
 
+// ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
+
+export type CanvasNoteStatus = "draft" | "captured" | "transcribed";
+
+/** Escena de Excalidraw: opaca para la app, la entiende solo el lienzo. */
+export interface CanvasScene {
+  elements: readonly unknown[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+}
+
+/** Espejo de la fila `canvas_notes` que sirve /api/notes. */
+export interface CanvasNote {
+  id: string;
+  orgId: string | null;
+  projectId: string | null;
+  title: string;
+  scene: CanvasScene;
+  status: CanvasNoteStatus;
+  imageArtifactId: string | null;
+  imagePath: string | null;
+  imageBytes: number | null;
+  capturedAt: number | null;
+  transcription: string | null;
+  createdByPersonId: string | null;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** Extrae el payload de dominio (busSink envuelve en {type, timestamp, payload}). */
 export function domainPayload(ev: TopicEvent): Record<string, unknown> {
   const inner = (ev.payload as { payload?: unknown }).payload;

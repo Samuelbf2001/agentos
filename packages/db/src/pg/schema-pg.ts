@@ -42,6 +42,8 @@ import type {
   ApprovalStatus,
   AuditSource,
   BlockedReason,
+  CanvasNoteScene,
+  CanvasNoteStatus,
   GateState,
   KnowledgeKind,
   MessageRole,
@@ -855,6 +857,37 @@ export const notionImportQuarantine = pgTable(
   ],
 );
 
+// ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
+
+/** Espejo de `canvas_notes` en src/schema.ts (misma traducción mecánica de §5). */
+export const canvasNotes = pgTable(
+  "canvas_notes",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").references(() => organizations.id),
+    projectId: text("project_id").references(() => projects.id),
+    title: text("title").notNull(),
+    scene: jsonb("scene").$type<CanvasNoteScene>().notNull(),
+    status: text("status").$type<CanvasNoteStatus>().notNull().default("draft"),
+    imageArtifactId: text("image_artifact_id").references(() => artifacts.id),
+    /** Ruta RELATIVA a la raíz de artefactos del PNG exportado (nunca absoluta). */
+    imagePath: text("image_path"),
+    imageBytes: integer("image_bytes"),
+    capturedAt: epochMs("captured_at"),
+    /** La rellena la fase 2 (transcripción); en fase 1 siempre null. */
+    transcription: text("transcription"),
+    createdByPersonId: text("created_by_person_id").references(() => people.id),
+    version: integer("version").notNull().default(1),
+    createdAt: epochMs("created_at").notNull(),
+    updatedAt: epochMs("updated_at").notNull(),
+  },
+  (t) => [
+    index("idx_canvas_notes_project").on(t.projectId),
+    index("idx_canvas_notes_org").on(t.orgId),
+    index("idx_canvas_notes_updated").on(t.updatedAt),
+  ],
+);
+
 /**
  * Orden TOPOLÓGICO de inserción (FKs satisfechas) — lo consume la herramienta
  * de migración de datos `migrate-to-pg.ts` y la limpieza de los tests PG.
@@ -899,6 +932,7 @@ export const PG_TABLE_ORDER = [
   "notion_import_links",
   "notion_identity_mappings",
   "notion_import_quarantine",
+  "canvas_notes",
 ] as const;
 
 export type PgTableName = (typeof PG_TABLE_ORDER)[number];

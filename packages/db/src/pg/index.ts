@@ -50,6 +50,7 @@ export * from "./repositories/project-sources.js";
 export * from "./repositories/processes.js";
 export * from "./repositories/methodologies.js";
 export * from "./repositories/modules.js";
+export * from "./repositories/canvas-notes.js";
 export * from "./repositories/config.js";
 export * from "./repositories/stats.js";
 export * from "./repositories/notion-migration.js";

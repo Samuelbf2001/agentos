@@ -21,6 +21,8 @@ import type {
   Agent,
   Approval,
   Artifact,
+  CanvasNote,
+  CanvasScene,
   LabelUsage,
   Message,
   Person,
@@ -160,6 +162,19 @@ export interface AppStore extends EventState {
   taskSearchError: string | null;
   chatSending: boolean;
 
+  /** Notas manuscritas (lienzo Excalidraw). El diario, más reciente primero. */
+  notes: CanvasNote[];
+  notesLoading: boolean;
+  notesError: string | null;
+  /** Nota abierta en el lienzo. */
+  activeNoteId: string | null;
+  /** Autoguardado en vuelo; el indicador discreto de la vista lo lee. */
+  noteSaving: boolean;
+  /** Momento del último guardado confirmado por la API (para "Guardado …"). */
+  noteSavedAt: number | null;
+  noteCapturing: boolean;
+
+
   toasts: Toast[];
 
   // acciones
@@ -213,6 +228,14 @@ export interface AppStore extends EventState {
   commentOnTask(taskId: string, body: string): Promise<void>;
   approveTaskReview(taskId: string, note?: string): Promise<void>;
   rejectTaskReview(taskId: string, note: string): Promise<void>;
+
+  loadNotes(projectId?: string): Promise<void>;
+  createNote(input?: { title?: string; projectId?: string }): Promise<CanvasNote | null>;
+  openNote(noteId: string | null): void;
+  /** Autoguardado del lienzo; devuelve false si la API lo rechazó. */
+  saveNote(noteId: string, patch: { title?: string; scene?: CanvasScene }): Promise<boolean>;
+  /** "Terminar notas": manda el PNG ya exportado (base64) y deja la nota en `captured`. */
+  captureNote(noteId: string, imageBase64: string): Promise<boolean>;
 
   loadThreads(): Promise<void>;
   openThread(threadId: string | null): Promise<void>;
@@ -324,6 +347,11 @@ export const useStore = create<AppStore>()((set, get) => {
       const project = state.projects.find((candidate) => candidate.id === task.projectId) ?? null;
       set({ taskDetail: { ...state.taskDetail, task, project } });
     }
+  }
+
+  /** La nota que vuelve de la API manda sobre la copia local (incluida `version`). */
+  function mergeNote(note: CanvasNote): void {
+    set({ notes: get().notes.map((n) => (n.id === note.id ? note : n)) });
   }
 
   function isVersionConflict(err: unknown): boolean {
@@ -459,6 +487,13 @@ export const useStore = create<AppStore>()((set, get) => {
     taskSearchLoading: false,
     taskSearchError: null,
     chatSending: false,
+    notes: [],
+    notesLoading: false,
+    notesError: null,
+    activeNoteId: null,
+    noteSaving: false,
+    noteSavedAt: null,
+    noteCapturing: false,
     toasts: [],
 
     async init() {
@@ -1049,6 +1084,87 @@ export const useStore = create<AppStore>()((set, get) => {
         void get().loadApprovals();
       } catch (err) {
         toastError(err, "No se pudo rechazar");
+      }
+    },
+
+    // ── Notas manuscritas ─────────────────────────────────────────────────
+
+    async loadNotes(projectId) {
+      set({ notesLoading: true, notesError: null });
+      try {
+        const { notes } = await api.notes(projectId);
+        set({ notes, notesLoading: false });
+      } catch (err) {
+        set({
+          notesLoading: false,
+          notesError: normalizeMutationError(err, "No se pudieron cargar las notas"),
+        });
+      }
+    },
+
+    async createNote(input = {}) {
+      try {
+        const { note } = await api.createNote({
+          ...(input.title ? { title: input.title } : {}),
+          ...(input.projectId ? { project_id: input.projectId } : {}),
+        });
+        set({ notes: [note, ...get().notes], activeNoteId: note.id, noteSavedAt: null });
+        return note;
+      } catch (err) {
+        toastError(err, "No se pudo crear la nota");
+        return null;
+      }
+    },
+
+    openNote(noteId) {
+      set({ activeNoteId: noteId, noteSavedAt: null });
+    },
+
+    async saveNote(noteId, patch) {
+      const current = get().notes.find((n) => n.id === noteId);
+      if (!current) return false;
+      set({ noteSaving: true });
+      try {
+        const { note } = await api.saveNote(noteId, {
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.scene !== undefined ? { scene: patch.scene } : {}),
+          expected_version: current.version,
+        });
+        mergeNote(note);
+        set({ noteSavedAt: Date.now() });
+        return true;
+      } catch (err) {
+        // 409: otra pestaña guardó antes. Se relee la nota (no se pisa su
+        // trabajo) y el lienzo sigue con lo que el usuario tiene delante.
+        if (isVersionConflict(err)) {
+          try {
+            const { note } = await api.note(noteId);
+            mergeNote(note);
+          } catch {
+            /* si tampoco se puede releer, manda el error de abajo */
+          }
+          get().pushToast("info", "La nota cambió en otra pestaña: se recargó su versión");
+          return false;
+        }
+        toastError(err, "No se pudo guardar la nota");
+        return false;
+      } finally {
+        set({ noteSaving: false });
+      }
+    },
+
+    async captureNote(noteId, imageBase64) {
+      set({ noteCapturing: true });
+      try {
+        const { note } = await api.captureNote(noteId, { image_base64: imageBase64 });
+        mergeNote(note);
+        get().pushToast("ok", "Notas terminadas: la imagen quedó guardada");
+        return true;
+      } catch (err) {
+        toastError(err, "No se pudo terminar la nota");
+        return false;
+      } finally {
+        set({ noteCapturing: false });
       }
     },
 

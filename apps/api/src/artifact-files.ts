@@ -101,6 +101,31 @@ export function storeArtifactFile(input: {
 }
 
 /**
+ * PNG exportado de una nota manuscrita. Vive bajo la MISMA raíz de artefactos
+ * (`<root>/notas/<noteId>/<noteId>-<n>.png`), con la misma garantía: fuera del
+ * árbol versionado y con ruta relativa en la base. Se numera por captura para
+ * que volver a terminar una nota no pise la imagen anterior.
+ */
+export function storeCanvasNoteImage(input: {
+  root: string;
+  noteId: string;
+  sequence: number;
+  data: Buffer;
+}): StoredArtifactFile {
+  const relativeDir = path.join("notas", safeFileName(input.noteId));
+  const fileName = `${safeFileName(input.noteId)}-${input.sequence}.png`;
+  const relativePath = path.join(relativeDir, fileName);
+  const absolutePath = path.join(input.root, relativePath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, input.data);
+  return {
+    relativePath: relativePath.split(path.sep).join("/"),
+    absolutePath,
+    bytes: input.data.byteLength,
+  };
+}
+
+/**
  * Resuelve una ruta almacenada SIEMPRE relativa a su raíz — incluida una
  * `stored` que llegue absoluta, en cuyo caso `path.resolve` la trata como
  * destino final y el guard de abajo la rechaza si cae fuera de la raíz. Nunca

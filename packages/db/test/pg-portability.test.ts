@@ -57,15 +57,15 @@ function tableNames(mod: Record<string, unknown>): string[] {
 }
 
 describe("esquema Postgres = esquema SQLite", () => {
-  it("las 36 tablas existen en los dos motores, con los mismos nombres", () => {
+  it("las 37 tablas existen en los dos motores, con los mismos nombres", () => {
     const lite = tableNames(liteSchema);
     const pg = tableNames(pgSchema);
-    expect(lite).toHaveLength(36);
+    expect(lite).toHaveLength(37);
     expect(pg).toEqual(lite);
   });
 
-  it("PG_TABLE_ORDER cubre las 36 tablas sin repetir", () => {
-    expect(new Set(PG_TABLE_ORDER).size).toBe(36);
+  it("PG_TABLE_ORDER cubre las 37 tablas sin repetir", () => {
+    expect(new Set(PG_TABLE_ORDER).size).toBe(37);
     expect([...PG_TABLE_ORDER].sort()).toEqual(tableNames(liteSchema));
   });
 
@@ -97,6 +97,7 @@ describe("esquema Postgres = esquema SQLite", () => {
       role_people: ["org_roles", "people"],
       role_processes: ["org_roles", "processes"],
       module_launches: ["phase_modules", "organizations", "projects", "methodologies"],
+      canvas_notes: ["organizations", "projects", "artifacts", "people"],
     };
     const position = new Map(PG_TABLE_ORDER.map((t, i) => [t, i]));
     for (const [table, parents] of Object.entries(deps)) {
@@ -109,8 +110,8 @@ describe("esquema Postgres = esquema SQLite", () => {
     }
   });
 
-  it("TABLE_PAIRS empareja las 36 tablas en el mismo orden topológico", () => {
-    expect(TABLE_PAIRS).toHaveLength(36);
+  it("TABLE_PAIRS empareja las 37 tablas en el mismo orden topológico", () => {
+    expect(TABLE_PAIRS).toHaveLength(37);
     expect(TABLE_PAIRS.map((p) => p.name)).toEqual([...PG_TABLE_ORDER]);
     for (const pair of TABLE_PAIRS) {
       expect(getTableName(pair.from)).toBe(pair.name);

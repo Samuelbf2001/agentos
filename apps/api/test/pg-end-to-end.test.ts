@@ -97,7 +97,7 @@ describePg("API end-to-end sobre Postgres", () => {
     expect(res.statusCode).toBe(200);
     const health = res.json() as { counts: Record<string, number> };
     const counts = health.counts;
-    expect(counts["tables"]).toBe(36);
+    expect(counts["tables"]).toBe(37);
     expect(counts["organizations"]).toBeGreaterThanOrEqual(2);
     expect(counts["agents"]).toBe(7);
     expect(counts["tasks"]).toBe(12); // el launch demo del seed (§13.6)

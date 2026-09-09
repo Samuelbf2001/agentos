@@ -78,6 +78,8 @@ export const paths = {
   activo: () => "/activo",
   brain: () => "/2brain",
   brainReuniones: () => "/2brain/reuniones",
+  /** Lienzo de notas manuscritas; con `?nota=<id>` abre una nota concreta. */
+  notas: (noteId?: string | null) => (noteId ? `/notas?nota=${encodeURIComponent(noteId)}` : "/notas"),
   /**
    * Ficha de tarea como query global (`?tarea=<id>`): funciona desde cualquier
    * vista sin reescribir rutas. Recibe pathname+search y devuelve la misma
