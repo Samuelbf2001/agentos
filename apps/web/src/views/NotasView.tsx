@@ -9,12 +9,14 @@
  *   nadie que no abra /notas debe pagarla.
  * - Autoguardado amortiguado (2 s) con `expected_version`: dos pestañas sobre
  *   la misma nota dan 409 y se relee, nunca last-write-wins silencioso.
- * - El panel de transcripción existe ya, VACÍO a propósito: la llamada al
- *   modelo es fase 2 y aquí sólo se reserva el hueco.
+ * - El panel lateral transcribe la imagen con el modelo de visión y deja el
+ *   texto EDITABLE: la lectura de una letra siempre puede fallar, así que el
+ *   humano corrige y su corrección se guarda (PATCH con `transcription`). Si
+ *   el proveedor falla, se enseña el error: nunca se rellena con algo inventado.
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Check, FileImage, Plus } from "lucide-react";
+import { Check, FileImage, Plus, Wand2 } from "lucide-react";
 import { useStore } from "../state/store";
 import { EmptyState, ErrorBox, Spinner, fmtDate, timeAgo } from "../components/ui";
 import { api } from "../lib/api";
@@ -66,6 +68,9 @@ export default function NotasView() {
   const openNote = useStore((s) => s.openNote);
   const saveNote = useStore((s) => s.saveNote);
   const captureNote = useStore((s) => s.captureNote);
+  const transcribeNote = useStore((s) => s.transcribeNote);
+  const noteTranscribing = useStore((s) => s.noteTranscribing);
+  const noteTranscribeError = useStore((s) => s.noteTranscribeError);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const urlNote = searchParams.get("nota");
@@ -79,6 +84,14 @@ export default function NotasView() {
     () => notes.find((n) => n.id === activeNoteId) ?? null,
     [notes, activeNoteId],
   );
+
+  // Borrador local del texto: el humano corrige a mano y se guarda al salir del
+  // campo. Se resincroniza cuando llega otra transcripción (o se cambia de nota).
+  const [borrador, setBorrador] = useState("");
+  const transcripcionServidor = activeNote?.transcription ?? "";
+  useEffect(() => {
+    setBorrador(transcripcionServidor);
+  }, [activeNoteId, transcripcionServidor]);
 
   useEffect(() => {
     void loadNotes();
@@ -166,6 +179,21 @@ export default function NotasView() {
       setExportError(err instanceof Error ? err.message : "No se pudo exportar la imagen");
     }
   }, [activeNoteId, captureNote, flush]);
+
+  const transcribir = useCallback(async () => {
+    if (!activeNoteId) return;
+    await transcribeNote(activeNoteId);
+  }, [activeNoteId, transcribeNote]);
+
+  /** El texto corregido a mano se guarda al salir del campo, no en cada tecla. */
+  const guardarTranscripcion = useCallback(async () => {
+    if (!activeNote) return;
+    const limpio = borrador.trim();
+    if (limpio === (activeNote.transcription ?? "").trim()) return;
+    await saveNote(activeNote.id, { transcription: limpio });
+  }, [activeNote, borrador, saveNote]);
+
+  const puedeTranscribir = !!activeNote && activeNote.status !== "draft" && !!activeNote.imagePath;
 
   const savedLabel = noteSaving
     ? "Guardando…"
@@ -265,16 +293,55 @@ export default function NotasView() {
 
         <aside className="hidden w-80 shrink-0 flex-col gap-3 overflow-auto border-l border-line bg-canvas p-3 lg:flex">
           <section className="rounded-panel border border-line bg-surface p-3">
-            <h2 className="text-label uppercase tracking-wide text-muted">Transcripción</h2>
-            {activeNote?.transcription ? (
-              <p className="mt-2 whitespace-pre-wrap text-body text-ink-2">
-                {activeNote.transcription}
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-label uppercase tracking-wide text-muted">Transcripción</h2>
+              {puedeTranscribir ? (
+                <button
+                  type="button"
+                  onClick={() => void transcribir()}
+                  disabled={noteTranscribing}
+                  className="press inline-flex min-h-8 items-center gap-1.5 rounded-tight border border-line px-2.5 text-label font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Wand2 size={14} strokeWidth={1.75} aria-hidden="true" />
+                  {noteTranscribing
+                    ? "Transcribiendo…"
+                    : activeNote?.transcription
+                      ? "Rehacer"
+                      : "Transcribir"}
+                </button>
+              ) : null}
+            </div>
+
+            {noteTranscribing ? (
+              <p className="mt-2 text-small text-muted" role="status">
+                Leyendo la letra… el modelo tarda unos segundos.
               </p>
+            ) : null}
+
+            {noteTranscribeError ? (
+              <p
+                data-testid="error-transcripcion"
+                className="mt-2 rounded-tight border border-broken-line bg-broken-bg px-2.5 py-2 text-small text-broken"
+              >
+                {noteTranscribeError}
+              </p>
+            ) : null}
+
+            {activeNote && (activeNote.transcription !== null || borrador !== "") ? (
+              <textarea
+                key={activeNote.id}
+                aria-label="Transcripción de la nota"
+                value={borrador}
+                onChange={(e) => setBorrador(e.target.value)}
+                onBlur={() => void guardarTranscripcion()}
+                rows={12}
+                className="mt-2 w-full resize-y rounded-tight border border-line bg-canvas p-2 text-body text-ink-2 focus:border-link focus:outline-none"
+              />
             ) : (
               <p className="mt-2 text-small text-muted">
                 {activeNote?.status === "draft"
                   ? "Transcripción pendiente: termina las notas para dejar la imagen lista."
-                  : "Transcripción pendiente."}
+                  : "Todavía sin transcribir: pulsa «Transcribir» para leer la imagen."}
               </p>
             )}
             {activeNote?.imagePath ? (

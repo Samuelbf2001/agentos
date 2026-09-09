@@ -25,6 +25,7 @@ import {
   type AgentRunner,
 } from "@agentos/runners";
 import { createWhatsAppHubConnector } from "./connectors/whatsapphub.js";
+import { createModelTranscriber, type NoteTranscriber } from "./notes/transcripcion.js";
 import { busSink, createBus } from "./bus-bridge.js";
 import { createAuthService, resolveCookieSecure, type AuthService } from "./auth.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
@@ -177,6 +178,8 @@ export interface ApiOptions {
   autoStartLoops?: boolean;
   /** Conector WhatsAppHub inyectable (tests: SIEMPRE mock; jamás red real en tests). */
   whatsappHub?: WhatsAppHubConnector;
+  /** Transcriptor de notas manuscritas (tests: SIEMPRE doble; jamás LLM real en tests). */
+  noteTranscriber?: NoteTranscriber;
   /** Adaptador de avisos; por defecto queda apagado y no toca la red. */
   notificationDelivery?: NotificationDelivery;
   /** Reloj inyectable para tests de ventana 24h y deduplicación. */
@@ -202,6 +205,8 @@ export interface ApiContext {
   toolRuntime: ToolRuntime;
   /** Conector 2brain/WhatsAppHub (Fuentes del proyecto). */
   whatsappHub: WhatsAppHubConnector;
+  /** Modelo de visión que pasa una nota manuscrita a texto (fase 2 de Notas). */
+  noteTranscriber: NoteTranscriber;
   /** Procesador de los únicos avisos permitidos por el MVP. */
   notifications: NotificationProcessor;
   /** Reloj que dispara `processDue`; apagado si el intervalo es 0. */
@@ -308,6 +313,9 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
   // El conector WhatsAppHub (Fuentes del proyecto) se inyecta al gateway para
   // que la tool sources.ingest use el MISMO cliente que las rutas REST.
   const whatsappHub = options.whatsappHub ?? createWhatsAppHubConnector();
+  // El transcriptor real no toca la red hasta que alguien pulsa "Transcribir":
+  // resuelve perfil, clave y modelo en la llamada, no en el arranque.
+  const noteTranscriber = options.noteTranscriber ?? createModelTranscriber({ db });
   const notifications = createNotificationProcessor({
     db,
     ...(options.notificationDelivery ? { delivery: options.notificationDelivery } : {}),
@@ -389,6 +397,7 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     engine,
     toolRuntime,
     whatsappHub,
+    noteTranscriber,
     notifications,
     notificationScheduler,
     pool,

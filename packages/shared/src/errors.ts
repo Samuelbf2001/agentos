@@ -45,6 +45,8 @@ export const ErrorCodes = {
   // Proveedores / runtime
   PROVIDER_ERROR: "provider_error",
   PROVIDER_NOT_CONFIGURED: "provider_not_configured",
+  /** El proveedor de visión/LLM no pudo responder: sin clave, caído o sin texto utilizable. */
+  PROVIDER_UNAVAILABLE: "provider_unavailable",
   RUNNER_UNAVAILABLE: "runner_unavailable",
 } as const;
 
@@ -88,6 +90,14 @@ export const errors = {
     new AgentosError(ErrorCodes.CONFIGURATION_ERROR, message, details),
   rateLimited: (message: string, details?: unknown) =>
     new AgentosError(ErrorCodes.RATE_LIMITED, message, details),
+  /**
+   * El proveedor no pudo dar una respuesta utilizable (sin clave, caído, o
+   * respuesta vacía). Se usa donde la alternativa sería inventar contenido
+   * —la transcripción de una nota manuscrita, por ejemplo—: antes un error
+   * explícito que un texto falso.
+   */
+  providerUnavailable: (message: string, details?: unknown) =>
+    new AgentosError(ErrorCodes.PROVIDER_UNAVAILABLE, message, details),
   /** Cadena de mando rota: la razón (`terminated_ancestor` | `missing_manager` | `cycle`) viaja en details. */
   notAssignable: (agent: string, reason: string, details?: Record<string, unknown>) =>
     new AgentosError(

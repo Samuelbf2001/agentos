@@ -77,6 +77,8 @@ function renderNotas() {
     noteSaving: false,
     noteSavedAt: null,
     noteCapturing: false,
+    noteTranscribing: false,
+    noteTranscribeError: null,
     toasts: [],
   });
   return render(
@@ -88,7 +90,13 @@ function renderNotas() {
 
 describe("Notas manuscritas (vista)", () => {
   beforeEach(() => {
-    useStore.setState({ notes: [], activeNoteId: null, toasts: [] });
+    useStore.setState({
+      notes: [],
+      activeNoteId: null,
+      toasts: [],
+      noteTranscribing: false,
+      noteTranscribeError: null,
+    });
   });
 
   afterEach(() => {
@@ -168,5 +176,110 @@ describe("Notas manuscritas (vista)", () => {
     // La nota queda "Terminada" y ofrece la imagen guardada.
     expect(await screen.findByText("Terminada")).toBeTruthy();
     expect(screen.getByRole("link", { name: /Ver la imagen guardada/i })).toBeTruthy();
+  });
+
+  /** Nota ya terminada: tiene imagen en disco, así que se puede transcribir. */
+  function notaCapturada(overrides: Partial<CanvasNote> = {}): CanvasNote {
+    return makeNote({
+      status: "captured",
+      version: 5,
+      imagePath: "notas/n1/n1-4.png",
+      imageBytes: 4,
+      capturedAt: 3000,
+      ...overrides,
+    });
+  }
+
+  it("«Transcribir» llama al endpoint y deja el texto editable", async () => {
+    const { calls } = mockFetch([
+      { method: "GET", path: "/api/notes", body: { notes: [notaCapturada()] } },
+      {
+        method: "POST",
+        path: "/api/notes/n1/transcribe",
+        body: () => ({
+          note: notaCapturada({
+            status: "transcribed",
+            version: 6,
+            transcription: "- Cerrar el presupuesto\n- Hablar con Jorge →",
+          }),
+        }),
+      },
+    ]);
+    renderNotas();
+    await screen.findByTestId("lienzo");
+    // Sin transcripción todavía: se ofrece hacerla, no se inventa nada.
+    expect(screen.getByText(/Todavía sin transcribir/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Transcribir$/i }));
+
+    await waitFor(() => {
+      expect(calls.find((c) => c.url.includes("/transcribe") && c.method === "POST")).toBeTruthy();
+    });
+    const campo = (await screen.findByLabelText(
+      "Transcripción de la nota",
+    )) as HTMLTextAreaElement;
+    expect(campo.value).toContain("Cerrar el presupuesto");
+    expect(await screen.findByText("Transcrita")).toBeTruthy();
+  });
+
+  it("la corrección a mano se guarda al salir del campo (PATCH con expected_version)", async () => {
+    const { calls } = mockFetch([
+      {
+        method: "GET",
+        path: "/api/notes",
+        body: {
+          notes: [
+            notaCapturada({ status: "transcribed", transcription: "presupesto [?: presupuesto]" }),
+          ],
+        },
+      },
+      {
+        method: "PATCH",
+        path: "/api/notes/n1",
+        body: () => ({
+          note: notaCapturada({ status: "transcribed", version: 6, transcription: "presupuesto" }),
+        }),
+      },
+    ]);
+    renderNotas();
+    const campo = (await screen.findByLabelText(
+      "Transcripción de la nota",
+    )) as HTMLTextAreaElement;
+    expect(campo.value).toBe("presupesto [?: presupuesto]");
+
+    fireEvent.change(campo, { target: { value: "presupuesto" } });
+    fireEvent.blur(campo);
+
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(patch!.body).toMatchObject({ transcription: "presupuesto", expected_version: 5 });
+    });
+  });
+
+  it("si el proveedor falla, se enseña el error y el texto sigue vacío", async () => {
+    mockFetch([
+      { method: "GET", path: "/api/notes", body: { notes: [notaCapturada()] } },
+      {
+        method: "POST",
+        path: "/api/notes/n1/transcribe",
+        status: 502,
+        body: {
+          error: {
+            code: "provider_unavailable",
+            message: "No se pudo transcribir con 'openai': falta OPENAI_API_KEY",
+          },
+        },
+      },
+    ]);
+    renderNotas();
+    await screen.findByTestId("lienzo");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Transcribir$/i }));
+
+    const error = await screen.findByTestId("error-transcripcion");
+    expect(error.textContent).toContain("OPENAI_API_KEY");
+    // Ni un textarea con texto inventado: el hueco sigue siendo un hueco.
+    expect(screen.queryByLabelText("Transcripción de la nota")).toBeNull();
   });
 });

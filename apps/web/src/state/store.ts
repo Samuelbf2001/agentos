@@ -173,6 +173,10 @@ export interface AppStore extends EventState {
   /** Momento del último guardado confirmado por la API (para "Guardado …"). */
   noteSavedAt: number | null;
   noteCapturing: boolean;
+  /** Transcripción en vuelo (el modelo de visión tarda segundos, no milisegundos). */
+  noteTranscribing: boolean;
+  /** Último fallo del proveedor al transcribir; se muestra tal cual, sin inventar texto. */
+  noteTranscribeError: string | null;
 
 
   toasts: Toast[];
@@ -233,9 +237,14 @@ export interface AppStore extends EventState {
   createNote(input?: { title?: string; projectId?: string }): Promise<CanvasNote | null>;
   openNote(noteId: string | null): void;
   /** Autoguardado del lienzo; devuelve false si la API lo rechazó. */
-  saveNote(noteId: string, patch: { title?: string; scene?: CanvasScene }): Promise<boolean>;
+  saveNote(
+    noteId: string,
+    patch: { title?: string; scene?: CanvasScene; transcription?: string },
+  ): Promise<boolean>;
   /** "Terminar notas": manda el PNG ya exportado (base64) y deja la nota en `captured`. */
   captureNote(noteId: string, imageBase64: string): Promise<boolean>;
+  /** Pasa la imagen por el modelo de visión; false si el proveedor falló (nunca inventa). */
+  transcribeNote(noteId: string): Promise<boolean>;
 
   loadThreads(): Promise<void>;
   openThread(threadId: string | null): Promise<void>;
@@ -494,6 +503,8 @@ export const useStore = create<AppStore>()((set, get) => {
     noteSaving: false,
     noteSavedAt: null,
     noteCapturing: false,
+    noteTranscribing: false,
+    noteTranscribeError: null,
     toasts: [],
 
     async init() {
@@ -1117,7 +1128,8 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     openNote(noteId) {
-      set({ activeNoteId: noteId, noteSavedAt: null });
+      // El error de transcripción es de la nota que se deja atrás: no viaja.
+      set({ activeNoteId: noteId, noteSavedAt: null, noteTranscribeError: null });
     },
 
     async saveNote(noteId, patch) {
@@ -1128,6 +1140,7 @@ export const useStore = create<AppStore>()((set, get) => {
         const { note } = await api.saveNote(noteId, {
           ...(patch.title !== undefined ? { title: patch.title } : {}),
           ...(patch.scene !== undefined ? { scene: patch.scene } : {}),
+          ...(patch.transcription !== undefined ? { transcription: patch.transcription } : {}),
           expected_version: current.version,
         });
         mergeNote(note);
@@ -1165,6 +1178,28 @@ export const useStore = create<AppStore>()((set, get) => {
         return false;
       } finally {
         set({ noteCapturing: false });
+      }
+    },
+
+    async transcribeNote(noteId) {
+      set({ noteTranscribing: true, noteTranscribeError: null });
+      try {
+        const { note } = await api.transcribeNote(noteId);
+        mergeNote(note);
+        get().pushToast("ok", "Transcripción lista: revísala y corrige lo que haga falta");
+        return true;
+      } catch (err) {
+        // El fallo del proveedor se muestra en el panel, junto al texto vacío:
+        // la vista NUNCA rellena el hueco con algo inventado.
+        set({
+          noteTranscribeError:
+            err instanceof ApiError
+              ? err.message
+              : normalizeMutationError(err, "No se pudo transcribir la nota"),
+        });
+        return false;
+      } finally {
+        set({ noteTranscribing: false });
       }
     },
 

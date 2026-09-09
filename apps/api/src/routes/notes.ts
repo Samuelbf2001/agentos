@@ -1,8 +1,8 @@
 /**
- * Notas manuscritas (fase 1 del módulo de Notas): un lienzo Excalidraw donde
- * se escribe con tableta gráfica, autoguardado desde la interfaz y, al pulsar
- * "Terminar notas", un PNG limpio guardado para que una fase posterior lo
- * transcriba.
+ * Notas manuscritas: un lienzo Excalidraw donde se escribe con tableta
+ * gráfica, autoguardado desde la interfaz, un PNG limpio al pulsar "Terminar
+ * notas" y, sobre ese PNG, la transcripción con un modelo de visión que el
+ * humano puede corregir a mano (PATCH con `transcription`).
  *
  * Reglas heredadas del repo:
  * - `expected_version` en el guardado → 409 `version_conflict`, igual que
@@ -39,6 +39,7 @@ import {
 } from "../artifact-files.js";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
+import { segmentarEscena } from "../notes/segmentacion.js";
 
 /** La escena es JSON opaco de Excalidraw: se valida la forma mínima, no el contenido. */
 const Scene = z.object({ elements: z.array(z.unknown()) }).catchall(z.unknown());
@@ -56,6 +57,8 @@ const CreateBody = z.object({
 const UpdateBody = z.object({
   title: z.string().min(1).max(200).optional(),
   scene: Scene.optional(),
+  /** Corrección humana de la transcripción (cadena vacía = borrarla). */
+  transcription: z.string().max(200_000).optional(),
   expected_version: z.number().int().positive().optional(),
 });
 
@@ -125,9 +128,14 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
     const body = parse(UpdateBody, req.body);
     const before = await getCanvasNote(db, id);
     if (!before) throw errors.notFound("canvas_note", id);
-    if (body.title === undefined && body.scene === undefined) {
-      throw errors.validation("Nada que guardar: manda `title`, `scene` o ambos");
+    if (body.title === undefined && body.scene === undefined && body.transcription === undefined) {
+      throw errors.validation("Nada que guardar: manda `title`, `scene`, `transcription` o varios");
     }
+
+    // La corrección humana del texto es tan válida como la del modelo: se
+    // guarda tal cual (vacía = se borra) y no cambia el estado de la nota.
+    const transcription =
+      body.transcription === undefined ? undefined : body.transcription.trim() || null;
 
     const note = await updateCanvasNote(
       db,
@@ -137,6 +145,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
         ...(body.scene !== undefined
           ? { scene: body.scene as { elements: readonly unknown[] } }
           : {}),
+        ...(transcription !== undefined ? { transcription } : {}),
       },
       body.expected_version,
     );
@@ -147,7 +156,14 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
       entityType: "canvas_note",
       entityId: id,
       before: { version: before.version, title: before.title },
-      after: { version: note.version, title: note.title, elements: note.scene.elements.length },
+      after: {
+        version: note.version,
+        title: note.title,
+        elements: note.scene.elements.length,
+        ...(transcription !== undefined
+          ? { transcriptionChars: transcription?.length ?? 0, transcriptionEditedBy: "human" }
+          : {}),
+      },
     });
     return { note };
   });
@@ -229,6 +245,63 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
     });
     reply.status(201);
     return { note: captured };
+  });
+
+  /**
+   * Transcribe la nota con el modelo de visión. Exige que la imagen ya exista
+   * (la nota está `captured` o `transcribed`): un borrador no tiene qué leer.
+   *
+   * Si el proveedor no está configurado o falla, sale `provider_unavailable`
+   * (502) y la nota NO se toca: jamás se guarda una transcripción inventada.
+   */
+  app.post("/api/notes/:id/transcribe", async (req) => {
+    const { id } = req.params as { id: string };
+    const note = await getCanvasNote(db, id);
+    if (!note) throw errors.notFound("canvas_note", id);
+    if (note.status === "draft" || !note.imagePath) {
+      throw errors.conflict(
+        "La nota está en borrador: pulsa «Terminar notas» para dejar la imagen antes de transcribir",
+        { noteId: id, status: note.status },
+      );
+    }
+
+    const project = (note.projectId ? await getProject(db, note.projectId) : null) ?? null;
+    const absolute = resolveArtifactPath(artifactsRoot(project), note.imagePath);
+    if (!fs.existsSync(absolute)) throw errors.notFound("canvas_note_image", id);
+    const imagen = fs.readFileSync(absolute);
+
+    const segmentacion = segmentarEscena(note.scene);
+    const resultado = await ctx.noteTranscriber.transcribe({
+      imagen,
+      segmentacion,
+      titulo: note.title,
+    });
+
+    const transcrita = await updateCanvasNote(db, id, {
+      transcription: resultado.texto,
+      status: "transcribed",
+    });
+    await appendAudit(db, {
+      actor: personActor(req),
+      source: "ui",
+      action: "note.transcribe",
+      entityType: "canvas_note",
+      entityId: id,
+      before: { status: note.status, version: note.version },
+      after: {
+        status: transcrita.status,
+        version: transcrita.version,
+        provider: resultado.proveedor,
+        model: resultado.modelo,
+        chars: resultado.texto.length,
+        tokensIn: resultado.usage.tokensIn,
+        tokensOut: resultado.usage.tokensOut,
+        costUsd: resultado.costUsd,
+        blocks: segmentacion.resumen.bloques,
+        lines: segmentacion.resumen.renglones,
+      },
+    });
+    return { note: transcrita };
   });
 
   /** El PNG de la nota. Misma defensa contra path traversal que la descarga de artefactos. */

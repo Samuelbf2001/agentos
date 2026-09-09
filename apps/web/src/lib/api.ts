@@ -632,11 +632,19 @@ export const api = {
   /** Autoguardado: `expected_version` convierte la carrera en 409, no en pérdida. */
   saveNote: (
     id: string,
-    body: { title?: string; scene?: CanvasScene; expected_version?: number },
+    body: {
+      title?: string;
+      scene?: CanvasScene;
+      transcription?: string;
+      expected_version?: number;
+    },
   ) => request<{ note: CanvasNote }>(`/api/notes/${id}`, { method: "PATCH", body }),
   /** "Terminar notas": el PNG ya exportado por el lienzo, en base64. */
   captureNote: (id: string, body: { image_base64: string; task_id?: string }) =>
     request<{ note: CanvasNote }>(`/api/notes/${id}/capture`, { method: "POST", body }),
+  /** Pasa el PNG por el modelo de visión; 502 provider_unavailable si el proveedor falla. */
+  transcribeNote: (id: string) =>
+    request<{ note: CanvasNote }>(`/api/notes/${id}/transcribe`, { method: "POST" }),
   noteImageUrl: (id: string) => `${API_BASE}/api/notes/${id}/image`,
   // ── Organigrama ────────────────────────────────────────────────────────────
   orgGraph: (orgId: string) => request<OrgGraph>(`/api/orgs/${orgId}/graph`),
