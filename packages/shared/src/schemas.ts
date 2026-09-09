@@ -136,10 +136,43 @@ export type RoleProcessRelation = z.infer<typeof RoleProcessRelation>;
 // ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
 /**
  * `draft` = se sigue escribiendo; `captured` = la escena ya se exportó a PNG;
- * `transcribed` = la fase 2 leyó ese PNG y dejó la transcripción.
+ * `transcribed` = la fase 2 leyó ese PNG y dejó la transcripción;
+ * `converted` = la fase 3 creó al menos una tarea a partir de sus propuestas.
  */
-export const CanvasNoteStatus = z.enum(["draft", "captured", "transcribed"]);
+export const CanvasNoteStatus = z.enum(["draft", "captured", "transcribed", "converted"]);
 export type CanvasNoteStatus = z.infer<typeof CanvasNoteStatus>;
+
+/** Cuánto se fía el modelo de la propuesta (el humano decide igual). */
+export const NoteProposalConfidence = z.enum(["alta", "media", "baja"]);
+export type NoteProposalConfidence = z.infer<typeof NoteProposalConfidence>;
+
+/**
+ * Tarea PROPUESTA a partir de la transcripción de una nota (fase 3). Vive en
+ * `canvas_notes.proposals` hasta que el humano pulsa "Crear": proponer no
+ * crea nada. `project_guess`/`assignee_guess` guardan el nombre tal cual lo
+ * escribió el autor; `project_id`/`assignee_person_id` sólo se rellenan cuando
+ * la coincidencia con el catálogo es inequívoca (o cuando el humano los elige).
+ * `created_task_id` queda fijado al crear la tarea: esa propuesta ya no se
+ * vuelve a proponer ni a crear.
+ */
+export const NoteTaskProposal = z.object({
+  id: z.string().min(1),
+  include: z.boolean(),
+  title: z.string().min(1).max(300),
+  description: z.string().max(5_000).optional(),
+  project_id: z.string().min(1).nullable(),
+  project_guess: z.string().max(200).nullable(),
+  assignee_person_id: z.string().min(1).nullable(),
+  assignee_guess: z.string().max(200).nullable(),
+  /** Fecha límite en ISO 8601 (o null si el texto no la dice). */
+  due_at: z.string().max(40).nullable(),
+  priority: TaskPriority,
+  /** Fragmento LITERAL de la transcripción del que sale la propuesta. */
+  source_excerpt: z.string().max(2_000),
+  confidence: NoteProposalConfidence,
+  created_task_id: z.string().min(1).nullable(),
+});
+export type NoteTaskProposal = z.infer<typeof NoteTaskProposal>;
 
 /**
  * Escena de Excalidraw tal cual la entrega la librería (`elements`, `appState`,

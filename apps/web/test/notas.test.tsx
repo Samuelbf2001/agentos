@@ -57,6 +57,7 @@ function makeNote(overrides: Partial<CanvasNote> = {}): CanvasNote {
     imageBytes: null,
     capturedAt: null,
     transcription: null,
+    proposals: [],
     createdByPersonId: person.id,
     version: 3,
     createdAt: 1000,

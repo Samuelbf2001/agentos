@@ -9,6 +9,7 @@ import type {
   Approval,
   Artifact,
   CanvasNote,
+  NoteTaskProposal,
   CanvasScene,
   BrainOverview,
   ConvertRoleToAgentResponse,
@@ -646,6 +647,18 @@ export const api = {
   transcribeNote: (id: string) =>
     request<{ note: CanvasNote }>(`/api/notes/${id}/transcribe`, { method: "POST" }),
   noteImageUrl: (id: string) => `${API_BASE}/api/notes/${id}/image`,
+  /** Fase 3: PROPONE tareas desde la transcripción y las guarda en la nota. No crea ninguna. */
+  proposeNoteTasks: (id: string) =>
+    request<{ note: CanvasNote }>(`/api/notes/${id}/propose`, { method: "POST" }),
+  /** Guarda la lista revisada por el humano; `expected_version` → 409 si otra pestaña la cambió. */
+  saveNoteProposals: (id: string, body: { proposals: NoteTaskProposal[]; expected_version: number }) =>
+    request<{ note: CanvasNote }>(`/api/notes/${id}/proposals`, { method: "PATCH", body }),
+  /** La ÚNICA orden que crea tareas: las incluidas y aún sin `created_task_id`. */
+  commitNoteTasks: (id: string, body: { expected_version: number }) =>
+    request<{ note: CanvasNote; tasks: { proposalId: string; taskId: string }[] }>(
+      `/api/notes/${id}/commit-tasks`,
+      { method: "POST", body },
+    ),
   // ── Organigrama ────────────────────────────────────────────────────────────
   orgGraph: (orgId: string) => request<OrgGraph>(`/api/orgs/${orgId}/graph`),
   createOrgUnit: (

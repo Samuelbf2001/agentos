@@ -905,7 +905,31 @@ export interface ConvertRoleToAgentResponse {
 
 // ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
 
-export type CanvasNoteStatus = "draft" | "captured" | "transcribed";
+export type CanvasNoteStatus = "draft" | "captured" | "transcribed" | "converted";
+
+export type NoteProposalConfidence = "alta" | "media" | "baja";
+
+/**
+ * Tarea PROPUESTA desde la transcripción (fase 3). Vive en la nota hasta que
+ * el humano pulsa "Crear": `created_task_id` sólo lo fija el servidor.
+ * `project_guess`/`assignee_guess` = el nombre tal cual lo escribió el autor.
+ */
+export interface NoteTaskProposal {
+  id: string;
+  include: boolean;
+  title: string;
+  description?: string;
+  project_id: string | null;
+  project_guess: string | null;
+  assignee_person_id: string | null;
+  assignee_guess: string | null;
+  /** ISO 8601 o null. */
+  due_at: string | null;
+  priority: TaskPriority;
+  source_excerpt: string;
+  confidence: NoteProposalConfidence;
+  created_task_id: string | null;
+}
 
 /** Escena de Excalidraw: opaca para la app, la entiende solo el lienzo. */
 export interface CanvasScene {
@@ -927,6 +951,8 @@ export interface CanvasNote {
   imageBytes: number | null;
   capturedAt: number | null;
   transcription: string | null;
+  /** Propuestas de la fase 3 (vacío hasta pulsar «Proponer tareas»). */
+  proposals: NoteTaskProposal[];
   createdByPersonId: string | null;
   version: number;
   createdAt: number;

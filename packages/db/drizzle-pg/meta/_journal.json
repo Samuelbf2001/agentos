@@ -50,6 +50,13 @@
       "when": 1788240000000,
       "tag": "0006_notas_canvas",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788300000000,
+      "tag": "0007_notas_propuestas",
+      "breakpoints": true
     }
   ]
 }

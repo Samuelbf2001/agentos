@@ -49,6 +49,7 @@ import type {
   MessageRole,
   ModuleBlueprint,
   ModuleStatus,
+  NoteTaskProposal,
   OrgKind,
   OrgRoleStatus,
   ProcessStatus,
@@ -876,6 +877,8 @@ export const canvasNotes = pgTable(
     capturedAt: epochMs("captured_at"),
     /** La rellena la fase 2 (transcripción); en fase 1 siempre null. */
     transcription: text("transcription"),
+    /** Tareas PROPUESTAS por la fase 3 (`NoteTaskProposal[]`); ver espejo SQLite. */
+    proposals: jsonb("proposals").$type<NoteTaskProposal[]>().notNull().default([]),
     createdByPersonId: text("created_by_person_id").references(() => people.id),
     version: integer("version").notNull().default(1),
     createdAt: epochMs("created_at").notNull(),

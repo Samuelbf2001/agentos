@@ -1,11 +1,11 @@
 /**
- * Notas manuscritas: la migración 0010 crea la tabla y el repositorio cumple
+ * Notas manuscritas: la migración 0010 crea la tabla (0011 añade `proposals`) y el repositorio cumple
  * el contrato de siempre (listado más reciente primero, `expected_version` y
  * captura del PNG). El espejo Postgres se comprueba por tipos en
  * `pg-portability.test.ts` y por datos en `pg-backend.test.ts`.
  */
 import { describe, expect, it } from "vitest";
-import { emptyCanvasScene, isAgentosError } from "@agentos/shared";
+import { NoteTaskProposal, emptyCanvasScene, isAgentosError } from "@agentos/shared";
 import { openDb, type AgentosSqliteDb } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { createOrganization, createPerson } from "../src/repositories/organizations-people.js";
@@ -159,6 +159,47 @@ describe("canvas_notes (migración 0010 + repositorio)", () => {
     expect(captured.version).toBe(note.version + 1);
     // El binario NUNCA entra en la base: sólo su ruta relativa.
     expect(captured.imagePath?.startsWith("/")).toBe(false);
+  });
+
+  it("la migración 0011 añade `proposals` (JSON) con lista vacía por defecto y hace round-trip", () => {
+    const db = freshDb();
+    const columnas = (
+      db.$client.prepare(`PRAGMA table_info(canvas_notes)`).all() as { name: string; notnull: number; dflt_value: string | null }[]
+    );
+    const proposals = columnas.find((c) => c.name === "proposals");
+    expect(proposals).toBeTruthy();
+    expect(proposals!.notnull).toBe(1);
+    expect(proposals!.dflt_value).toBe("'[]'");
+
+    const { project, person } = fixture(db);
+    const note = createCanvasNote(db, {
+      projectId: project.id,
+      title: "Con propuestas",
+      scene: emptyCanvasScene(),
+    });
+    expect(note.proposals).toEqual([]);
+
+    const propuesta: NoteTaskProposal = {
+      id: "prop-1",
+      include: true,
+      title: "Cerrar el presupuesto",
+      description: "Con las cifras de la reunión",
+      project_id: project.id,
+      project_guess: null,
+      assignee_person_id: person.id,
+      assignee_guess: "Ernesto",
+      due_at: "2026-09-11",
+      priority: "high",
+      source_excerpt: "Cerrar el presupuesto con Ernesto para el viernes",
+      confidence: "alta",
+      created_task_id: null,
+    };
+    const guardada = updateCanvasNote(db, note.id, { proposals: [propuesta] }, note.version);
+    expect(guardada.version).toBe(2);
+    expect(guardada.proposals).toEqual([propuesta]);
+    // Round-trip exacto desde la base (no desde la caché de la llamada).
+    expect(getCanvasNote(db, note.id)?.proposals).toEqual([propuesta]);
+    expect(NoteTaskProposal.safeParse(getCanvasNote(db, note.id)?.proposals[0]).success).toBe(true);
   });
 
   it("una nota inexistente no se puede guardar ni capturar", () => {

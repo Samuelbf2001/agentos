@@ -53,6 +53,7 @@ import { appendMessage, buildSessionKey, getOrCreateThread, listMessages } from 
 import { createDoc, listDocs, searchDocs, semanticSearchDocs } from "../src/pg/repositories/knowledge.js";
 import { getConfig, setConfig } from "../src/pg/repositories/config.js";
 import { appendAudit, queryAudit } from "../src/pg/repositories/audit.js";
+import { createCanvasNote, getCanvasNote, updateCanvasNote } from "../src/pg/repositories/canvas-notes.js";
 
 const PG_URL = process.env.AGENTOS_PG_URL;
 /** Dimensión pequeña: la suite prueba el PIPELINE vectorial, no el modelo. */
@@ -170,6 +171,42 @@ describePg("backend Postgres + pgvector", () => {
   }
 
   describe("repositorios (misma superficie que SQLite, asíncrona)", () => {
+    it("canvas_notes: la migración 0007 añade `proposals` jsonb y el round-trip conserva la lista", async () => {
+      const cols = await db.execute<{ column_name: string; data_type: string; column_default: string | null }>(sql`
+        SELECT column_name, data_type, column_default FROM information_schema.columns
+         WHERE table_schema = public AND table_name = canvas_notes AND column_name = proposals
+      `);
+      expect(cols[0]?.data_type).toBe("jsonb");
+      expect(cols[0]?.column_default).toContain("[]");
+
+      const { org, project } = await fixture();
+      const person = await createPerson(db, { orgId: org.id, fullName: "Ernesto PG", isInternal: true });
+      const note = await createCanvasNote(db, {
+        orgId: org.id,
+        projectId: project.id,
+        title: "Nota PG",
+        scene: { elements: [] },
+      });
+      expect(note.proposals).toEqual([]);
+      const propuesta = {
+        id: "prop-pg-1",
+        include: true,
+        title: "Cerrar el presupuesto",
+        project_id: project.id,
+        project_guess: null,
+        assignee_person_id: person.id,
+        assignee_guess: "Ernesto",
+        due_at: "2026-09-11",
+        priority: "high" as const,
+        source_excerpt: "Cerrar el presupuesto con Ernesto",
+        confidence: "alta" as const,
+        created_task_id: null,
+      };
+      const guardada = await updateCanvasNote(db, note.id, { proposals: [propuesta] }, note.version);
+      expect(guardada.version).toBe(note.version + 1);
+      expect((await getCanvasNote(db, note.id))?.proposals).toEqual([propuesta]);
+    });
+
     it("organizations/people", async () => {
       const { org } = await fixture();
       await createPerson(db, { orgId: org.id, fullName: "Ana PG", isInternal: true });

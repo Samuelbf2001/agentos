@@ -15,7 +15,10 @@ import type { CanvasNote, NewCanvasNote } from "../types.js";
 
 /** Campos que el usuario puede reescribir; el resto lo mueve la plataforma. */
 export type CanvasNotePatch = Partial<
-  Pick<CanvasNote, "title" | "scene" | "projectId" | "orgId" | "status" | "transcription">
+  Pick<
+    CanvasNote,
+    "title" | "scene" | "projectId" | "orgId" | "status" | "transcription" | "proposals"
+  >
 >;
 
 /** Datos del PNG exportado al pulsar "Terminar notas". */

@@ -13,6 +13,8 @@
  *   texto EDITABLE: la lectura de una letra siempre puede fallar, así que el
  *   humano corrige y su corrección se guarda (PATCH con `transcription`). Si
  *   el proveedor falla, se enseña el error: nunca se rellena con algo inventado.
+ * - Bajo la transcripción, «Tareas propuestas» (fase 3, `PropuestasPanel`):
+ *   el modelo propone, el humano revisa y NADA se crea sin pulsar «Crear».
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -22,6 +24,7 @@ import { EmptyState, ErrorBox, Spinner, fmtDate, timeAgo } from "../components/u
 import { api } from "../lib/api";
 import type { CanvasNote, CanvasScene } from "../lib/types";
 import type { LienzoHandle } from "./notas/Lienzo";
+import { PropuestasPanel } from "./notas/PropuestasPanel";
 
 const Lienzo = lazy(() => import("./notas/Lienzo"));
 
@@ -32,12 +35,14 @@ const STATUS_LABELS: Record<CanvasNote["status"], string> = {
   draft: "Borrador",
   captured: "Terminada",
   transcribed: "Transcrita",
+  converted: "Con tareas",
 };
 
 const STATUS_CLASSES: Record<CanvasNote["status"], string> = {
   draft: "border-line bg-surface-2 text-muted",
   captured: "border-done-line bg-done-bg text-done",
   transcribed: "border-link bg-link-bg text-link",
+  converted: "border-done-line bg-done-bg text-done",
 };
 
 /** Blob → base64 sin cadenas gigantes en memoria (FileReader lo hace en nativo). */
@@ -356,6 +361,8 @@ export default function NotasView() {
               </a>
             ) : null}
           </section>
+
+          {activeNote ? <PropuestasPanel key={activeNote.id} note={activeNote} /> : null}
 
           <section className="rounded-panel border border-line bg-surface p-3">
             <h2 className="text-label uppercase tracking-wide text-muted">Notas recientes</h2>

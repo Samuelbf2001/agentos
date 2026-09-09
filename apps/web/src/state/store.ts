@@ -22,6 +22,7 @@ import type {
   Approval,
   Artifact,
   CanvasNote,
+  NoteTaskProposal,
   CanvasScene,
   LabelUsage,
   Message,
@@ -177,6 +178,12 @@ export interface AppStore extends EventState {
   noteTranscribing: boolean;
   /** Último fallo del proveedor al transcribir; se muestra tal cual, sin inventar texto. */
   noteTranscribeError: string | null;
+  /** Fase 3: el modelo está proponiendo tareas (no crea nada). */
+  noteProposing: boolean;
+  /** Último fallo del proveedor al proponer; la lista se queda como estaba. */
+  noteProposeError: string | null;
+  /** "Crear N tareas" en vuelo: la única orden que crea tarjetas. */
+  noteCommitting: boolean;
 
 
   toasts: Toast[];
@@ -245,6 +252,12 @@ export interface AppStore extends EventState {
   captureNote(noteId: string, imageBase64: string): Promise<boolean>;
   /** Pasa la imagen por el modelo de visión; false si el proveedor falló (nunca inventa). */
   transcribeNote(noteId: string): Promise<boolean>;
+  /** Fase 3: pide propuestas al modelo y las deja en la nota. NO crea tareas. */
+  proposeNoteTasks(noteId: string): Promise<boolean>;
+  /** Guarda la revisión humana de las propuestas (PATCH con `expected_version`). */
+  saveNoteProposals(noteId: string, proposals: NoteTaskProposal[]): Promise<boolean>;
+  /** "Crear N tareas": la única orden que crea; devuelve cuántas se crearon (o null si falló). */
+  commitNoteTasks(noteId: string): Promise<number | null>;
 
   loadThreads(): Promise<void>;
   openThread(threadId: string | null): Promise<void>;
@@ -505,6 +518,9 @@ export const useStore = create<AppStore>()((set, get) => {
     noteCapturing: false,
     noteTranscribing: false,
     noteTranscribeError: null,
+    noteProposing: false,
+    noteProposeError: null,
+    noteCommitting: false,
     toasts: [],
 
     async init() {
@@ -1128,8 +1144,8 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     openNote(noteId) {
-      // El error de transcripción es de la nota que se deja atrás: no viaja.
-      set({ activeNoteId: noteId, noteSavedAt: null, noteTranscribeError: null });
+      // Los errores de transcripción/propuesta son de la nota que se deja atrás: no viajan.
+      set({ activeNoteId: noteId, noteSavedAt: null, noteTranscribeError: null, noteProposeError: null });
     },
 
     async saveNote(noteId, patch) {
@@ -1200,6 +1216,97 @@ export const useStore = create<AppStore>()((set, get) => {
         return false;
       } finally {
         set({ noteTranscribing: false });
+      }
+    },
+
+    async proposeNoteTasks(noteId) {
+      set({ noteProposing: true, noteProposeError: null });
+      try {
+        const { note } = await api.proposeNoteTasks(noteId);
+        mergeNote(note);
+        const pendientes = note.proposals.filter((p) => !p.created_task_id).length;
+        get().pushToast(
+          "ok",
+          pendientes > 0
+            ? `${pendientes} tarea(s) propuesta(s): revísalas y crea las que quieras`
+            : "El modelo no encontró acciones concretas en la transcripción",
+        );
+        return true;
+      } catch (err) {
+        // El fallo del proveedor se muestra en el panel; la lista se queda como estaba.
+        set({
+          noteProposeError:
+            err instanceof ApiError
+              ? err.message
+              : normalizeMutationError(err, "No se pudieron proponer tareas"),
+        });
+        return false;
+      } finally {
+        set({ noteProposing: false });
+      }
+    },
+
+    async saveNoteProposals(noteId, proposals) {
+      const current = get().notes.find((n) => n.id === noteId);
+      if (!current) return false;
+      set({ noteSaving: true });
+      try {
+        const { note } = await api.saveNoteProposals(noteId, {
+          proposals,
+          expected_version: current.version,
+        });
+        mergeNote(note);
+        set({ noteSavedAt: Date.now() });
+        return true;
+      } catch (err) {
+        if (isVersionConflict(err)) {
+          try {
+            const { note } = await api.note(noteId);
+            mergeNote(note);
+          } catch {
+            /* si tampoco se puede releer, manda el error de abajo */
+          }
+          get().pushToast("info", "Las propuestas cambiaron en otra pestaña: se recargó su versión");
+          return false;
+        }
+        toastError(err, "No se pudieron guardar las propuestas");
+        return false;
+      } finally {
+        set({ noteSaving: false });
+      }
+    },
+
+    async commitNoteTasks(noteId) {
+      const current = get().notes.find((n) => n.id === noteId);
+      if (!current) return null;
+      set({ noteCommitting: true });
+      try {
+        const { note, tasks } = await api.commitNoteTasks(noteId, {
+          expected_version: current.version,
+        });
+        mergeNote(note);
+        get().pushToast(
+          "ok",
+          tasks.length > 0
+            ? `${tasks.length} tarea(s) creada(s) en el tablero`
+            : "No había propuestas pendientes de crear",
+        );
+        return tasks.length;
+      } catch (err) {
+        if (isVersionConflict(err)) {
+          try {
+            const { note } = await api.note(noteId);
+            mergeNote(note);
+          } catch {
+            /* si tampoco se puede releer, manda el error de abajo */
+          }
+          get().pushToast("info", "La nota cambió en otra pestaña: revisa las propuestas y vuelve a crear");
+          return null;
+        }
+        toastError(err, "No se pudieron crear las tareas");
+        return null;
+      } finally {
+        set({ noteCommitting: false });
       }
     },
 

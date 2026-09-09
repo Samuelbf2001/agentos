@@ -6,7 +6,10 @@ import { canvasNotes } from "../schema-pg.js";
 import type { CanvasNote, NewCanvasNote } from "../types-pg.js";
 
 export type CanvasNotePatch = Partial<
-  Pick<CanvasNote, "title" | "scene" | "projectId" | "orgId" | "status" | "transcription">
+  Pick<
+    CanvasNote,
+    "title" | "scene" | "projectId" | "orgId" | "status" | "transcription" | "proposals"
+  >
 >;
 
 export interface CanvasNoteCapture {

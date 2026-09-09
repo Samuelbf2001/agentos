@@ -215,11 +215,13 @@ export function createModelTranscriber(options: ModelTranscriberOptions): NoteTr
  * El mensaje del proveedor NO se reenvía: un 401 de OpenAI llega con la clave
  * (aunque sea parcialmente enmascarada) dentro del texto, y ese texto acabaría
  * en la respuesta HTTP y en los logs. Se clasifica el error y se responde con
- * una causa estable; como mucho se nombra la VARIABLE de entorno.
+ * una causa estable; como mucho se nombra la VARIABLE de entorno. La comparte
+ * el proponedor de tareas (fase 3): misma frontera, misma clasificación.
  */
-function asProviderUnavailable(
+export function asProviderUnavailable(
   err: unknown,
   ctx: { slug: string; modelId: string; apiKeyEnv: string | null },
+  accion = "transcribir",
 ): Error {
   if (isAgentosError(err, ErrorCodes.PROVIDER_UNAVAILABLE)) return err;
   // Errores nuestros de configuración: el mensaje ya es seguro (nombre de la variable).
@@ -238,7 +240,7 @@ function asProviderUnavailable(
     permanent: "el proveedor rechazó la petición",
   };
   return errors.providerUnavailable(
-    `No se pudo transcribir con '${ctx.slug}' (${ctx.modelId}): ${causas[kind]}.`,
+    `No se pudo ${accion} con '${ctx.slug}' (${ctx.modelId}): ${causas[kind]}.`,
     { slug: ctx.slug, model: ctx.modelId, causa: kind },
   );
 }

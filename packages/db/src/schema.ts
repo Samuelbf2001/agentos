@@ -37,6 +37,7 @@ import type {
   MessageRole,
   ModuleBlueprint,
   ModuleStatus,
+  NoteTaskProposal,
   OrgKind,
   OrgRoleStatus,
   ProcessStatus,
@@ -985,6 +986,14 @@ export const canvasNotes = sqliteTable(
     capturedAt: integer("captured_at"),
     /** La rellena la fase 2 (transcripción); en fase 1 siempre null. */
     transcription: text("transcription"),
+    /**
+     * Tareas PROPUESTAS por la fase 3 (JSON, `NoteTaskProposal[]`). Proponer
+     * no crea nada: sólo `commit-tasks` fija `created_task_id` en cada una.
+     */
+    proposals: text("proposals", { mode: "json" })
+      .$type<NoteTaskProposal[]>()
+      .notNull()
+      .default([]),
     createdByPersonId: text("created_by_person_id").references(() => people.id),
     version: integer("version").notNull().default(1),
     createdAt: integer("created_at").notNull(),
