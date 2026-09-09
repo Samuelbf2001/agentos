@@ -21,6 +21,9 @@ import type {
   Agent,
   Approval,
   Artifact,
+  CanvasNote,
+  NoteTaskProposal,
+  CanvasScene,
   LabelUsage,
   Message,
   Person,
@@ -160,6 +163,29 @@ export interface AppStore extends EventState {
   taskSearchError: string | null;
   chatSending: boolean;
 
+  /** Notas manuscritas (lienzo Excalidraw). El diario, más reciente primero. */
+  notes: CanvasNote[];
+  notesLoading: boolean;
+  notesError: string | null;
+  /** Nota abierta en el lienzo. */
+  activeNoteId: string | null;
+  /** Autoguardado en vuelo; el indicador discreto de la vista lo lee. */
+  noteSaving: boolean;
+  /** Momento del último guardado confirmado por la API (para "Guardado …"). */
+  noteSavedAt: number | null;
+  noteCapturing: boolean;
+  /** Transcripción en vuelo (el modelo de visión tarda segundos, no milisegundos). */
+  noteTranscribing: boolean;
+  /** Último fallo del proveedor al transcribir; se muestra tal cual, sin inventar texto. */
+  noteTranscribeError: string | null;
+  /** Fase 3: el modelo está proponiendo tareas (no crea nada). */
+  noteProposing: boolean;
+  /** Último fallo del proveedor al proponer; la lista se queda como estaba. */
+  noteProposeError: string | null;
+  /** "Crear N tareas" en vuelo: la única orden que crea tarjetas. */
+  noteCommitting: boolean;
+
+
   toasts: Toast[];
 
   // acciones
@@ -213,6 +239,25 @@ export interface AppStore extends EventState {
   commentOnTask(taskId: string, body: string): Promise<void>;
   approveTaskReview(taskId: string, note?: string): Promise<void>;
   rejectTaskReview(taskId: string, note: string): Promise<void>;
+
+  loadNotes(projectId?: string): Promise<void>;
+  createNote(input?: { title?: string; projectId?: string }): Promise<CanvasNote | null>;
+  openNote(noteId: string | null): void;
+  /** Autoguardado del lienzo; devuelve false si la API lo rechazó. */
+  saveNote(
+    noteId: string,
+    patch: { title?: string; scene?: CanvasScene; transcription?: string },
+  ): Promise<boolean>;
+  /** "Terminar notas": manda el PNG ya exportado (base64) y deja la nota en `captured`. */
+  captureNote(noteId: string, imageBase64: string): Promise<boolean>;
+  /** Pasa la imagen por el modelo de visión; false si el proveedor falló (nunca inventa). */
+  transcribeNote(noteId: string): Promise<boolean>;
+  /** Fase 3: pide propuestas al modelo y las deja en la nota. NO crea tareas. */
+  proposeNoteTasks(noteId: string): Promise<boolean>;
+  /** Guarda la revisión humana de las propuestas (PATCH con `expected_version`). */
+  saveNoteProposals(noteId: string, proposals: NoteTaskProposal[]): Promise<boolean>;
+  /** "Crear N tareas": la única orden que crea; devuelve cuántas se crearon (o null si falló). */
+  commitNoteTasks(noteId: string): Promise<number | null>;
 
   loadThreads(): Promise<void>;
   openThread(threadId: string | null): Promise<void>;
@@ -324,6 +369,11 @@ export const useStore = create<AppStore>()((set, get) => {
       const project = state.projects.find((candidate) => candidate.id === task.projectId) ?? null;
       set({ taskDetail: { ...state.taskDetail, task, project } });
     }
+  }
+
+  /** La nota que vuelve de la API manda sobre la copia local (incluida `version`). */
+  function mergeNote(note: CanvasNote): void {
+    set({ notes: get().notes.map((n) => (n.id === note.id ? note : n)) });
   }
 
   function isVersionConflict(err: unknown): boolean {
@@ -459,6 +509,18 @@ export const useStore = create<AppStore>()((set, get) => {
     taskSearchLoading: false,
     taskSearchError: null,
     chatSending: false,
+    notes: [],
+    notesLoading: false,
+    notesError: null,
+    activeNoteId: null,
+    noteSaving: false,
+    noteSavedAt: null,
+    noteCapturing: false,
+    noteTranscribing: false,
+    noteTranscribeError: null,
+    noteProposing: false,
+    noteProposeError: null,
+    noteCommitting: false,
     toasts: [],
 
     async init() {
@@ -1049,6 +1111,202 @@ export const useStore = create<AppStore>()((set, get) => {
         void get().loadApprovals();
       } catch (err) {
         toastError(err, "No se pudo rechazar");
+      }
+    },
+
+    // ── Notas manuscritas ─────────────────────────────────────────────────
+
+    async loadNotes(projectId) {
+      set({ notesLoading: true, notesError: null });
+      try {
+        const { notes } = await api.notes(projectId);
+        set({ notes, notesLoading: false });
+      } catch (err) {
+        set({
+          notesLoading: false,
+          notesError: normalizeMutationError(err, "No se pudieron cargar las notas"),
+        });
+      }
+    },
+
+    async createNote(input = {}) {
+      try {
+        const { note } = await api.createNote({
+          ...(input.title ? { title: input.title } : {}),
+          ...(input.projectId ? { project_id: input.projectId } : {}),
+        });
+        set({ notes: [note, ...get().notes], activeNoteId: note.id, noteSavedAt: null });
+        return note;
+      } catch (err) {
+        toastError(err, "No se pudo crear la nota");
+        return null;
+      }
+    },
+
+    openNote(noteId) {
+      // Los errores de transcripción/propuesta son de la nota que se deja atrás: no viajan.
+      set({ activeNoteId: noteId, noteSavedAt: null, noteTranscribeError: null, noteProposeError: null });
+    },
+
+    async saveNote(noteId, patch) {
+      const current = get().notes.find((n) => n.id === noteId);
+      if (!current) return false;
+      set({ noteSaving: true });
+      try {
+        const { note } = await api.saveNote(noteId, {
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.scene !== undefined ? { scene: patch.scene } : {}),
+          ...(patch.transcription !== undefined ? { transcription: patch.transcription } : {}),
+          expected_version: current.version,
+        });
+        mergeNote(note);
+        set({ noteSavedAt: Date.now() });
+        return true;
+      } catch (err) {
+        // 409: otra pestaña guardó antes. Se relee la nota (no se pisa su
+        // trabajo) y el lienzo sigue con lo que el usuario tiene delante.
+        if (isVersionConflict(err)) {
+          try {
+            const { note } = await api.note(noteId);
+            mergeNote(note);
+          } catch {
+            /* si tampoco se puede releer, manda el error de abajo */
+          }
+          get().pushToast("info", "La nota cambió en otra pestaña: se recargó su versión");
+          return false;
+        }
+        toastError(err, "No se pudo guardar la nota");
+        return false;
+      } finally {
+        set({ noteSaving: false });
+      }
+    },
+
+    async captureNote(noteId, imageBase64) {
+      set({ noteCapturing: true });
+      try {
+        const { note } = await api.captureNote(noteId, { image_base64: imageBase64 });
+        mergeNote(note);
+        get().pushToast("ok", "Notas terminadas: la imagen quedó guardada");
+        return true;
+      } catch (err) {
+        toastError(err, "No se pudo terminar la nota");
+        return false;
+      } finally {
+        set({ noteCapturing: false });
+      }
+    },
+
+    async transcribeNote(noteId) {
+      set({ noteTranscribing: true, noteTranscribeError: null });
+      try {
+        const { note } = await api.transcribeNote(noteId);
+        mergeNote(note);
+        get().pushToast("ok", "Transcripción lista: revísala y corrige lo que haga falta");
+        return true;
+      } catch (err) {
+        // El fallo del proveedor se muestra en el panel, junto al texto vacío:
+        // la vista NUNCA rellena el hueco con algo inventado.
+        set({
+          noteTranscribeError:
+            err instanceof ApiError
+              ? err.message
+              : normalizeMutationError(err, "No se pudo transcribir la nota"),
+        });
+        return false;
+      } finally {
+        set({ noteTranscribing: false });
+      }
+    },
+
+    async proposeNoteTasks(noteId) {
+      set({ noteProposing: true, noteProposeError: null });
+      try {
+        const { note } = await api.proposeNoteTasks(noteId);
+        mergeNote(note);
+        const pendientes = note.proposals.filter((p) => !p.created_task_id).length;
+        get().pushToast(
+          "ok",
+          pendientes > 0
+            ? `${pendientes} tarea(s) propuesta(s): revísalas y crea las que quieras`
+            : "El modelo no encontró acciones concretas en la transcripción",
+        );
+        return true;
+      } catch (err) {
+        // El fallo del proveedor se muestra en el panel; la lista se queda como estaba.
+        set({
+          noteProposeError:
+            err instanceof ApiError
+              ? err.message
+              : normalizeMutationError(err, "No se pudieron proponer tareas"),
+        });
+        return false;
+      } finally {
+        set({ noteProposing: false });
+      }
+    },
+
+    async saveNoteProposals(noteId, proposals) {
+      const current = get().notes.find((n) => n.id === noteId);
+      if (!current) return false;
+      set({ noteSaving: true });
+      try {
+        const { note } = await api.saveNoteProposals(noteId, {
+          proposals,
+          expected_version: current.version,
+        });
+        mergeNote(note);
+        set({ noteSavedAt: Date.now() });
+        return true;
+      } catch (err) {
+        if (isVersionConflict(err)) {
+          try {
+            const { note } = await api.note(noteId);
+            mergeNote(note);
+          } catch {
+            /* si tampoco se puede releer, manda el error de abajo */
+          }
+          get().pushToast("info", "Las propuestas cambiaron en otra pestaña: se recargó su versión");
+          return false;
+        }
+        toastError(err, "No se pudieron guardar las propuestas");
+        return false;
+      } finally {
+        set({ noteSaving: false });
+      }
+    },
+
+    async commitNoteTasks(noteId) {
+      const current = get().notes.find((n) => n.id === noteId);
+      if (!current) return null;
+      set({ noteCommitting: true });
+      try {
+        const { note, tasks } = await api.commitNoteTasks(noteId, {
+          expected_version: current.version,
+        });
+        mergeNote(note);
+        get().pushToast(
+          "ok",
+          tasks.length > 0
+            ? `${tasks.length} tarea(s) creada(s) en el tablero`
+            : "No había propuestas pendientes de crear",
+        );
+        return tasks.length;
+      } catch (err) {
+        if (isVersionConflict(err)) {
+          try {
+            const { note } = await api.note(noteId);
+            mergeNote(note);
+          } catch {
+            /* si tampoco se puede releer, manda el error de abajo */
+          }
+          get().pushToast("info", "La nota cambió en otra pestaña: revisa las propuestas y vuelve a crear");
+          return null;
+        }
+        toastError(err, "No se pudieron crear las tareas");
+        return null;
+      } finally {
+        set({ noteCommitting: false });
       }
     },
 

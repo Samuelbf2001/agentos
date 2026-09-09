@@ -200,7 +200,7 @@ describe.skipIf(!PG_URL)("paridad SQLite ↔ Postgres", () => {
       // (25 originales + task_labels de la 0006 + las 5 de linaje de Notion de la
       // 0007 + las 5 del grafo organizacional de la 0008).
       expect(conteosPg).toEqual(conteosLite);
-      expect(conteosPg.tables).toBe(36);
+      expect(conteosPg.tables).toBe(37);
       expect(readyPg).toBe(readyLite);
 
       // NM-1 en Postgres.

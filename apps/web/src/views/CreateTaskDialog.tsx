@@ -21,7 +21,7 @@ export const STAGE_OPTION_LABEL: Record<Stage, string> = {
   OPERAR: "Operar",
 };
 
-const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
+export const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
   { value: "low", label: "Baja" },
   { value: "normal", label: "Normal" },
   { value: "high", label: "Alta" },

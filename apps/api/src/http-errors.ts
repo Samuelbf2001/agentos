@@ -34,6 +34,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   [ErrorCodes.DEPENDENCY_NOT_SATISFIED]: 422,
   [ErrorCodes.PROVIDER_ERROR]: 502,
   [ErrorCodes.PROVIDER_NOT_CONFIGURED]: 502,
+  [ErrorCodes.PROVIDER_UNAVAILABLE]: 502,
   [ErrorCodes.RUNNER_UNAVAILABLE]: 502,
 };
 

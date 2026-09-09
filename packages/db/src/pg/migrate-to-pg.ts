@@ -84,6 +84,7 @@ export const TABLE_PAIRS: TablePair[] = [
   { name: "notion_import_links", from: lite.notionImportLinks, to: pg.notionImportLinks, pk: "id", orderBy: "created_at" },
   { name: "notion_identity_mappings", from: lite.notionIdentityMappings, to: pg.notionIdentityMappings, pk: "id", orderBy: "created_at" },
   { name: "notion_import_quarantine", from: lite.notionImportQuarantine, to: pg.notionImportQuarantine, pk: "id", orderBy: "created_at" },
+  { name: "canvas_notes", from: lite.canvasNotes, to: pg.canvasNotes, pk: "id", orderBy: "created_at" },
 ];
 
 export interface TableReport {

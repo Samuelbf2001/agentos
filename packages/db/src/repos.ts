@@ -26,6 +26,7 @@ import type { KnowledgeSearchHit } from "./search.js";
 import * as liteAgents from "./repositories/agents.js";
 import * as liteApprovals from "./repositories/approvals.js";
 import * as liteAudit from "./repositories/audit.js";
+import * as liteCanvasNotes from "./repositories/canvas-notes.js";
 import * as liteConfig from "./repositories/config.js";
 import * as liteEvents from "./repositories/events.js";
 import * as liteKnowledge from "./repositories/knowledge.js";
@@ -51,6 +52,7 @@ import * as liteSearch from "./search.js";
 export type * from "./repositories/agents.js";
 export type * from "./repositories/approvals.js";
 export type * from "./repositories/audit.js";
+export type * from "./repositories/canvas-notes.js";
 export type * from "./repositories/config.js";
 export type * from "./repositories/events.js";
 export type * from "./repositories/knowledge.js";
@@ -598,3 +600,11 @@ export const getNotionOrigin = dual(liteNotion.getNotionOrigin, "getNotionOrigin
  */
 export const searchTasks = dual(liteSearch.searchTasks, "searchTasksPg");
 export type { TaskSearchHit, TaskSearchOptions } from "./search.js";
+
+// ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
+
+export const createCanvasNote = dual(liteCanvasNotes.createCanvasNote, "createCanvasNote");
+export const getCanvasNote = dual(liteCanvasNotes.getCanvasNote, "getCanvasNote");
+export const listCanvasNotes = dual(liteCanvasNotes.listCanvasNotes, "listCanvasNotes");
+export const updateCanvasNote = dual(liteCanvasNotes.updateCanvasNote, "updateCanvasNote");
+export const captureCanvasNote = dual(liteCanvasNotes.captureCanvasNote, "captureCanvasNote");

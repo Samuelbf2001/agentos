@@ -903,6 +903,62 @@ export interface ConvertRoleToAgentResponse {
   prompt_version: unknown;
 }
 
+// ── Notas manuscritas (lienzo Excalidraw) ───────────────────────────────────
+
+export type CanvasNoteStatus = "draft" | "captured" | "transcribed" | "converted";
+
+export type NoteProposalConfidence = "alta" | "media" | "baja";
+
+/**
+ * Tarea PROPUESTA desde la transcripción (fase 3). Vive en la nota hasta que
+ * el humano pulsa "Crear": `created_task_id` sólo lo fija el servidor.
+ * `project_guess`/`assignee_guess` = el nombre tal cual lo escribió el autor.
+ */
+export interface NoteTaskProposal {
+  id: string;
+  include: boolean;
+  title: string;
+  description?: string;
+  project_id: string | null;
+  project_guess: string | null;
+  assignee_person_id: string | null;
+  assignee_guess: string | null;
+  /** ISO 8601 o null. */
+  due_at: string | null;
+  priority: TaskPriority;
+  source_excerpt: string;
+  confidence: NoteProposalConfidence;
+  created_task_id: string | null;
+}
+
+/** Escena de Excalidraw: opaca para la app, la entiende solo el lienzo. */
+export interface CanvasScene {
+  elements: readonly unknown[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+}
+
+/** Espejo de la fila `canvas_notes` que sirve /api/notes. */
+export interface CanvasNote {
+  id: string;
+  orgId: string | null;
+  projectId: string | null;
+  title: string;
+  scene: CanvasScene;
+  status: CanvasNoteStatus;
+  imageArtifactId: string | null;
+  imagePath: string | null;
+  imageBytes: number | null;
+  capturedAt: number | null;
+  transcription: string | null;
+  /** Propuestas de la fase 3 (vacío hasta pulsar «Proponer tareas»). */
+  proposals: NoteTaskProposal[];
+  createdByPersonId: string | null;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** Extrae el payload de dominio (busSink envuelve en {type, timestamp, payload}). */
 export function domainPayload(ev: TopicEvent): Record<string, unknown> {
   const inner = (ev.payload as { payload?: unknown }).payload;

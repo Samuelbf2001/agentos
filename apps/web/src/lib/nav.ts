@@ -21,6 +21,7 @@ import {
   MessagesSquare,
   Mic,
   Network,
+  PenLine,
   Plug,
   Settings,
   ShieldCheck,
@@ -105,6 +106,14 @@ export function agencyNav(): NavGroup[] {
           to: paths.brainReuniones(),
           icon: Video,
           cap: "nav:2brain",
+        },
+        {
+          id: "notas-lienzo",
+          label: "Notas a mano",
+          to: paths.notas(),
+          icon: PenLine,
+          cap: "nav:2brain",
+          match: (p) => p.startsWith("/notas"),
         },
         {
           id: "conversaciones",

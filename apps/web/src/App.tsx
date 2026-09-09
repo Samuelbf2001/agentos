@@ -26,6 +26,7 @@ import ProjectLayout from "./views/ProjectLayout";
 import SystemLayout from "./views/SystemLayout";
 import BrainView from "./views/BrainView";
 import BrainMeetingsView from "./views/BrainMeetingsView";
+import NotasView from "./views/NotasView";
 import AssetView from "./views/AssetView";
 import RunDetailView from "./views/RunDetailView";
 import NewProjectWizard from "./views/NewProjectWizard";
@@ -238,6 +239,7 @@ function Shell() {
             <Route path="/activo" element={<AssetView />} />
             <Route path="/2brain" element={<BrainView />} />
             <Route path="/2brain/reuniones" element={<BrainMeetingsView />} />
+            <Route path="/notas" element={<NotasView />} />
 
             {/* Rutas anteriores: se conservan como redirección, no como destino. */}
             <Route path="/waiting" element={<RedirectKeepSearch to="/hoy" />} />
