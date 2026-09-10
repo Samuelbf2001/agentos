@@ -223,7 +223,11 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
    * dueño (esta ruta: límite de tamaño, disco, artefacto) y `/transcribe`
    * siga leyendo siempre del disco.
    */
-  app.post("/api/notes/:id/capture", async (req, reply) => {
+  // El PNG viaja en base64 (4/3 del binario): el límite por defecto de
+  // Fastify (1 MiB) devolvía 413 con una nota grande antes de llegar siquiera
+  // a la comprobación de tamaño de abajo. Se alinea con el tope de artefactos.
+  const captureBodyLimit = Math.ceil((maxArtifactBytes() * 4) / 3) + 64 * 1024;
+  app.post("/api/notes/:id/capture", { bodyLimit: captureBodyLimit }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parse(CaptureBody, req.body);
     const note = await getCanvasNote(db, id);
