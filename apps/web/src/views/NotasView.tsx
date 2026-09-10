@@ -23,7 +23,7 @@
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Check, FileImage, Plus, Wand2 } from "lucide-react";
+import { Check, ChevronRight, FileImage, Plus, Wand2 } from "lucide-react";
 import { useStore } from "../state/store";
 import { EmptyState, ErrorBox, Spinner, fmtDate, timeAgo } from "../components/ui";
 import { api } from "../lib/api";
@@ -81,6 +81,7 @@ export default function NotasView() {
   const transcribeNote = useStore((s) => s.transcribeNote);
   const noteTranscribing = useStore((s) => s.noteTranscribing);
   const noteTranscribeError = useStore((s) => s.noteTranscribeError);
+  const noteDudas = useStore((s) => s.noteDudas);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const urlNote = searchParams.get("nota");
@@ -381,6 +382,31 @@ export default function NotasView() {
                   : "Todavía sin transcribir: pulsa «Transcribir» para leer la imagen."}
               </p>
             )}
+            {/*
+              Lo que el modelo no leyó con seguridad. El texto llega ya sin
+              marcadores `[?]` (la lectura elegida basta); la lista vive solo en
+              memoria, de la última transcripción: al recargar no se enseña.
+            */}
+            {activeNote && noteDudas.length > 0 ? (
+              <details className="mt-2" data-testid="dudas-transcripcion">
+                <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 rounded-tight px-1 text-small text-muted hover:text-ink-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link [&::-webkit-details-marker]:hidden">
+                  <ChevronRight
+                    size={14}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                    className="transition-transform [details[open]_&]:rotate-90"
+                  />
+                  {noteDudas.length === 1
+                    ? "1 lectura con duda"
+                    : `${noteDudas.length} lecturas con duda`}
+                </summary>
+                <ul className="mb-1 ml-5 list-disc text-small text-ink-2">
+                  {noteDudas.map((duda, i) => (
+                    <li key={`${i}-${duda}`}>{duda}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {activeNote?.imagePath ? (
               <a
                 href={api.noteImageUrl(activeNote.id)}

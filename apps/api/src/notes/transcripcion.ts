@@ -63,7 +63,11 @@ export interface TranscribeNoteResult {
   markdown: string;
   /** Texto plano por región, para pintarlo en el lienzo junto a cada trazo. */
   bloques: BloqueTranscrito[];
-  /** Palabras marcadas `[?]`. */
+  /**
+   * Lecturas inciertas (las que el modelo marcó con `[?]`). Es la única huella
+   * de la duda que llega al cliente: los marcadores se quitan del texto en la
+   * ruta (`limpiarMarcadores`).
+   */
   dudas: string[];
   proveedor: string;
   modelo: string;
@@ -105,7 +109,82 @@ export const SYSTEM_PROMPT = [
   "   escritos en la nota y sin comentarios sobre la imagen.",
   "6. Respondes con un objeto: `markdown` (la transcripción completa), `bloques`",
   "   (el texto plano de cada región, en orden) y `dudas` (las palabras marcadas `[?]`).",
+  "",
+  "Flujogramas y organigramas:",
+  "- Distingue una LISTA de un DIAGRAMA. Es diagrama cuando hay nodos (formas con",
+  "  texto dentro) unidos por líneas. Si no hay líneas, es una lista: transcríbela como tal.",
+  "- Identifica cada nodo por su forma: óvalo = inicio/fin de un flujo o rol raíz;",
+  "  rectángulo = paso o rol; rombo = decisión, con sus salidas sí/no.",
+  "- Lee las conexiones por las LÍNEAS dibujadas. Una línea que sale de un nodo hacia",
+  "  abajo y se abre en horizontal hacia varios nodos es JERARQUÍA: los de abajo",
+  "  dependen del de arriba (organigrama). Una flecha es FLUJO con dirección (flujograma).",
+  "- NUNCA inventes nodos ni conexiones que no estén dibujados. No añadas un nodo raíz",
+  "  vacío, no unas dos ramas que no se tocan ni completes un nivel que no existe.",
+  "  Un nodo sin ninguna línea se lista aparte como «suelto», sin conectarlo a nada.",
+  "- Las etiquetas de los nodos se transcriben tal cual: si pone «CcO» escribes «CcO»;",
+  "  si crees que quiso decir «CEO», ponlo en `dudas`, no lo cambies.",
+  "- En `markdown`, el diagrama va como un bloque ```mermaid con `flowchart TD`, con",
+  "  exactamente los nodos y aristas que se ven (`A --> B`; jerarquía = arista del",
+  "  padre a cada hijo), y DEBAJO una lista anidada legible: el padre como viñeta y",
+  "  sus hijos sangrados bajo él, con `→` para el flujo.",
+  "- En `bloques[].texto` (texto plano para el lienzo) va SOLO esa lista anidada",
+  "  con `→` e indentación. Nunca el mermaid.",
 ].join("\n");
+
+/**
+ * Quita de un texto los marcadores de duda que pide el SYSTEM_PROMPT, sin
+ * tocar la lectura elegida. El prompt SIGUE pidiéndolos (es lo que evita que
+ * el modelo invente): esto es presentación, y la lista de `dudas` viaja aparte.
+ *
+ * - `palabra [?: palabra/palabrá]` → `palabra` (la palabra de antes es la
+ *   lectura elegida; el marcador sobra).
+ * - `[?: A/B]` sin palabra antes (inicio de línea, tras una viñeta o una
+ *   flecha) → `A`, la primera alternativa.
+ * - `[?]` suelto → nada.
+ * - Los dobles espacios que deja el recorte se normalizan; la sangría de
+ *   línea (listas anidadas, código) se respeta.
+ */
+export function limpiarMarcadores(texto: string): string {
+  const conAlternativas = texto.replace(
+    /[ \t]*\[\?:\s*([^\]]*)\][ \t]*/g,
+    (coincidencia: string, alternativas: string, offset: number, todo: string) => {
+      const antes = ultimoCaracterDeLinea(todo, offset);
+      const inicioDeLinea = antes === null;
+      const sigueTexto = siguePalabra(todo, offset + coincidencia.length);
+      const hayPalabraAntes = antes !== null && /[\p{L}\p{N}.,;!?)»"'”’]/u.test(antes);
+      if (hayPalabraAntes) return sigueTexto ? " " : "";
+      const primera = alternativas.split("/")[0]?.trim() ?? "";
+      return `${inicioDeLinea ? "" : " "}${primera}${sigueTexto ? " " : ""}`;
+    },
+  );
+  const sinSueltos = conAlternativas.replace(
+    /[ \t]*\[\?\][ \t]*/g,
+    (coincidencia: string, offset: number, todo: string) => {
+      const inicioDeLinea = ultimoCaracterDeLinea(todo, offset) === null;
+      return inicioDeLinea || !siguePalabra(todo, offset + coincidencia.length) ? "" : " ";
+    },
+  );
+  return sinSueltos.replace(/(\S)[ \t]{2,}(\S)/g, "$1 $2");
+}
+
+/**
+ * ¿Tras `offset` viene algo que pide un espacio de separación? Fin de texto,
+ * salto de línea o puntuación de cierre (`, . ; : ! ? )`) no lo piden.
+ */
+function siguePalabra(texto: string, offset: number): boolean {
+  const c = texto.charAt(offset);
+  return c !== "" && !/[\n\r,.;:!?)»”’]/.test(c);
+}
+
+/** Último carácter no blanco de la línea antes de `offset`, o null si no hay ninguno. */
+function ultimoCaracterDeLinea(texto: string, offset: number): string | null {
+  for (let i = offset - 1; i >= 0; i--) {
+    const c = texto.charAt(i);
+    if (c === "\n") return null;
+    if (c !== " " && c !== "\t") return c;
+  }
+  return null;
+}
 
 /** Describe el orden de lectura en texto plano: bloques → renglones. */
 export function describirSegmentacion(seg: SegmentacionNota): string {
@@ -148,8 +227,10 @@ export function construirPrompt(input: Pick<TranscribeNoteInput, "segmentacion" 
     `Nota: "${input.titulo}".`,
     "",
     "La imagen adjunta es la exportación limpia del lienzo y es la fuente: léela",
-    "como una página. Si hay un diagrama (óvalos, cajas, líneas, flechas), descríbelo",
-    "en Markdown con `→` indicando qué nodo conecta con cuál. Si hay una lista con",
+    "como una página. Si hay un diagrama (óvalos, cajas, rombos unidos por líneas o",
+    "flechas), aplica la guía de flujogramas y organigramas: bloque ```mermaid",
+    "(`flowchart TD`) más la lista anidada en `markdown`, solo la lista anidada en",
+    "`bloques`, y ni un nodo ni una conexión que no esté dibujada. Si hay una lista con",
     "números en círculos, reprodúcela numerada. Si una región está claramente",
     "aparte (una columna, una nota al margen), trátala como sección propia.",
     "",
