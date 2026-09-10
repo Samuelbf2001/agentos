@@ -188,6 +188,14 @@ export interface AppStore extends EventState {
   noteTranscribing: boolean;
   /** Último fallo del proveedor al transcribir; se muestra tal cual, sin inventar texto. */
   noteTranscribeError: string | null;
+  /**
+   * Lecturas con duda de la ÚLTIMA transcripción de la nota abierta. El texto
+   * llega ya sin marcadores `[?]`; esto es lo único que queda de la duda y se
+   * enseña plegado bajo el Markdown. No se persiste en DB: al recargar la
+   * página o cambiar de nota desaparece (aceptable: la duda es del momento de
+   * leer, y el humano ya tiene el texto para corregirlo).
+   */
+  noteDudas: string[];
   /** Fase 3: el modelo está proponiendo tareas (no crea nada). */
   noteProposing: boolean;
   /** Último fallo del proveedor al proponer; la lista se queda como estaba. */
@@ -535,6 +543,7 @@ export const useStore = create<AppStore>()((set, get) => {
     noteCapturing: false,
     noteTranscribing: false,
     noteTranscribeError: null,
+    noteDudas: [],
     noteProposing: false,
     noteProposeError: null,
     noteCommitting: false,
@@ -1152,7 +1161,7 @@ export const useStore = create<AppStore>()((set, get) => {
           ...(input.title ? { title: input.title } : {}),
           ...(input.projectId ? { project_id: input.projectId } : {}),
         });
-        set({ notes: [note, ...get().notes], activeNoteId: note.id, noteSavedAt: null });
+        set({ notes: [note, ...get().notes], activeNoteId: note.id, noteSavedAt: null, noteDudas: [] });
         return note;
       } catch (err) {
         toastError(err, "No se pudo crear la nota");
@@ -1161,8 +1170,14 @@ export const useStore = create<AppStore>()((set, get) => {
     },
 
     openNote(noteId) {
-      // Los errores de transcripción/propuesta son de la nota que se deja atrás: no viajan.
-      set({ activeNoteId: noteId, noteSavedAt: null, noteTranscribeError: null, noteProposeError: null });
+      // Los errores de transcripción/propuesta y las dudas son de la nota que se deja atrás: no viajan.
+      set({
+        activeNoteId: noteId,
+        noteSavedAt: null,
+        noteTranscribeError: null,
+        noteProposeError: null,
+        noteDudas: [],
+      });
     },
 
     async saveNote(noteId, patch) {
@@ -1223,6 +1238,7 @@ export const useStore = create<AppStore>()((set, get) => {
       try {
         const { note, bloques, dudas, alturaTipica } = await api.transcribeNote(noteId, { mode });
         mergeNote(note);
+        set({ noteDudas: dudas });
         get().pushToast(
           "ok",
           mode === "final"

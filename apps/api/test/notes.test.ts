@@ -50,9 +50,10 @@ function resultado(
   overrides: Partial<Pick<TranscribeNoteResult, "markdown" | "bloques" | "dudas">> = {},
 ): TranscribeNoteResult {
   return {
-    markdown: "# Reunión\n\n- Cerrar el presupuesto [?: presupuesto]\n- Hablar con Jorge →",
+    // Con los marcadores de duda que pide el prompt: la ruta los quita del texto.
+    markdown: "# Reunión\n\n- Cerrar el presupuesto [?: presupuesto]\n- Hablar con Jorge [?] →",
     bloques: [
-      { bloque: 0, texto: "Cerrar el presupuesto" },
+      { bloque: 0, texto: "Cerrar el presupuesto [?: presupuesto/presupuestó]" },
       { bloque: 1, texto: "Hablar con Jorge →" },
     ],
     dudas: ["presupuesto"],
@@ -299,16 +300,22 @@ describe("Notas manuscritas (REST)", () => {
     const transcrita = salida.note;
 
     expect(transcrita.status).toBe("transcribed");
-    expect(transcrita.transcription).toContain("Cerrar el presupuesto");
+    // El Markdown se guarda SIN los marcadores de duda: queda la lectura elegida.
+    expect(transcrita.transcription).toBe(
+      "# Reunión\n\n- Cerrar el presupuesto\n- Hablar con Jorge →",
+    );
     expect(transcrita.version).toBeGreaterThan(capturada.version);
 
-    // Texto por región casado con la caja de la segmentación; el índice
-    // inventado no tiene caja y se descarta. Nada de esto se persiste.
+    // Texto por región casado con la caja de la segmentación, también sin
+    // marcadores; el índice inventado no tiene caja y se descarta. Nada de
+    // esto se persiste.
     expect(salida.bloques).toEqual([
       { bloque: 0, caja: { x: 0, y: 0, w: 100, h: 20 }, texto: "Cerrar el presupuesto" },
       { bloque: 1, caja: { x: 0, y: 150, w: 90, h: 20 }, texto: "Hablar con Jorge →" },
     ]);
+    // Lo incierto viaja aparte, intacto: es la única huella de la duda.
     expect(salida.dudas).toEqual(["presupuesto"]);
+    expect(JSON.stringify([salida.note.transcription, salida.bloques])).not.toContain("[?");
     expect(salida.alturaTipica).toBe(20);
 
     // El modelo recibe la IMAGEN del disco y la segmentación como orden de lectura.
@@ -483,6 +490,8 @@ describe("Notas manuscritas (REST)", () => {
         })
       ).json() as { note: NoteWire }
     ).note;
+    // Se guarda la lectura elegida, sin el marcador; la duda va en `dudas`.
+    expect(transcrita.transcription).toBe("presupesto");
 
     const corregida = await fixture.api.app.inject({
       method: "PATCH",

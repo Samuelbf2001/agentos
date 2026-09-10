@@ -174,6 +174,7 @@ describe("Notas manuscritas (vista)", () => {
       toasts: [],
       noteTranscribing: false,
       noteTranscribeError: null,
+      noteDudas: [],
     });
   });
 
@@ -311,10 +312,44 @@ describe("Notas manuscritas (vista)", () => {
       customData: { agentos: { transcripcion: true, bloque: 0 } },
     });
 
-    // La nota sigue en borrador y el Markdown queda editable en el panel.
+    // La nota sigue en borrador y el Markdown queda editable en el panel,
+    // sin marcadores de duda ni en el texto ni en el lienzo.
     expect(screen.getByText("Borrador")).toBeTruthy();
     const campo = screen.getByLabelText("Transcripción de la nota") as HTMLTextAreaElement;
     expect(campo.value).toContain("Cerrar el presupuesto");
+    expect(campo.value).not.toContain("[?");
+    expect(JSON.stringify(textos)).not.toContain("[?");
+
+    // Las dudas van aparte, plegadas y cerradas por defecto: N y la lista.
+    const plegable = screen.getByTestId("dudas-transcripcion") as HTMLDetailsElement;
+    expect(plegable.open).toBe(false);
+    expect(screen.getByText("1 lectura con duda")).toBeTruthy();
+    expect(screen.getByText("presupuesto")).toBeTruthy();
+  });
+
+  it("varias dudas se cuentan en plural y desaparecen al cambiar de nota", async () => {
+    const { rutas, nota } = rutasConEstado(makeNote(), {});
+    // La primera ruta que coincide gana: se antepone la de /transcribe con dos dudas.
+    mockFetch([
+      {
+        method: "POST",
+        path: "/api/notes/n1/transcribe",
+        body: () => ({ ...respuestaTranscribe(nota()), dudas: ["presupuesto", "Jorge"] }),
+      },
+      ...rutas,
+    ]);
+    renderNotas();
+    await screen.findByTestId("lienzo");
+
+    await pulsarYEsperarGuardado(/^Transcribir$/);
+    expect(screen.getByText("2 lecturas con duda")).toBeTruthy();
+    expect(screen.getByText("Jorge")).toBeTruthy();
+
+    // La duda es de la nota leída: al abrir otra, no viaja.
+    act(() => {
+      useStore.getState().openNote("n2");
+    });
+    expect(screen.queryByTestId("dudas-transcripcion")).toBeNull();
   });
 
   it("repetir «Transcribir» reemplaza el texto anterior (no lo apila) y no toca los trazos", async () => {
@@ -463,7 +498,8 @@ describe("Notas manuscritas (vista)", () => {
         path: "/api/notes",
         body: {
           notes: [
-            notaCapturada({ status: "transcribed", transcription: "presupesto [?: presupuesto]" }),
+            // La API ya guarda la lectura elegida sin marcadores; la errata es del modelo.
+            notaCapturada({ status: "transcribed", transcription: "presupesto" }),
           ],
         },
       },
@@ -479,7 +515,7 @@ describe("Notas manuscritas (vista)", () => {
     const campo = (await screen.findByLabelText(
       "Transcripción de la nota",
     )) as HTMLTextAreaElement;
-    expect(campo.value).toBe("presupesto [?: presupuesto]");
+    expect(campo.value).toBe("presupesto");
 
     fireEvent.change(campo, { target: { value: "presupuesto" } });
     fireEvent.blur(campo);

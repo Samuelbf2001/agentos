@@ -60,6 +60,7 @@ import {
   type ProyectoCatalogo,
 } from "../notes/propuestas.js";
 import { segmentarEscena } from "../notes/segmentacion.js";
+import { limpiarMarcadores } from "../notes/transcripcion.js";
 import { validatePeopleForProject } from "../task-contract.js";
 import { createTaskFromBody } from "../task-create.js";
 
@@ -344,11 +345,20 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
     const imagen = fs.readFileSync(absolute);
 
     const segmentacion = segmentarEscena(note.scene);
-    const resultado = await ctx.noteTranscriber.transcribe({
+    const leido = await ctx.noteTranscriber.transcribe({
       imagen,
       segmentacion,
       titulo: note.title,
     });
+    // El prompt pide marcar cada duda con `[?]` (es lo que evita inventos),
+    // pero el humano no quiere verlos: la lectura elegida basta, y lo incierto
+    // viaja aparte en `dudas`. Se limpia aquí, sobre lo que devuelva cualquier
+    // transcriptor (el real o un doble), antes de guardar y de responder.
+    const resultado = {
+      ...leido,
+      markdown: limpiarMarcadores(leido.markdown).trim(),
+      bloques: leido.bloques.map((b) => ({ ...b, texto: limpiarMarcadores(b.texto).trim() })),
+    };
 
     const transcrita = await updateCanvasNote(db, id, {
       transcription: resultado.markdown,
