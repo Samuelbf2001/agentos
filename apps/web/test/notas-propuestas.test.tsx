@@ -18,7 +18,12 @@ import type { CanvasNote, NoteTaskProposal } from "../src/lib/types";
 
 vi.mock("../src/views/notas/Lienzo", () => ({
   default: ({ onReady }: { onReady: (handle: unknown) => void }) => {
-    onReady({ getScene: () => ({ elements: [] }), estaVacio: () => false, exportarPng: async () => new Blob() });
+    onReady({
+      getScene: () => ({ elements: [] }),
+      estaVacio: () => false,
+      exportarPng: async () => new Blob(),
+      insertarTranscripcion: () => 0,
+    });
     return <div data-testid="lienzo">lienzo</div>;
   },
 }));

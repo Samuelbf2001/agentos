@@ -89,7 +89,19 @@ const CaptureBody = z.object({
   image_base64: z.string().min(1),
   /** Opcional: ancla el PNG a una tarea y crea además su fila en `artifacts`. */
   task_id: z.string().optional(),
+  /**
+   * Captura intermedia: guarda el PNG sin cambiar el estado (un borrador sigue
+   * en borrador). Es lo que usa «Transcribir» mientras se sigue escribiendo.
+   */
+  keep_status: z.boolean().optional(),
 });
+
+/**
+ * `interim`: transcribe lo que hay y la nota sigue como está (un borrador
+ * sigue editable). `final`: «Terminar nota», pasa a `transcribed`. Por defecto
+ * `final`, que es lo que hacía la ruta antes de existir el modo.
+ */
+const TranscribeBody = z.object({ mode: z.enum(["interim", "final"]).default("final") });
 
 /** Lista revisada por el humano; `created_task_id` se ignora (sólo lo fija `commit-tasks`). */
 const ProposalsBody = z.object({
@@ -201,9 +213,14 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
   });
 
   /**
-   * "Terminar notas": recibe el PNG ya exportado por el lienzo (escala 3, fondo
-   * blanco, recortado al contenido) y lo guarda. La transcripción es fase 2:
-   * aquí sólo queda la imagen lista y el estado en `captured`.
+   * Captura: recibe el PNG ya exportado por el lienzo (escala 3, fondo blanco,
+   * recortado al contenido) y lo guarda. Sin `keep_status` la nota pasa a
+   * `captured` (camino de «Terminar nota»); con `keep_status: true` sólo se
+   * renueva la imagen y el estado no se toca (camino de «Transcribir» sobre
+   * un borrador que se sigue escribiendo). Se eligió esta bandera frente a
+   * mandar la imagen inline a `/transcribe` para que la imagen tenga un único
+   * dueño (esta ruta: límite de tamaño, disco, artefacto) y `/transcribe`
+   * siga leyendo siempre del disco.
    */
   app.post("/api/notes/:id/capture", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -265,6 +282,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
       imagePath: stored.relativePath,
       imageBytes: stored.bytes,
       imageArtifactId: artifactId,
+      ...(body.keep_status ? { keepStatus: true } : {}),
     });
     await appendAudit(db, {
       actor: personActor(req),
@@ -273,7 +291,12 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
       entityType: "canvas_note",
       entityId: id,
       before: { status: note.status },
-      after: { status: captured.status, bytes: stored.bytes, artifactId },
+      after: {
+        status: captured.status,
+        bytes: stored.bytes,
+        artifactId,
+        keepStatus: body.keep_status === true,
+      },
     });
     reply.status(201);
     return { note: captured };
@@ -281,19 +304,37 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
 
   /**
    * Transcribe la nota con el modelo de visión. Exige que la imagen ya exista
-   * (la nota está `captured` o `transcribed`): un borrador no tiene qué leer.
+   * en disco (`POST /capture`), pero NO que la nota haya salido de borrador:
+   *
+   * - `mode: "interim"` («Transcribir» mientras se escribe): guarda el
+   *   Markdown en `transcription`, sube la versión y deja el estado como está.
+   *   Una nota `converted` ya tiene tareas: no admite intermedias (409).
+   * - `mode: "final"` («Terminar nota», y el valor por defecto): además pasa
+   *   la nota a `transcribed`, lista para proponer tareas.
+   *
+   * Devuelve, junto a la nota, el texto por región casado con las cajas de
+   * la segmentación (índice = bloque; los índices que el modelo invente se
+   * descartan) y la altura típica del trazo, para que el lienzo lo pinte
+   * junto a cada trazo. Nada de eso se persiste: el lienzo es el almacén.
    *
    * Si el proveedor no está configurado o falla, sale `provider_unavailable`
    * (502) y la nota NO se toca: jamás se guarda una transcripción inventada.
    */
   app.post("/api/notes/:id/transcribe", async (req) => {
     const { id } = req.params as { id: string };
+    const { mode } = parse(TranscribeBody, req.body);
     const note = await getCanvasNote(db, id);
     if (!note) throw errors.notFound("canvas_note", id);
-    if (note.status === "draft" || !note.imagePath) {
+    if (!note.imagePath) {
       throw errors.conflict(
-        "La nota está en borrador: pulsa «Terminar notas» para dejar la imagen antes de transcribir",
+        "La nota no tiene imagen: captura el lienzo (POST /capture) antes de transcribir",
         { noteId: id, status: note.status },
+      );
+    }
+    if (mode === "interim" && note.status === "converted") {
+      throw errors.conflict(
+        "La nota ya tiene tareas creadas: no admite transcripciones intermedias, usa «Terminar nota»",
+        { noteId: id, status: note.status, mode },
       );
     }
 
@@ -310,9 +351,20 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
     });
 
     const transcrita = await updateCanvasNote(db, id, {
-      transcription: resultado.texto,
-      status: "transcribed",
+      transcription: resultado.markdown,
+      ...(mode === "final" ? { status: "transcribed" as const } : {}),
     });
+
+    // Texto del modelo + caja de la segmentación, por índice. Un índice que no
+    // exista en la escena no tiene dónde ir; uno repetido se queda con el primero.
+    const vistos = new Set<number>();
+    const bloques = resultado.bloques.flatMap((b) => {
+      const seg = segmentacion.bloques[b.bloque];
+      if (!seg || vistos.has(b.bloque)) return [];
+      vistos.add(b.bloque);
+      return [{ bloque: b.bloque, caja: seg.caja, texto: b.texto }];
+    });
+
     await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
@@ -321,19 +373,28 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
       entityId: id,
       before: { status: note.status, version: note.version },
       after: {
+        mode,
         status: transcrita.status,
         version: transcrita.version,
         provider: resultado.proveedor,
         model: resultado.modelo,
-        chars: resultado.texto.length,
+        chars: resultado.markdown.length,
         tokensIn: resultado.usage.tokensIn,
         tokensOut: resultado.usage.tokensOut,
         costUsd: resultado.costUsd,
         blocks: segmentacion.resumen.bloques,
+        blocksRead: bloques.length,
+        blocksDropped: resultado.bloques.length - bloques.length,
         lines: segmentacion.resumen.renglones,
+        doubts: resultado.dudas.length,
       },
     });
-    return { note: transcrita };
+    return {
+      note: transcrita,
+      bloques,
+      dudas: resultado.dudas,
+      alturaTipica: segmentacion.resumen.alturaTipica,
+    };
   });
 
   // ── Fase 3: proponer tareas → revisar → crear (sólo con orden explícita) ──

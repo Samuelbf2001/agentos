@@ -1,17 +1,23 @@
 /**
  * Notas manuscritas (REST): crear → autoguardar con `expected_version` →
- * terminar (captura del PNG) → servir la imagen. Cubre el 409 por versión, que
- * el binario NO entra en la base (queda en disco con ruta relativa) y el enlace
- * a `artifacts` cuando la captura viene anclada a una tarea.
+ * capturar el PNG → transcribir (intermedia sobre el borrador o final) →
+ * servir la imagen. Cubre el 409 por versión, que el binario NO entra en la
+ * base (queda en disco con ruta relativa), el enlace a `artifacts` cuando la
+ * captura viene anclada a una tarea y que la transcripción por regiones vuelve
+ * casada con las cajas de la segmentación.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { errors } from "@agentos/shared";
-import { queryAudit } from "@agentos/db";
+import { queryAudit, updateCanvasNote } from "@agentos/db";
 import { makeFixture, makeReadyTask, type TestFixture } from "./helpers.js";
-import type { NoteTranscriber, TranscribeNoteInput } from "../src/notes/transcripcion.js";
+import type {
+  NoteTranscriber,
+  TranscribeNoteInput,
+  TranscribeNoteResult,
+} from "../src/notes/transcripcion.js";
 
 /** PNG 1×1 real: el endpoint guarda bytes, no una cadena cualquiera. */
 const PNG_1X1_BASE64 =
@@ -31,6 +37,40 @@ interface NoteWire {
   transcription: string | null;
   scene: { elements: unknown[] };
 }
+
+interface TranscribeWire {
+  note: NoteWire;
+  bloques: { bloque: number; caja: { x: number; y: number; w: number; h: number }; texto: string }[];
+  dudas: string[];
+  alturaTipica: number;
+}
+
+/** Doble del transcriptor: salida estructurada fija, sin modelo real. */
+function resultado(
+  overrides: Partial<Pick<TranscribeNoteResult, "markdown" | "bloques" | "dudas">> = {},
+): TranscribeNoteResult {
+  return {
+    markdown: "# Reunión\n\n- Cerrar el presupuesto [?: presupuesto]\n- Hablar con Jorge →",
+    bloques: [
+      { bloque: 0, texto: "Cerrar el presupuesto" },
+      { bloque: 1, texto: "Hablar con Jorge →" },
+    ],
+    dudas: ["presupuesto"],
+    proveedor: "openai",
+    modelo: "modelo-de-prueba",
+    usage: { tokensIn: 1200, tokensOut: 80, tokensCacheRead: null, tokensCacheWrite: null },
+    costUsd: null,
+    ...overrides,
+  };
+}
+
+/** Escena con dos regiones separadas verticalmente (bloque 0 arriba, 1 abajo). */
+const ESCENA_DOS_BLOQUES = {
+  elements: [
+    { id: "a", type: "freedraw", x: 0, y: 0, points: [[0, 0], [100, 20]] },
+    { id: "b", type: "freedraw", x: 0, y: 150, points: [[0, 0], [90, 20]] },
+  ],
+};
 
 describe("Notas manuscritas (REST)", () => {
   let artifactsDir: string;
@@ -198,62 +238,78 @@ describe("Notas manuscritas (REST)", () => {
 
   // ── Transcripción (fase 2) ────────────────────────────────────────────────
 
-  /** Captura el PNG de prueba: deja la nota en `captured` con imagen en disco. */
-  async function capturar(fixture: TestFixture, noteId: string): Promise<NoteWire> {
+  /**
+   * Captura el PNG de prueba. Sin opciones deja la nota en `captured`; con
+   * `keep_status` es la captura intermedia de «Transcribir» y no toca el estado.
+   */
+  async function capturar(
+    fixture: TestFixture,
+    noteId: string,
+    opts: { keep_status?: boolean } = {},
+  ): Promise<NoteWire> {
     const res = await fixture.api.app.inject({
       method: "POST",
       url: `/api/notes/${noteId}/capture`,
       headers: fixture.authHeaders,
-      payload: { image_base64: PNG_1X1_BASE64 },
+      payload: { image_base64: PNG_1X1_BASE64, ...opts },
     });
     expect(res.statusCode).toBe(201);
     return (res.json() as { note: NoteWire }).note;
   }
 
-  it("transcribe la nota capturada con el proveedor y guarda el texto", async () => {
+  async function guardarEscena(fixture: TestFixture, note: NoteWire, scene: unknown): Promise<void> {
+    const res = await fixture.api.app.inject({
+      method: "PATCH",
+      url: `/api/notes/${note.id}`,
+      headers: fixture.authHeaders,
+      payload: { scene, expected_version: note.version },
+    });
+    expect(res.statusCode).toBe(200);
+  }
+
+  async function transcribir(fixture: TestFixture, noteId: string, mode?: "interim" | "final") {
+    return fixture.api.app.inject({
+      method: "POST",
+      url: `/api/notes/${noteId}/transcribe`,
+      headers: fixture.authHeaders,
+      ...(mode ? { payload: { mode } } : {}),
+    });
+  }
+
+  it("transcribe la nota capturada con el proveedor (modo final por defecto) y guarda el Markdown", async () => {
     const llamadas: TranscribeNoteInput[] = [];
     const transcriber: NoteTranscriber = {
       async transcribe(input) {
         llamadas.push(input);
-        return {
-          texto: "# Reunión\n\n- Cerrar el presupuesto [?: presupuesto]\n- Hablar con Jorge →",
-          proveedor: "openai",
-          modelo: "modelo-de-prueba",
-          usage: { tokensIn: 1200, tokensOut: 80, tokensCacheRead: null, tokensCacheWrite: null },
-          costUsd: null,
-        };
+        // El bloque 7 no existe en la escena: el modelo se lo inventó y se descarta.
+        return resultado({
+          bloques: [...resultado().bloques, { bloque: 7, texto: "inventado" }],
+        });
       },
     };
     const fixture = await fx({ noteTranscriber: transcriber });
     const note = await createNote(fixture, { project_id: fixture.project.id });
     // Escena con dos renglones separados: el transcriptor debe recibir el orden de lectura.
-    await fixture.api.app.inject({
-      method: "PATCH",
-      url: `/api/notes/${note.id}`,
-      headers: fixture.authHeaders,
-      payload: {
-        scene: {
-          elements: [
-            { id: "a", type: "freedraw", x: 0, y: 0, points: [[0, 0], [100, 20]] },
-            { id: "b", type: "freedraw", x: 0, y: 150, points: [[0, 0], [90, 20]] },
-          ],
-        },
-        expected_version: note.version,
-      },
-    });
+    await guardarEscena(fixture, note, ESCENA_DOS_BLOQUES);
     const capturada = await capturar(fixture, note.id);
 
-    const res = await fixture.api.app.inject({
-      method: "POST",
-      url: `/api/notes/${note.id}/transcribe`,
-      headers: fixture.authHeaders,
-    });
+    const res = await transcribir(fixture, note.id);
     expect(res.statusCode).toBe(200);
-    const transcrita = (res.json() as { note: NoteWire }).note;
+    const salida = res.json() as TranscribeWire;
+    const transcrita = salida.note;
 
     expect(transcrita.status).toBe("transcribed");
     expect(transcrita.transcription).toContain("Cerrar el presupuesto");
     expect(transcrita.version).toBeGreaterThan(capturada.version);
+
+    // Texto por región casado con la caja de la segmentación; el índice
+    // inventado no tiene caja y se descarta. Nada de esto se persiste.
+    expect(salida.bloques).toEqual([
+      { bloque: 0, caja: { x: 0, y: 0, w: 100, h: 20 }, texto: "Cerrar el presupuesto" },
+      { bloque: 1, caja: { x: 0, y: 150, w: 90, h: 20 }, texto: "Hablar con Jorge →" },
+    ]);
+    expect(salida.dudas).toEqual(["presupuesto"]);
+    expect(salida.alturaTipica).toBe(20);
 
     // El modelo recibe la IMAGEN del disco y la segmentación como orden de lectura.
     expect(llamadas).toHaveLength(1);
@@ -263,12 +319,89 @@ describe("Notas manuscritas (REST)", () => {
     const audit = await queryAudit(fixture.db, { entityType: "canvas_note", entityId: note.id });
     const registro = audit.find((a) => a.action === "note.transcribe");
     expect(registro).toBeTruthy();
-    // La auditoría guarda el modelo y los tokens; jamás una clave.
-    expect(registro!.after).toMatchObject({ model: "modelo-de-prueba", tokensIn: 1200 });
+    // La auditoría guarda el modo, el modelo y los tokens; jamás una clave.
+    expect(registro!.after).toMatchObject({
+      mode: "final",
+      model: "modelo-de-prueba",
+      tokensIn: 1200,
+      blocksRead: 2,
+      blocksDropped: 1,
+    });
     expect(JSON.stringify(registro!.after)).not.toMatch(/sk-/);
   });
 
-  it("una nota en borrador no se transcribe: 409 con mensaje claro", async () => {
+  it("«Transcribir» sobre el borrador: captura con keep_status y transcripción interim, y sigue en draft", async () => {
+    const fixture = await fx({
+      noteTranscriber: {
+        async transcribe() {
+          return resultado();
+        },
+      },
+    });
+    const note = await createNote(fixture, { project_id: fixture.project.id });
+    await guardarEscena(fixture, note, ESCENA_DOS_BLOQUES);
+
+    // La captura intermedia deja la imagen en disco y NO saca la nota del borrador.
+    const capturada = await capturar(fixture, note.id, { keep_status: true });
+    expect(capturada.status).toBe("draft");
+    expect(capturada.imagePath).toMatch(/^notas\//);
+    expect(capturada.version).toBe(3);
+
+    const res = await transcribir(fixture, note.id, "interim");
+    expect(res.statusCode).toBe(200);
+    const salida = res.json() as TranscribeWire;
+    // Sigue editable: draft, con el texto guardado y la versión subida.
+    expect(salida.note.status).toBe("draft");
+    expect(salida.note.transcription).toContain("Cerrar el presupuesto");
+    expect(salida.note.version).toBe(capturada.version + 1);
+    expect(salida.bloques.map((b) => b.bloque)).toEqual([0, 1]);
+    expect(salida.bloques[1]!.caja).toEqual({ x: 0, y: 150, w: 90, h: 20 });
+
+    const audit = await queryAudit(fixture.db, { entityType: "canvas_note", entityId: note.id });
+    expect(audit.find((a) => a.action === "note.capture")!.after).toMatchObject({
+      status: "draft",
+      keepStatus: true,
+    });
+    expect(audit.find((a) => a.action === "note.transcribe")!.after).toMatchObject({
+      mode: "interim",
+      status: "draft",
+    });
+
+    // Se puede repetir y, al «Terminar nota», el modo final la cierra.
+    const otra = await transcribir(fixture, note.id, "interim");
+    expect((otra.json() as TranscribeWire).note.status).toBe("draft");
+    await capturar(fixture, note.id);
+    const final = await transcribir(fixture, note.id, "final");
+    expect(final.statusCode).toBe(200);
+    expect((final.json() as TranscribeWire).note.status).toBe("transcribed");
+  });
+
+  it("una nota con tareas creadas (converted) no admite transcripción interim: 409", async () => {
+    let llamado = false;
+    const fixture = await fx({
+      noteTranscriber: {
+        async transcribe() {
+          llamado = true;
+          return resultado();
+        },
+      },
+    });
+    const note = await createNote(fixture, { project_id: fixture.project.id });
+    await capturar(fixture, note.id);
+    await updateCanvasNote(fixture.db, note.id, { status: "converted" });
+
+    const res = await transcribir(fixture, note.id, "interim");
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("conflict");
+    expect(llamado).toBe(false);
+
+    // En modo final sí: rehacer la lectura sigue permitido.
+    const final = await transcribir(fixture, note.id, "final");
+    expect(final.statusCode).toBe(200);
+    expect(llamado).toBe(true);
+  });
+
+  it("sin imagen capturada no se transcribe (ni en borrador ni en interim): 409 con mensaje claro", async () => {
     let llamado = false;
     const fixture = await fx({
       noteTranscriber: {
@@ -280,15 +413,16 @@ describe("Notas manuscritas (REST)", () => {
     });
     const note = await createNote(fixture, { project_id: fixture.project.id });
 
-    const res = await fixture.api.app.inject({
-      method: "POST",
-      url: `/api/notes/${note.id}/transcribe`,
-      headers: fixture.authHeaders,
-    });
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as { error: { code: string; message: string } }).error.code).toBe("conflict");
-    expect((res.json() as { error: { message: string } }).error.message).toMatch(/Terminar notas/);
+    for (const mode of [undefined, "interim", "final"] as const) {
+      const res = await transcribir(fixture, note.id, mode);
+      expect(res.statusCode).toBe(409);
+      expect((res.json() as { error: { code: string } }).error.code).toBe("conflict");
+      expect((res.json() as { error: { message: string } }).error.message).toMatch(/captura/i);
+    }
     expect(llamado).toBe(false);
+
+    const otro = await transcribir(fixture, note.id, "otro" as never);
+    expect(otro.statusCode).toBe(400);
   });
 
   it("si el proveedor falla, sale provider_unavailable y la nota NO se toca", async () => {
@@ -330,13 +464,11 @@ describe("Notas manuscritas (REST)", () => {
     const fixture = await fx({
       noteTranscriber: {
         async transcribe() {
-          return {
-            texto: "presupesto [?: presupuesto]",
-            proveedor: "openai",
-            modelo: "modelo-de-prueba",
-            usage: { tokensIn: 10, tokensOut: 5, tokensCacheRead: null, tokensCacheWrite: null },
-            costUsd: null,
-          };
+          return resultado({
+            markdown: "presupesto [?: presupuesto]",
+            bloques: [{ bloque: 0, texto: "presupesto" }],
+            dudas: ["presupesto"],
+          });
         },
       },
     });

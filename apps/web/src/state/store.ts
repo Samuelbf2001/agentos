@@ -23,6 +23,8 @@ import type {
   Artifact,
   CanvasNote,
   NoteTaskProposal,
+  NoteTranscribeMode,
+  TranscripcionBloque,
   CanvasScene,
   LabelUsage,
   Message,
@@ -100,6 +102,14 @@ export interface SendChatOptions {
 }
 
 /** Entregable en REVIEW esperando decisión humana (bandeja, CA-4.2 / fix H10). */
+/** Resultado de `transcribeNote`: lo que el lienzo necesita para pintar el texto junto a cada trazo. */
+export interface NoteTranscribeOutcome {
+  ok: boolean;
+  bloques: TranscripcionBloque[];
+  dudas: string[];
+  alturaTipica: number;
+}
+
 export interface ReviewEntry {
   task: Task;
   artifacts: Artifact[];
@@ -248,10 +258,17 @@ export interface AppStore extends EventState {
     noteId: string,
     patch: { title?: string; scene?: CanvasScene; transcription?: string },
   ): Promise<boolean>;
-  /** "Terminar notas": manda el PNG ya exportado (base64) y deja la nota en `captured`. */
-  captureNote(noteId: string, imageBase64: string): Promise<boolean>;
-  /** Pasa la imagen por el modelo de visión; false si el proveedor falló (nunca inventa). */
-  transcribeNote(noteId: string): Promise<boolean>;
+  /**
+   * Manda el PNG ya exportado (base64). Sin opciones deja la nota en
+   * `captured`; con `keepStatus` es una captura intermedia y el estado no cambia.
+   */
+  captureNote(noteId: string, imageBase64: string, opts?: { keepStatus?: boolean }): Promise<boolean>;
+  /**
+   * Pasa la imagen por el modelo de visión. `interim` deja la nota como está;
+   * `final` la pasa a `transcribed`. Devuelve el texto por región (con su caja)
+   * para pintarlo en el lienzo; `ok: false` si el proveedor falló (nunca inventa).
+   */
+  transcribeNote(noteId: string, mode: NoteTranscribeMode): Promise<NoteTranscribeOutcome>;
   /** Fase 3: pide propuestas al modelo y las deja en la nota. NO crea tareas. */
   proposeNoteTasks(noteId: string): Promise<boolean>;
   /** Guarda la revisión humana de las propuestas (PATCH con `expected_version`). */
@@ -1182,28 +1199,37 @@ export const useStore = create<AppStore>()((set, get) => {
       }
     },
 
-    async captureNote(noteId, imageBase64) {
+    async captureNote(noteId, imageBase64, opts = {}) {
       set({ noteCapturing: true });
       try {
-        const { note } = await api.captureNote(noteId, { image_base64: imageBase64 });
+        const { note } = await api.captureNote(noteId, {
+          image_base64: imageBase64,
+          ...(opts.keepStatus ? { keep_status: true } : {}),
+        });
         mergeNote(note);
-        get().pushToast("ok", "Notas terminadas: la imagen quedó guardada");
+        // Sin aviso: la captura ya no es un gesto propio, siempre la sigue la
+        // transcripción, y es esa la que avisa del resultado.
         return true;
       } catch (err) {
-        toastError(err, "No se pudo terminar la nota");
+        toastError(err, opts.keepStatus ? "No se pudo capturar el lienzo" : "No se pudo terminar la nota");
         return false;
       } finally {
         set({ noteCapturing: false });
       }
     },
 
-    async transcribeNote(noteId) {
+    async transcribeNote(noteId, mode) {
       set({ noteTranscribing: true, noteTranscribeError: null });
       try {
-        const { note } = await api.transcribeNote(noteId);
+        const { note, bloques, dudas, alturaTipica } = await api.transcribeNote(noteId, { mode });
         mergeNote(note);
-        get().pushToast("ok", "Transcripción lista: revísala y corrige lo que haga falta");
-        return true;
+        get().pushToast(
+          "ok",
+          mode === "final"
+            ? "Nota terminada: la transcripción está lista para proponer tareas"
+            : "Texto puesto en el lienzo: revísalo y sigue escribiendo",
+        );
+        return { ok: true, bloques, dudas, alturaTipica };
       } catch (err) {
         // El fallo del proveedor se muestra en el panel, junto al texto vacío:
         // la vista NUNCA rellena el hueco con algo inventado.
@@ -1213,7 +1239,7 @@ export const useStore = create<AppStore>()((set, get) => {
               ? err.message
               : normalizeMutationError(err, "No se pudo transcribir la nota"),
         });
-        return false;
+        return { ok: false, bloques: [], dudas: [], alturaTipica: 0 };
       } finally {
         set({ noteTranscribing: false });
       }

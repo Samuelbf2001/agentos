@@ -17,6 +17,12 @@ export interface CanvasNoteCapture {
   imageBytes: number;
   /** Sólo cuando la nota se ancló a una tarea (artifacts.task_id es NOT NULL). */
   imageArtifactId?: string | null;
+  /**
+   * Captura intermedia («Transcribir» mientras se sigue escribiendo): guarda
+   * el PNG y sube la versión, pero NO cambia el estado (un borrador sigue en
+   * borrador). Sin esto, la captura pasa la nota a `captured` como siempre.
+   */
+  keepStatus?: boolean;
 }
 
 export interface CanvasNoteFilter {
@@ -99,7 +105,7 @@ export async function captureCanvasNote(
       imageBytes: capture.imageBytes,
       imageArtifactId: capture.imageArtifactId ?? null,
       capturedAt: nowMs(),
-      status: "captured",
+      status: capture.keepStatus ? current.status : "captured",
       updatedAt: nowMs(),
       version: sql`${canvasNotes.version} + 1`,
     })
