@@ -12,10 +12,11 @@
  * elementos de la escena en un canvas propio, recortado a su contenido.
  */
 import { useCallback, useRef } from "react";
-import { Excalidraw, exportToBlob } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, convertToExcalidrawElements, exportToBlob } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import type { CanvasScene } from "../../lib/types";
+import type { CanvasScene, TranscripcionBloque } from "../../lib/types";
+import { sinTranscripcionPrevia, skeletonsTranscripcion } from "./transcripcion-elementos";
 
 /** Escala del PNG exportado: 3× para que la letra manuscrita se lea al transcribir. */
 export const EXPORT_SCALE = 3;
@@ -29,6 +30,13 @@ export interface LienzoHandle {
   exportarPng(): Promise<Blob>;
   /** ¿Hay algo dibujado? Terminar una nota vacía no tiene sentido. */
   estaVacio(): boolean;
+  /**
+   * Pone el texto leído DEBAJO de cada región de trazos, en gris y marcado
+   * (`customData.agentos.transcripcion`). Repetirlo reemplaza el texto
+   * anterior; los trazos no se tocan nunca. Devuelve cuántos textos puso y
+   * avisa por `onSceneChange` para que la vista autoguarde.
+   */
+  insertarTranscripcion(bloques: readonly TranscripcionBloque[], alturaTipica: number): number;
 }
 
 export interface LienzoProps {
@@ -59,13 +67,30 @@ export default function Lienzo({ initialScene, onSceneChange, onReady, theme = "
   const handleApi = useCallback(
     (api: ExcalidrawImperativeAPI) => {
       apiRef.current = api;
+      const getScene = (): CanvasScene => ({
+        elements: api.getSceneElements() as readonly unknown[],
+        appState: persistableAppState(api.getAppState() as unknown as Record<string, unknown>),
+        files: api.getFiles() as unknown as Record<string, unknown>,
+      });
       const handle: LienzoHandle = {
-        getScene: () => ({
-          elements: api.getSceneElements() as readonly unknown[],
-          appState: persistableAppState(api.getAppState() as unknown as Record<string, unknown>),
-          files: api.getFiles() as unknown as Record<string, unknown>,
-        }),
+        getScene,
         estaVacio: () => api.getSceneElements().length === 0,
+        insertarTranscripcion: (bloques, alturaTipica) => {
+          const conservados = sinTranscripcionPrevia(api.getSceneElements());
+          const nuevos = convertToExcalidrawElements(
+            skeletonsTranscripcion(bloques, alturaTipica),
+            { regenerateIds: true },
+          );
+          api.updateScene({
+            elements: [...conservados, ...nuevos],
+            // Un paso deshacible: Ctrl+Z quita el texto y deja el trazo.
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+          });
+          // Excalidraw avisa por `onChange`, pero se fuerza aquí para que el
+          // autoguardado no dependa de cuándo repinte.
+          onSceneChange(getScene());
+          return nuevos.length;
+        },
         exportarPng: async () =>
           await exportToBlob({
             elements: api.getSceneElements(),

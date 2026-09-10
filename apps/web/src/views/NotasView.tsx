@@ -1,18 +1,23 @@
 /**
- * Notas manuscritas (fase 1). Ernesto escribe con la tableta en un lienzo
- * Excalidraw; la escena se autoguarda sola y "Terminar notas" exporta un PNG
- * limpio (3×, fondo blanco, recortado al contenido) que queda guardado para
- * que la fase 2 lo transcriba.
+ * Notas manuscritas. Ernesto escribe con la tableta en un lienzo Excalidraw;
+ * la escena se autoguarda sola y dos botones leen lo escrito con el modelo de
+ * visión (PNG limpio 3×, fondo blanco, recortado al contenido):
+ *
+ * - «Transcribir»: mientras se sigue escribiendo. Captura lo que hay, lo
+ *   transcribe y pone el texto EN EL LIENZO, debajo de cada región de trazos;
+ *   la nota sigue en borrador y se puede repetir (reemplaza el texto anterior).
+ * - «Terminar nota»: lo mismo, y además la deja `transcribed`, lista para
+ *   proponer tareas.
  *
  * Decisiones de esta vista:
  * - El lienzo entra por `React.lazy`: es la dependencia más pesada de la app y
  *   nadie que no abra /notas debe pagarla.
  * - Autoguardado amortiguado (2 s) con `expected_version`: dos pestañas sobre
  *   la misma nota dan 409 y se relee, nunca last-write-wins silencioso.
- * - El panel lateral transcribe la imagen con el modelo de visión y deja el
- *   texto EDITABLE: la lectura de una letra siempre puede fallar, así que el
- *   humano corrige y su corrección se guarda (PATCH con `transcription`). Si
- *   el proveedor falla, se enseña el error: nunca se rellena con algo inventado.
+ * - El panel lateral enseña el Markdown de la transcripción y lo deja
+ *   EDITABLE: la lectura de una letra siempre puede fallar, así que el humano
+ *   corrige y su corrección se guarda (PATCH con `transcription`). Si el
+ *   proveedor falla, se enseña el error: nunca se rellena con algo inventado.
  * - Bajo la transcripción, «Tareas propuestas» (fase 3, `PropuestasPanel`):
  *   el modelo propone, el humano revisa y NADA se crea sin pulsar «Crear».
  */
@@ -22,7 +27,7 @@ import { Check, FileImage, Plus, Wand2 } from "lucide-react";
 import { useStore } from "../state/store";
 import { EmptyState, ErrorBox, Spinner, fmtDate, timeAgo } from "../components/ui";
 import { api } from "../lib/api";
-import type { CanvasNote, CanvasScene } from "../lib/types";
+import type { CanvasNote, CanvasScene, NoteTranscribeMode } from "../lib/types";
 import type { LienzoHandle } from "./notas/Lienzo";
 import { PropuestasPanel } from "./notas/PropuestasPanel";
 
@@ -84,6 +89,8 @@ export default function NotasView() {
   const pendingScene = useRef<CanvasScene | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  /** Qué botón está en vuelo: los dos comparten el camino, pero cada uno enseña su propio «…ndo». */
+  const [accion, setAccion] = useState<"transcribir" | "terminar" | null>(null);
 
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeNoteId) ?? null,
@@ -167,28 +174,50 @@ export default function NotasView() {
     if (note) selectNote(note.id);
   }, [createNote, flush, selectNote]);
 
-  const terminar = useCallback(async () => {
-    const handle = handleRef.current;
-    if (!handle || !activeNoteId) return;
-    setExportError(null);
-    if (handle.estaVacio()) {
-      setExportError("El lienzo está vacío: escribe algo antes de terminar.");
-      return;
-    }
-    await flush();
-    try {
-      const blob = await handle.exportarPng();
-      const dataUrl = await blobToBase64(blob);
-      await captureNote(activeNoteId, dataUrl);
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : "No se pudo exportar la imagen");
-    }
-  }, [activeNoteId, captureNote, flush]);
+  /**
+   * El mismo camino para «Transcribir» y «Terminar nota»: exportar el PNG →
+   * capturarlo → transcribirlo → poner el texto en el lienzo. Sólo cambia el
+   * modo: `interim` no toca el estado (la nota sigue editable) y `final` la
+   * deja `transcribed`. El texto cae DEBAJO de cada región de trazos y el
+   * lienzo lo autoguarda como cualquier otro cambio.
+   */
+  const leerLienzo = useCallback(
+    async (mode: NoteTranscribeMode) => {
+      const handle = handleRef.current;
+      if (!handle || !activeNoteId || accion) return;
+      setExportError(null);
+      if (handle.estaVacio()) {
+        setExportError("El lienzo está vacío: escribe algo antes de transcribir.");
+        return;
+      }
+      setAccion(mode === "final" ? "terminar" : "transcribir");
+      try {
+        await flush();
+        const blob = await handle.exportarPng();
+        const dataUrl = await blobToBase64(blob);
+        // Intermedia: el borrador sigue siendo borrador. Final: pasa a `captured`
+        // y la transcripción lo deja en `transcribed`.
+        const capturada = await captureNote(activeNoteId, dataUrl, {
+          keepStatus: mode === "interim",
+        });
+        if (!capturada) return;
+        const resultado = await transcribeNote(activeNoteId, mode);
+        if (!resultado.ok) return;
+        handle.insertarTranscripcion(resultado.bloques, resultado.alturaTipica);
+      } catch (err) {
+        setExportError(err instanceof Error ? err.message : "No se pudo exportar la imagen");
+      } finally {
+        setAccion(null);
+      }
+    },
+    [accion, activeNoteId, captureNote, flush, transcribeNote],
+  );
 
-  const transcribir = useCallback(async () => {
-    if (!activeNoteId) return;
-    await transcribeNote(activeNoteId);
-  }, [activeNoteId, transcribeNote]);
+  // «Transcribir» sobre una nota ya terminada la rehace en modo final: no hay
+  // borrador al que volver, y `converted` no admite intermedias.
+  const modoTranscribir: NoteTranscribeMode = activeNote?.status === "draft" ? "interim" : "final";
+  const transcribir = useCallback(() => leerLienzo(modoTranscribir), [leerLienzo, modoTranscribir]);
+  const terminar = useCallback(() => leerLienzo("final"), [leerLienzo]);
 
   /** El texto corregido a mano se guarda al salir del campo, no en cada tecla. */
   const guardarTranscripcion = useCallback(async () => {
@@ -198,7 +227,7 @@ export default function NotasView() {
     await saveNote(activeNote.id, { transcription: limpio });
   }, [activeNote, borrador, saveNote]);
 
-  const puedeTranscribir = !!activeNote && activeNote.status !== "draft" && !!activeNote.imagePath;
+  const ocupado = accion !== null || noteCapturing || noteTranscribing;
 
   const savedLabel = noteSaving
     ? "Guardando…"
@@ -214,7 +243,7 @@ export default function NotasView() {
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-title text-ink">{activeNote?.title ?? "Notas a mano"}</h1>
           <p className="text-label text-muted">
-            Escribe con la tableta; se guarda solo. Al terminar queda una imagen lista para transcribir.
+            Escribe con la tableta; se guarda solo. Transcribe cuando quieras y el texto queda en el lienzo.
           </p>
         </div>
 
@@ -243,15 +272,33 @@ export default function NotasView() {
           Nueva nota
         </button>
 
-        <button
-          type="button"
-          onClick={() => void terminar()}
-          disabled={!activeNote || noteCapturing}
-          className="press inline-flex min-h-10 items-center gap-1.5 rounded-tight bg-ink px-4 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Check size={15} strokeWidth={2} aria-hidden="true" />
-          {noteCapturing ? "Terminando…" : "Terminar notas"}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void transcribir()}
+              disabled={!activeNote || ocupado}
+              className="press inline-flex min-h-10 items-center gap-1.5 rounded-tight border border-line bg-surface px-3 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Wand2 size={15} strokeWidth={1.75} aria-hidden="true" />
+              {accion === "transcribir" ? "Transcribiendo…" : "Transcribir"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void terminar()}
+              disabled={!activeNote || ocupado}
+              className="press inline-flex min-h-10 items-center gap-1.5 rounded-tight bg-ink px-4 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Check size={15} strokeWidth={2} aria-hidden="true" />
+              {accion === "terminar" ? "Terminando…" : "Terminar nota"}
+            </button>
+          </div>
+          <p className="text-label text-muted">
+            Transcribir: lee lo que hay y pone el texto en el lienzo; puedes seguir escribiendo.
+            {" · "}
+            Terminar nota: transcribe y la deja lista para proponer tareas.
+          </p>
+        </div>
       </header>
 
       {exportError ? (
@@ -300,21 +347,6 @@ export default function NotasView() {
           <section className="rounded-panel border border-line bg-surface p-3">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-label uppercase tracking-wide text-muted">Transcripción</h2>
-              {puedeTranscribir ? (
-                <button
-                  type="button"
-                  onClick={() => void transcribir()}
-                  disabled={noteTranscribing}
-                  className="press inline-flex min-h-8 items-center gap-1.5 rounded-tight border border-line px-2.5 text-label font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Wand2 size={14} strokeWidth={1.75} aria-hidden="true" />
-                  {noteTranscribing
-                    ? "Transcribiendo…"
-                    : activeNote?.transcription
-                      ? "Rehacer"
-                      : "Transcribir"}
-                </button>
-              ) : null}
             </div>
 
             {noteTranscribing ? (
@@ -345,7 +377,7 @@ export default function NotasView() {
             ) : (
               <p className="mt-2 text-small text-muted">
                 {activeNote?.status === "draft"
-                  ? "Transcripción pendiente: termina las notas para dejar la imagen lista."
+                  ? "Transcripción pendiente: pulsa «Transcribir» para leer lo que hay en el lienzo."
                   : "Todavía sin transcribir: pulsa «Transcribir» para leer la imagen."}
               </p>
             )}

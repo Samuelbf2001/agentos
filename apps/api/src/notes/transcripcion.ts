@@ -12,11 +12,15 @@
  *   es peor que un error visible.
  * - El transcriptor es una interfaz inyectable, igual que los runners: los
  *   tests pasan un doble y ninguna llamada real sale de la suite.
+ * - Salida ESTRUCTURADA (`generateObject` + `SalidaTranscripcion`): el
+ *   Markdown completo, el texto plano por región (para pintarlo en el lienzo
+ *   junto a cada trazo) y las dudas. Nada de parsear texto libre.
  *
  * Modelo y perfil son configurables por entorno para poder cambiarlos sin
  * tocar código (`AGENTOS_NOTES_PROVIDER_SLUG`, `AGENTOS_NOTES_MODEL`).
  */
-import { generateText } from "ai";
+import { generateObject } from "ai";
+import { z } from "zod";
 import { errors, isAgentosError, ErrorCodes } from "@agentos/shared";
 import { getProviderProfileBySlug, type AgentosDb } from "@agentos/db";
 import {
@@ -47,13 +51,36 @@ export interface TranscribeNoteInput {
   titulo: string;
 }
 
-export interface TranscribeNoteResult {
+/** Texto plano de una región (bloque de la segmentación) tal como lo leyó el modelo. */
+export interface BloqueTranscrito {
+  /** Índice del bloque en `segmentacion.bloques` (0..N-1, de arriba abajo). */
+  bloque: number;
   texto: string;
+}
+
+export interface TranscribeNoteResult {
+  /** La transcripción completa en Markdown: es lo que se guarda en `transcription`. */
+  markdown: string;
+  /** Texto plano por región, para pintarlo en el lienzo junto a cada trazo. */
+  bloques: BloqueTranscrito[];
+  /** Palabras marcadas `[?]`. */
+  dudas: string[];
   proveedor: string;
   modelo: string;
   usage: TokenUsage;
   costUsd: number | null;
 }
+
+/**
+ * Salida ESTRUCTURADA del modelo. `generateObject` la valida contra este
+ * esquema; si el modelo no la cumple, sale `provider_unavailable` (nada de
+ * parsear texto libre buscando "Dudas:").
+ */
+export const SalidaTranscripcion = z.object({
+  markdown: z.string(),
+  bloques: z.array(z.object({ bloque: z.number().int(), texto: z.string() })),
+  dudas: z.array(z.string()),
+});
 
 /** Frontera con el modelo de visión. Los tests inyectan un doble. */
 export interface NoteTranscriber {
@@ -76,6 +103,8 @@ export const SYSTEM_PROMPT = [
   "   los acentos, pero transcribes la palabra, no el trazo.",
   "5. Devuelve SOLO la transcripción, sin preámbulo, sin encabezados que no estén",
   "   escritos en la nota y sin comentarios sobre la imagen.",
+  "6. Respondes con un objeto: `markdown` (la transcripción completa), `bloques`",
+  "   (el texto plano de cada región, en orden) y `dudas` (las palabras marcadas `[?]`).",
 ].join("\n");
 
 /** Describe el orden de lectura en texto plano: bloques → renglones. */
@@ -126,8 +155,26 @@ export function construirPrompt(input: Pick<TranscribeNoteInput, "segmentacion" 
     "",
     describirSegmentacion(input.segmentacion),
     "",
-    "Devuelve (1) la transcripción en Markdown y (2) una lista corta `Dudas:` con",
-    "las palabras marcadas `[?]`. Nada más.",
+    describirBloques(input.segmentacion.resumen.bloques),
+    "",
+    "Devuelve `markdown` con la transcripción completa en Markdown, `bloques` con",
+    "el texto plano de cada región en orden y `dudas` con las palabras marcadas `[?]`.",
+    "Nada más.",
+  ].join("\n");
+}
+
+/**
+ * Pide el texto por región para poder ponerlo en el lienzo junto a cada
+ * trazo. Sólo el NÚMERO de regiones y su orden: sin cajas ni renglones (ver
+ * la nota de medición de arriba).
+ */
+export function describirBloques(n: number): string {
+  const total = Math.max(1, n);
+  return [
+    `La nota tiene ${total} ${total === 1 ? "región" : "regiones separadas verticalmente"}`,
+    `(bloque 0${total > 1 ? `..${total - 1}` : ""}, de arriba abajo). Devuelve en \`bloques\` el texto`,
+    "plano de cada región, en ese orden. Si dos regiones son en realidad una sola,",
+    "une su texto en la primera y deja la otra con texto vacío.",
   ].join("\n");
 }
 
@@ -167,8 +214,9 @@ export function createModelTranscriber(options: ModelTranscriberOptions): NoteTr
 
       let result;
       try {
-        result = await generateText({
+        result = await generateObject({
           model,
+          schema: SalidaTranscripcion,
           system: SYSTEM_PROMPT,
           messages: [
             {
@@ -186,8 +234,8 @@ export function createModelTranscriber(options: ModelTranscriberOptions): NoteTr
         throw asProviderUnavailable(err, { slug, modelId, apiKeyEnv: profile.apiKeyEnv });
       }
 
-      const texto = (result.text ?? "").trim();
-      if (texto.length === 0) {
+      const markdown = (result.object.markdown ?? "").trim();
+      if (markdown.length === 0) {
         // Sin texto no hay transcripción: antes el error que un hueco inventado.
         throw errors.providerUnavailable(
           `El modelo '${modelId}' no devolvió texto para la nota; no se inventa una transcripción.`,
@@ -197,7 +245,9 @@ export function createModelTranscriber(options: ModelTranscriberOptions): NoteTr
 
       const usage = normalizeUsage(result.usage);
       return {
-        texto,
+        markdown,
+        bloques: result.object.bloques.map((b) => ({ bloque: b.bloque, texto: b.texto.trim() })),
+        dudas: result.object.dudas.map((d) => d.trim()).filter((d) => d.length > 0),
         proveedor: profile.slug,
         modelo: modelId,
         usage,

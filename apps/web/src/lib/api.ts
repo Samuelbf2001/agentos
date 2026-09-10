@@ -10,6 +10,8 @@ import type {
   Artifact,
   CanvasNote,
   NoteTaskProposal,
+  NoteTranscribeMode,
+  NoteTranscribeResponse,
   CanvasScene,
   BrainOverview,
   ConvertRoleToAgentResponse,
@@ -640,12 +642,14 @@ export const api = {
       expected_version?: number;
     },
   ) => request<{ note: CanvasNote }>(`/api/notes/${id}`, { method: "PATCH", body }),
-  /** "Terminar notas": el PNG ya exportado por el lienzo, en base64. */
-  captureNote: (id: string, body: { image_base64: string; task_id?: string }) =>
-    request<{ note: CanvasNote }>(`/api/notes/${id}/capture`, { method: "POST", body }),
+  /** El PNG ya exportado por el lienzo, en base64. `keep_status` = captura intermedia (no cambia el estado). */
+  captureNote: (
+    id: string,
+    body: { image_base64: string; task_id?: string; keep_status?: boolean },
+  ) => request<{ note: CanvasNote }>(`/api/notes/${id}/capture`, { method: "POST", body }),
   /** Pasa el PNG por el modelo de visión; 502 provider_unavailable si el proveedor falla. */
-  transcribeNote: (id: string) =>
-    request<{ note: CanvasNote }>(`/api/notes/${id}/transcribe`, { method: "POST" }),
+  transcribeNote: (id: string, body: { mode: NoteTranscribeMode }) =>
+    request<NoteTranscribeResponse>(`/api/notes/${id}/transcribe`, { method: "POST", body }),
   noteImageUrl: (id: string) => `${API_BASE}/api/notes/${id}/image`,
   /** Fase 3: PROPONE tareas desde la transcripción y las guarda en la nota. No crea ninguna. */
   proposeNoteTasks: (id: string) =>

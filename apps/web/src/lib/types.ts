@@ -938,6 +938,25 @@ export interface CanvasScene {
   files?: Record<string, unknown>;
 }
 
+/** `interim`: transcribe y la nota sigue como está; `final`: «Terminar nota» (pasa a `transcribed`). */
+export type NoteTranscribeMode = "interim" | "final";
+
+/** Texto leído de una región del lienzo, con la caja (en coordenadas de escena) de sus trazos. */
+export interface TranscripcionBloque {
+  bloque: number;
+  caja: { x: number; y: number; w: number; h: number };
+  texto: string;
+}
+
+/** Respuesta de POST /api/notes/:id/transcribe. */
+export interface NoteTranscribeResponse {
+  note: CanvasNote;
+  bloques: TranscripcionBloque[];
+  dudas: string[];
+  /** Altura típica del trazo (mediana), para dimensionar el texto que se pinta. */
+  alturaTipica: number;
+}
+
 /** Espejo de la fila `canvas_notes` que sirve /api/notes. */
 export interface CanvasNote {
   id: string;
