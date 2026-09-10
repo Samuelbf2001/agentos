@@ -17,6 +17,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import type { CanvasScene, TranscripcionBloque } from "../../lib/types";
 import { sinTranscripcionPrevia, skeletonsTranscripcion } from "./transcripcion-elementos";
+import { cajaDeEscena, escalaDeExportacion, type CajaEscena } from "./export-scale";
 
 /** Escala del PNG exportado: 3× para que la letra manuscrita se lea al transcribir. */
 export const EXPORT_SCALE = 3;
@@ -101,7 +102,12 @@ export default function Lienzo({ initialScene, onSceneChange, onReady, theme = "
               exportBackground: true,
               viewBackgroundColor: "#ffffff",
               exportWithDarkMode: false,
-              exportScale: EXPORT_SCALE,
+              // La escala baja con el tamaño de la escena para que el PNG no
+              // supere ~4000 px de lado (una nota grande a 3x daba 413).
+              exportScale: escalaDeExportacion(
+                cajaDeEscena(api.getSceneElements() as readonly CajaEscena[]),
+                EXPORT_PADDING,
+              ),
               exportEmbedScene: false,
             },
             files: api.getFiles(),
