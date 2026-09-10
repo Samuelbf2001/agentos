@@ -60,7 +60,7 @@ export interface NoteTranscriber {
   transcribe(input: TranscribeNoteInput): Promise<TranscribeNoteResult>;
 }
 
-const SYSTEM_PROMPT = [
+export const SYSTEM_PROMPT = [
   "Eres un transcriptor de notas manuscritas. Tu única tarea es leer la imagen",
   "y devolver lo que está escrito, en español, tal cual.",
   "",
@@ -82,22 +82,12 @@ const SYSTEM_PROMPT = [
 export function describirSegmentacion(seg: SegmentacionNota): string {
   const lineas: string[] = [];
   const r = seg.resumen;
-  lineas.push(
-    `Trazos a mano: ${r.trazosAMano} · renglones: ${r.renglones} · bloques: ${r.bloques} · altura típica: ${r.alturaTipica}px.`,
-  );
-  if (seg.bloques.length > 0) {
-    lineas.push("");
-    lineas.push("Orden de lectura (agrupación geométrica de los trazos):");
-    for (const bloque of seg.bloques) {
-      lineas.push(
-        `- Bloque ${bloque.bloque} (x${bloque.caja.x} y${bloque.caja.y}, ${bloque.caja.w}×${bloque.caja.h}): ${bloque.renglones.length} renglón(es).`,
-      );
-      for (const renglon of bloque.renglones) {
-        lineas.push(
-          `  · renglón ${renglon.renglon}: y${renglon.caja.y}, ancho ${renglon.caja.w}, ${renglon.trazos} trazo(s).`,
-        );
-      }
-    }
+  // Solo un aviso de regiones: sin cajas ni renglones. El detalle geométrico
+  // empujaba al modelo a transcribir por filas de trazos y rompía los diagramas.
+  if (r.bloques > 1) {
+    lineas.push(
+      `Pista: los trazos forman ${r.bloques} regiones separadas verticalmente; alguna puede ser una columna o nota al margen.`,
+    );
   }
   if (seg.textoExistente.length > 0) {
     lineas.push("");
@@ -119,17 +109,25 @@ export function describirSegmentacion(seg: SegmentacionNota): string {
 
 /** Prompt de usuario: el título de la nota y la estructura como orden de lectura. */
 export function construirPrompt(input: Pick<TranscribeNoteInput, "segmentacion" | "titulo">): string {
+  // Medido con letra real (nota 01a088fb, 2026-09-10): imponer el orden
+  // geométrico ("bloque por bloque, renglón por renglón") con las cajas de cada
+  // renglón bajó la lectura de ~11/14 a ~4/14 con el mismo modelo y la misma
+  // imagen. La segmentación por cajas de trazos parte un diagrama en renglones
+  // falsos y el modelo obedece. La IMAGEN manda; la geometría solo avisa de
+  // regiones separadas y aporta lo que ya es dato (texto tecleado, figuras).
   return [
     `Nota: "${input.titulo}".`,
     "",
-    "La imagen adjunta es la exportación limpia del lienzo. La estructura de abajo",
-    "sale de la geometría de los trazos y es el ORDEN DE LECTURA: transcribe bloque",
-    "por bloque y, dentro de cada bloque, renglón por renglón. Si un bloque está",
-    "claramente aparte (una columna, una nota al margen), trátalo como sección propia.",
+    "La imagen adjunta es la exportación limpia del lienzo y es la fuente: léela",
+    "como una página. Si hay un diagrama (óvalos, cajas, líneas, flechas), descríbelo",
+    "en Markdown con `→` indicando qué nodo conecta con cuál. Si hay una lista con",
+    "números en círculos, reprodúcela numerada. Si una región está claramente",
+    "aparte (una columna, una nota al margen), trátala como sección propia.",
     "",
     describirSegmentacion(input.segmentacion),
     "",
-    "Devuelve la transcripción en Markdown.",
+    "Devuelve (1) la transcripción en Markdown y (2) una lista corta `Dudas:` con",
+    "las palabras marcadas `[?]`. Nada más.",
   ].join("\n");
 }
 
