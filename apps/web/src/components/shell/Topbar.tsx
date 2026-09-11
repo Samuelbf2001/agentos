@@ -1,9 +1,10 @@
 /**
- * Barra superior del shell: hamburguesa en móvil, miga de pan (agencia o
- * cliente) y las acciones globales de siempre (buscar tareas, pausar/reanudar
- * agentes). El banner del kill switch vive fuera, en `App.tsx`.
+ * Barra superior del shell: hamburguesa en móvil, botón para ocultar o mostrar
+ * el menú lateral en escritorio (Ctrl+B), miga de pan (agencia o cliente) y
+ * las acciones globales de siempre (buscar tareas, pausar/reanudar agentes).
+ * El banner del kill switch vive fuera, en `App.tsx`.
  */
-import { Menu, Pause, Play, Search } from "lucide-react";
+import { Menu, PanelLeftClose, PanelLeftOpen, Pause, Play, Search } from "lucide-react";
 import { useStore } from "../../state/store";
 import type { Capability } from "../../lib/capabilities";
 import type { Perspective } from "../../lib/nav";
@@ -17,6 +18,8 @@ export function Topbar({
   onToggleKillSwitch,
   onSearch,
   onOpenMenu,
+  sidebarColapsado,
+  onToggleSidebar,
 }: {
   perspective: Perspective;
   caps: ReadonlySet<Capability>;
@@ -24,6 +27,9 @@ export function Topbar({
   onToggleKillSwitch: (next: boolean) => void;
   onSearch: () => void;
   onOpenMenu: () => void;
+  /** Escritorio: ¿el menú lateral está oculto? El botón refleja y alterna. */
+  sidebarColapsado: boolean;
+  onToggleSidebar: () => void;
 }) {
   const projects = useStore((s) => s.projects);
   const previewing = useStore((s) => s.previewRole === "sponsor");
@@ -42,6 +48,25 @@ export function Topbar({
         className="press inline-flex h-8 w-8 items-center justify-center rounded-tight text-ink-2 hover:bg-canvas-deep md:hidden"
       >
         <Menu size={16} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+
+      {/* Escritorio: ocultar el menú deja todo el ancho al contenido (el
+          lienzo de Notas con la tableta lo agradece). El botón queda aquí,
+          discreto, como único camino de vuelta además de Ctrl+B. */}
+      <button
+        type="button"
+        onClick={onToggleSidebar}
+        aria-label={sidebarColapsado ? "Mostrar menú" : "Ocultar menú"}
+        aria-expanded={!sidebarColapsado}
+        aria-controls="menu-lateral"
+        title={`${sidebarColapsado ? "Mostrar" : "Ocultar"} el menú (Ctrl+B)`}
+        className="press hidden min-h-10 min-w-10 items-center justify-center rounded-tight text-ink-2 hover:bg-canvas-deep focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link md:inline-flex"
+      >
+        {sidebarColapsado ? (
+          <PanelLeftOpen size={16} strokeWidth={1.75} aria-hidden="true" />
+        ) : (
+          <PanelLeftClose size={16} strokeWidth={1.75} aria-hidden="true" />
+        )}
       </button>
 
       {/* min-w-0 + flex-1: la miga se encoge antes de empujar los botones de
