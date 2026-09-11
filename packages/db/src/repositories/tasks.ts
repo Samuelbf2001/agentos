@@ -24,7 +24,8 @@ export function createTask(
     // including when callers provide only assigneePersonIds.
     assigneePersonId: normalized.primaryPersonId,
     id: input.id ?? newId(),
-    createdAt: now,
+    // Una migración puede traer la fecha de creación original; el resto nace ahora.
+    createdAt: input.createdAt ?? now,
     updatedAt: now,
   };
   const insert = (): void => {

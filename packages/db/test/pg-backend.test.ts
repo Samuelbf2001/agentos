@@ -174,7 +174,7 @@ describePg("backend Postgres + pgvector", () => {
     it("canvas_notes: la migración 0007 añade `proposals` jsonb y el round-trip conserva la lista", async () => {
       const cols = await db.execute<{ column_name: string; data_type: string; column_default: string | null }>(sql`
         SELECT column_name, data_type, column_default FROM information_schema.columns
-         WHERE table_schema = public AND table_name = canvas_notes AND column_name = proposals
+         WHERE table_schema = 'public' AND table_name = 'canvas_notes' AND column_name = 'proposals'
       `);
       expect(cols[0]?.data_type).toBe("jsonb");
       expect(cols[0]?.column_default).toContain("[]");
@@ -257,6 +257,33 @@ describePg("backend Postgres + pgvector", () => {
       expect(await countArtifacts(db, task.id)).toBe(1);
       const moved = await updateTask(db, task.id, { status: "REVIEW" }, task.version);
       expect(moved.version).toBe(task.version + 1);
+    });
+
+    it("tasks: createTask honra un created_at explícito (migraciones) y updateTask nunca lo toca", async () => {
+      const { project } = await fixture();
+      const original = Date.parse("2026-03-09T13:33:00.000Z");
+      const before = Date.now();
+      const task = await createTask(db, {
+        projectId: project.id,
+        title: "Nacida en Notion",
+        stage: "OPERAR",
+        status: "BACKLOG",
+        orderKey: "a0",
+        createdAt: original,
+      });
+      expect(task.createdAt).toBe(original);
+      expect(task.updatedAt).toBeGreaterThanOrEqual(before);
+      const updated = await updateTask(db, task.id, { title: "Renombrada" }, task.version);
+      expect(updated.createdAt).toBe(original);
+
+      const fresh = await createTask(db, {
+        projectId: project.id,
+        title: "Nacida aquí",
+        stage: "OPERAR",
+        status: "BACKLOG",
+        orderKey: "a1",
+      });
+      expect(fresh.createdAt).toBeGreaterThanOrEqual(before);
     });
 
     it("tasks: jsonb depends_on y bigint due_at viajan intactos", async () => {

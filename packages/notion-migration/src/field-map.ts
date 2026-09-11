@@ -95,15 +95,18 @@ export const INBOX_PROJECT_NAME = "Bandeja de Notion";
  * Campos de Notion SIN columna nativa en AgentOS. No se pierden: el importador
  * los guarda íntegros en `notion_page_archives.payload` y se leen por
  * `GET /api/tasks/:id/notion-origin`.
+ *
+ * `Tags` y `Created time` SÍ tienen destino desde esta rama: `Tags` →
+ * `task_labels` (una fila por etiqueta) y `Created time` → `tasks.created_at`
+ * (solo al crear; una tarea ya existente conserva el suyo). El cuerpo de la
+ * página (bloques) → `tasks.description` en Markdown (`blocks-to-markdown.ts`).
  */
 export const TASK_FIELDS_WITHOUT_TARGET: readonly string[] = [
-  "Tags",
   "HH estimadas",
   "Horas H reales",
   "Related to Reuniones (Tareas)",
   "Bloqueando",
   "PreRequisito de",
-  "Created time",
 ];
 
 export const PROJECT_FIELDS_WITHOUT_TARGET: readonly string[] = [
@@ -310,6 +313,34 @@ export function readPeople(page: JsonObject, propertyName: string | undefined): 
   }).filter((person) => person.notionPersonId.length > 0);
 }
 
+/**
+ * Nombres de un `multi_select` (las etiquetas `Tags`), tal cual vienen de
+ * Notion y sin duplicados. La normalización (minúsculas, espacios) la hace el
+ * repositorio de etiquetas al escribir: es invariante de `task_labels`, no
+ * decisión de este mapa.
+ */
+export function readMultiSelectNames(page: JsonObject, propertyName: string | undefined): string[] {
+  const property = propertyName ? propertyOfType(page, propertyName) : undefined;
+  const names = asArray(property?.multi_select)
+    .map((item) => str(asRecord(item).name)?.trim())
+    .filter((name): name is string => name !== undefined && name.length > 0);
+  return [...new Set(names)];
+}
+
+/**
+ * Fecha de creación original en Notion (epoch ms). Se prefiere
+ * `page.created_time` (siempre presente en una página de la API); la
+ * propiedad `created_time` del esquema (`Created time`) es el mismo valor y
+ * solo se usa de respaldo. `null` si no se puede parsear.
+ */
+export function readCreatedTime(page: JsonObject, propertyName: string | undefined): number | null {
+  const property = propertyName ? propertyOfType(page, propertyName) : undefined;
+  const candidate = str(page.created_time) ?? str(property?.created_time);
+  if (!candidate) return null;
+  const parsed = Date.parse(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 /** Ids de página referenciados por una propiedad `relation`. */
 export function readRelationIds(page: JsonObject, propertyName: string): string[] {
   const property = propertyOfType(page, propertyName);
@@ -374,6 +405,10 @@ export interface TaskSchemaBinding {
   priorityProperty: string | undefined;
   dueDateProperty: string | undefined;
   peopleProperty: string | undefined;
+  /** El único `multi_select` del esquema (`Tags`) → etiquetas de la tarea. */
+  tagsProperty: string | undefined;
+  /** La única propiedad `created_time` (`Created time`) → `tasks.created_at`. */
+  createdTimeProperty: string | undefined;
   /** Relaciones hacia la base Projects (la relación tarea↔proyecto). */
   projectRelations: string[];
   /** Relaciones hacia la propia base Tasks que significan "depende de". */
@@ -399,6 +434,8 @@ export function bindTaskSchema(
     priorityProperty: solePropertyOfType(schema, "select"),
     dueDateProperty: solePropertyOfType(schema, "date"),
     peopleProperty: solePropertyOfType(schema, "people"),
+    tagsProperty: solePropertyOfType(schema, "multi_select"),
+    createdTimeProperty: solePropertyOfType(schema, "created_time"),
     projectRelations: relationPropertiesTo(schema, ids.projectsDatabaseId),
     dependencyRelations: selfRelations.filter((name) => DEPENDENCY_RELATION_NAMES.includes(name)),
     unknownSelfRelations: selfRelations.filter(
@@ -450,6 +487,10 @@ export interface MappedTask {
    */
   parentPageId: string | null;
   assignees: NotionPerson[];
+  /** Etiquetas (`Tags`) tal cual en Notion; el repositorio las normaliza al escribir. */
+  labels: string[];
+  /** Fecha de creación original en Notion (epoch ms); `null` si no se pudo leer. */
+  createdAt: number | null;
   originalUrl: string | null;
   lastEditedAt: number | null;
   archivedInNotion: boolean;
@@ -503,6 +544,8 @@ export function mapTaskPage(page: JsonObject, binding: TaskSchemaBinding): Mappe
     ],
     parentPageId: str(parent.page_id) ?? null,
     assignees: readPeople(page, binding.peopleProperty),
+    labels: readMultiSelectNames(page, binding.tagsProperty),
+    createdAt: readCreatedTime(page, binding.createdTimeProperty),
     originalUrl: str(page.url) ?? null,
     lastEditedAt: lastEdited ? Date.parse(lastEdited) || null : null,
     archivedInNotion: page.archived === true || page.in_trash === true,

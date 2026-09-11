@@ -27,6 +27,7 @@ import {
   listArtifacts,
   reapExpiredLeases,
   renewLease,
+  updateTask,
 } from "../src/repositories/tasks.js";
 import { addSpan, createRun, endSpan, listRunsByRoot, listSpans, updateRun } from "../src/repositories/runs.js";
 import { appendEvent, lastSeq, listEventsSince } from "../src/repositories/events.js";
@@ -360,6 +361,36 @@ describe("unicidad e idempotencia", () => {
       digestPayload({ c: { d: "x" }, b: [1, 2], a: 1 }),
     );
     expect(digestPayload({ a: 1 })).not.toBe(digestPayload({ a: 2 }));
+  });
+});
+
+describe("createTask con created_at explícito (migraciones)", () => {
+  it("honra el created_at recibido; sin él usa ahora; updateTask nunca lo toca", () => {
+    const db = freshDb();
+    const { project } = fixture(db);
+    const original = Date.parse("2026-03-09T13:33:00.000Z");
+    const before = Date.now();
+    const task = createTask(db, {
+      projectId: project.id,
+      title: "Nacida en Notion",
+      stage: "OPERAR",
+      status: "BACKLOG",
+      orderKey: "a0",
+      createdAt: original,
+    });
+    expect(task.createdAt).toBe(original);
+    expect(task.updatedAt).toBeGreaterThanOrEqual(before);
+    const updated = updateTask(db, task.id, { title: "Renombrada" }, task.version);
+    expect(updated.createdAt).toBe(original);
+
+    const fresh = createTask(db, {
+      projectId: project.id,
+      title: "Nacida aquí",
+      stage: "OPERAR",
+      status: "BACKLOG",
+      orderKey: "a1",
+    });
+    expect(fresh.createdAt).toBeGreaterThanOrEqual(before);
   });
 });
 

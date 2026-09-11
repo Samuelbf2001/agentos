@@ -19,6 +19,7 @@
  * enlace de linaje `source_kind='inbox'`.
  */
 import {
+  addTaskLabels,
   appendTaskEvent,
   attachArtifact,
   createNotionMigrationRun,
@@ -47,6 +48,7 @@ import {
   type NotionMigrationRun,
   type NotionPageArchive,
 } from "@agentos/db";
+import { blocksToMarkdown } from "./blocks-to-markdown.js";
 import {
   bindProjectSchema,
   bindTaskSchema,
@@ -85,6 +87,14 @@ export interface ImportOptions {
   reader: SnapshotReader;
   /** `dry_run` no escribe absolutamente nada: solo concilia y reporta. */
   dryRun?: boolean;
+  /**
+   * Ignora el salto "Notion no cambió desde la última importación" y vuelve a
+   * escribir cada tarea/proyecto ya enlazado (rellena descripción y etiquetas
+   * de una importación anterior que no las traía). NO relaja la cuarentena
+   * `editado_en_agentos_tras_importar`: una edición humana posterior sigue
+   * mandando. Nunca toca `created_at` de una tarea existente.
+   */
+  force?: boolean;
   pilot?: PilotLimits;
   /** Organización destino; por defecto la interna de Sixteam. */
   organizationName?: string;
@@ -221,6 +231,7 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
   const { db, reader } = options;
   const actor = options.actor ?? ACTOR_DEFAULT;
   const dryRun = options.dryRun === true;
+  const force = options.force === true;
   const mode: ImportReport["mode"] = dryRun ? "dry_run" : options.pilot ? "pilot" : "full";
 
   const manifest = await reader.manifest();
@@ -440,8 +451,10 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
           projectIdByPage.set(normalizeNotionId(notionPageId), current.id);
           continue;
         }
-        // I1: Notion no cambió desde la última importación — no se toca nada.
+        // I1: Notion no cambió desde la última importación — no se toca nada
+        // (salvo con `force`, que reescribe a propósito).
         if (
+          !force &&
           mapped.lastEditedAt !== null &&
           existingLink.sourceLastEditedAt !== null &&
           mapped.lastEditedAt <= existingLink.sourceLastEditedAt
@@ -630,8 +643,11 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
           taskIdByPage.set(normalizeNotionId(notionPageId), current.id);
           continue;
         }
-        // I1: Notion no cambió desde la última importación — no se toca nada.
+        // I1: Notion no cambió desde la última importación — no se toca nada
+        // (salvo con `force`, que reescribe a propósito para rellenar
+        // descripción y etiquetas).
         if (
+          !force &&
           mapped.lastEditedAt !== null &&
           existingLink.sourceLastEditedAt !== null &&
           mapped.lastEditedAt <= existingLink.sourceLastEditedAt
@@ -642,6 +658,11 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
       }
 
       const targetProjectId = projectId ?? (await ensureInboxProject());
+
+      // Cuerpo de la página → Markdown. Los bloques ya están en memoria (el
+      // mismo `snapshot.blocks` que va al archivo): no se vuelve a leer disco.
+      // Sin cuerpo (o solo bloques vacíos/no soportados) → `null`, no "".
+      const description = blocksToMarkdown(snapshot.blocks) || null;
 
       // TODO lo que NO es base de datos se resuelve ANTES de abrir la
       // transacción: el snapshot ya se leyó de disco al principio del bucle y
@@ -683,12 +704,15 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
 
         let writtenId: string;
         if (current) {
+          // `created_at` NO va en el parche: una tarea existente conserva el
+          // suyo (y `updateTask` ni siquiera lo admite en su tipo).
           await updateTask(
             tx,
             current.id,
             {
               projectId: targetProjectId,
               title: mapped.title,
+              description,
               status: mapped.status,
               priority: mapped.priority,
               stage: mapped.stage,
@@ -702,6 +726,7 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
           const created = await createTask(tx, {
             projectId: targetProjectId,
             title: mapped.title,
+            description,
             status: mapped.status,
             priority: mapped.priority,
             stage: mapped.stage,
@@ -709,8 +734,19 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
             dueAt: mapped.dueAt,
             dependsOn: [],
             orderKey: orderKey!,
+            // Fecha de creación ORIGINAL de Notion (`Created time`); sin ella,
+            // el repositorio pone la de ahora.
+            ...(mapped.createdAt !== null ? { createdAt: mapped.createdAt } : {}),
           });
           writtenId = created.id;
+        }
+
+        // `Tags` → `task_labels`. Unión (no reemplazo): una etiqueta puesta a
+        // mano en AgentOS no se borra, porque poner etiquetas no toca
+        // `tasks.updated_at` y la guarda I1 no la vería. El repositorio
+        // normaliza (minúsculas, espacios) y deduplica: es su invariante.
+        if (mapped.labels.length > 0) {
+          await addTaskLabels(tx, writtenId, mapped.labels, actor);
         }
 
         if (personIds.length > 0) {

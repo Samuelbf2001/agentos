@@ -30,7 +30,11 @@ export interface TaskAssigneeSelectionInput {
   assignedBy?: string;
 }
 export type TaskCreateInput = Omit<NewTask, "id" | "createdAt" | "updatedAt" | "version"> &
-  TaskAssigneeSelectionInput & { id?: string };
+  TaskAssigneeSelectionInput & {
+    id?: string;
+    /** Fecha de creación original (epoch ms) para migraciones; solo se honra al crear. */
+    createdAt?: number;
+  };
 export type TaskAssignee = typeof s.taskAssignees.$inferSelect;
 export type NewTaskAssignee = typeof s.taskAssignees.$inferInsert;
 export type TaskLabel = typeof s.taskLabels.$inferSelect;
