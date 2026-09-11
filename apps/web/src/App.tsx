@@ -7,11 +7,18 @@
  * `perspectiveFor(location.pathname)` decide qué menú (`agencyNav` o
  * `clientNav`) se pinta en el `Sidebar`; en móvil se abre como cajón. La
  * `Topbar` sólo lleva la miga de pan y las acciones globales.
+ *
+ * En escritorio el menú lateral se puede ocultar (botón de la cabecera o
+ * Ctrl+B) y se recuerda en `localStorage`; el cajón móvil no cambia. Una
+ * vista puede además pedir el modo inmersivo (`useShell`): sin menú ni
+ * cabecera, todo el ancho y alto para el contenido (el lienzo de Notas).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { X } from "lucide-react";
 import { useStore } from "./state/store";
+import { useShell } from "./state/shell";
+import { esAtajoMenuLateral, guardarSidebarColapsado, leerSidebarColapsado } from "./lib/shell";
 import { Spinner, Toasts } from "./components/ui";
 import { Sidebar } from "./components/shell/Sidebar";
 import { Topbar } from "./components/shell/Topbar";
@@ -112,6 +119,14 @@ function Shell() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const inmersivo = useShell((s) => s.inmersivo);
+  // Menú lateral ocultable (escritorio): se lee al montar y cada cambio se
+  // escribe. Es estado del shell, no del store: ninguna vista depende de él.
+  const [sidebarColapsado, setSidebarColapsado] = useState(() => leerSidebarColapsado());
+  const toggleSidebar = useCallback(() => setSidebarColapsado((prev) => !prev), []);
+  useEffect(() => {
+    guardarSidebarColapsado(sidebarColapsado);
+  }, [sidebarColapsado]);
   const caps = useCapabilities();
   useTaskDeepLink();
 
@@ -120,12 +135,18 @@ function Shell() {
     return () => clearInterval(t);
   }, [refreshBadges]);
 
-  // `/` abre la búsqueda de tareas desde cualquier pantalla, salvo mientras se
-  // escribe en un campo.
+  // Ctrl+B alterna el menú lateral desde cualquier pantalla (también con el
+  // foco en un campo: es el mismo gesto que en VS Code). `/` abre la búsqueda
+  // de tareas, salvo mientras se escribe en un campo.
   const pathnameRef = useRef(location.pathname);
   pathnameRef.current = location.pathname;
   const onKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (esAtajoMenuLateral(event)) {
+        event.preventDefault();
+        toggleSidebar();
+        return;
+      }
       if (!caps.has("buscar")) return;
       if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
@@ -137,7 +158,7 @@ function Shell() {
       event.preventDefault();
       setSearchOpen(true);
     },
-    [caps],
+    [caps, toggleSidebar],
   );
 
   useEffect(() => {
@@ -171,9 +192,13 @@ function Shell() {
 
   return (
     <div className="flex h-full min-h-0 bg-canvas">
-      <div className="hidden md:block">
-        <Sidebar perspective={perspective} groups={groups} badges={badges} />
-      </div>
+      {/* Escritorio: colapsado o en modo inmersivo el menú no se pinta y el
+          contenido ocupa todo el ancho. El cajón móvil de abajo no cambia. */}
+      {!sidebarColapsado && !inmersivo ? (
+        <div id="menu-lateral" className="hidden md:block">
+          <Sidebar perspective={perspective} groups={groups} badges={badges} />
+        </div>
+      ) : null}
 
       {drawerOpen ? (
         <>
@@ -202,16 +227,20 @@ function Shell() {
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <Topbar
-          perspective={perspective}
-          caps={caps}
-          killSwitch={killSwitch}
-          onToggleKillSwitch={(next) => void setKillSwitch(next)}
-          onSearch={() => setSearchOpen(true)}
-          onOpenMenu={() => setDrawerOpen(true)}
-        />
+        {!inmersivo ? (
+          <Topbar
+            perspective={perspective}
+            caps={caps}
+            killSwitch={killSwitch}
+            onToggleKillSwitch={(next) => void setKillSwitch(next)}
+            onSearch={() => setSearchOpen(true)}
+            onOpenMenu={() => setDrawerOpen(true)}
+            sidebarColapsado={sidebarColapsado}
+            onToggleSidebar={toggleSidebar}
+          />
+        ) : null}
 
-        {killSwitch ? (
+        {killSwitch && !inmersivo ? (
           <div className="flex flex-wrap items-center justify-center gap-3 bg-broken-bg px-4 py-1.5 text-small text-broken">
             <span className="font-semibold">
               Los agentes están pausados: no arrancan runs nuevos. Reanúdalos desde el botón de la cabecera.
