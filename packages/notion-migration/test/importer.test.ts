@@ -17,6 +17,7 @@ import {
   listProjects,
   listTaskAssignees,
   listTaskEvents,
+  listTaskLabels,
   listTasks,
   openDb,
   runMigrations,
@@ -26,7 +27,7 @@ import {
 import { importNotionSnapshot } from "../src/importer.js";
 import { INBOX_PROJECT_NAME } from "../src/field-map.js";
 import { SnapshotReader } from "../src/snapshot-reader.js";
-import { projectPage, taskPage, writeSnapshotFixture } from "./fixtures.js";
+import { blocksTree, paragraphBlock, projectPage, taskPage, writeSnapshotFixture } from "./fixtures.js";
 
 const temporary: string[] = [];
 let db: AgentosSqliteDb;
@@ -590,6 +591,131 @@ describe("reimportar respeta ediciones humanas (I1)", () => {
     expect(report.quarantine.by_reason.editado_en_agentos_tras_importar).toBeUndefined();
     const after = (await listTasks(db)).find((t) => t.title === "Primera")!;
     expect(after.version).toBe(before.version);
+  });
+});
+
+describe("cuerpo, etiquetas y fecha de creación (enriquecer)", () => {
+  const CREATED = "2026-03-09T13:33:00.000Z";
+
+  /** Un proyecto y dos tareas: una con cuerpo y etiquetas, otra sin nada. */
+  function enrichedFixture(options: { body?: string; lastEditedTime?: string } = {}) {
+    const body = options.body ?? "Cuerpo original";
+    return {
+      projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+      tasks: [
+        taskPage({
+          id: "task-1",
+          title: "Con cuerpo",
+          projectIds: ["proj-1"],
+          tags: ["VENTAS", "Convenios", "ventas"],
+          createdTime: CREATED,
+          lastEditedTime: options.lastEditedTime,
+        }),
+        taskPage({ id: "task-2", title: "Sin cuerpo", projectIds: ["proj-1"], lastEditedTime: options.lastEditedTime }),
+      ],
+      blocks: {
+        "task-1": blocksTree("task-1", [paragraphBlock("p1", body), paragraphBlock("p2", "Segundo párrafo")]),
+      },
+    };
+  }
+
+  it("la primera importación rellena description (Markdown), etiquetas y created_at original", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+    const tasks = await listTasks(db);
+    const conCuerpo = tasks.find((t) => t.title === "Con cuerpo")!;
+    const sinCuerpo = tasks.find((t) => t.title === "Sin cuerpo")!;
+
+    expect(conCuerpo.description).toBe("Cuerpo original\n\nSegundo párrafo");
+    expect(sinCuerpo.description).toBeNull();
+    // El repositorio normaliza (minúsculas) y deduplica: "VENTAS" y "ventas" son una.
+    expect(await listTaskLabels(db, conCuerpo.id)).toEqual(["convenios", "ventas"]);
+    expect(await listTaskLabels(db, sinCuerpo.id)).toEqual([]);
+    expect(conCuerpo.createdAt).toBe(Date.parse(CREATED));
+    expect(sinCuerpo.createdAt).toBe(Date.parse("2026-01-01T00:00:00.000Z"));
+    // `updated_at` es el momento de la importación, no el de Notion: la guarda
+    // I1 (`updated_at > imported_at`) sigue funcionando.
+    expect(conCuerpo.updatedAt).toBeGreaterThan(conCuerpo.createdAt);
+  });
+
+  it("una segunda corrida SIN force no toca nada aunque el cuerpo haya cambiado en el snapshot", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+    const before = (await listTasks(db)).find((t) => t.title === "Con cuerpo")!;
+
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(enrichedFixture({ body: "Cuerpo nuevo" })),
+    });
+
+    expect(report.imported.tasks_updated).toBe(0);
+    const after = (await getTask(db, before.id))!;
+    expect(after.description).toBe("Cuerpo original\n\nSegundo párrafo");
+    expect(after.version).toBe(before.version);
+  });
+
+  it("con force actualiza description y etiquetas sin pisar created_at", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+    const before = (await listTasks(db)).find((t) => t.title === "Con cuerpo")!;
+    // Simula una importación anterior que no traía cuerpo ni etiquetas.
+    db.$client.prepare(`UPDATE tasks SET description = NULL WHERE id = ?`).run(before.id);
+    db.$client.prepare(`DELETE FROM task_labels WHERE task_id = ?`).run(before.id);
+
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(enrichedFixture({ body: "Cuerpo nuevo" })),
+      force: true,
+    });
+
+    expect(report.imported.tasks_updated).toBe(2);
+    expect(report.imported.tasks_created).toBe(0);
+    expect(report.quarantine.by_reason.editado_en_agentos_tras_importar).toBeUndefined();
+    const after = (await getTask(db, before.id))!;
+    expect(after.description).toBe("Cuerpo nuevo\n\nSegundo párrafo");
+    expect(after.createdAt).toBe(Date.parse(CREATED));
+    expect(after.version).toBe(before.version + 1);
+    expect(await listTaskLabels(db, before.id)).toEqual(["convenios", "ventas"]);
+    expect(await listTasks(db)).toHaveLength(2);
+  });
+
+  it("force NO relaja la cuarentena: una tarea editada en AgentOS tras importar no se pisa", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+    const task = (await listTasks(db)).find((t) => t.title === "Con cuerpo")!;
+    const link = (await findNotionImportLinkByObject(db, "task", task.id))!;
+    db.$client
+      .prepare(`UPDATE tasks SET description = 'Escrita a mano', updated_at = ? WHERE id = ?`)
+      .run(link.importedAt + 60_000, task.id);
+
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(enrichedFixture({ body: "Cuerpo nuevo" })),
+      force: true,
+    });
+
+    expect(report.quarantine.by_reason.editado_en_agentos_tras_importar).toBe(1);
+    expect((await getTask(db, task.id))!.description).toBe("Escrita a mano");
+    // La otra tarea (sin edición humana) sí se reescribió con force.
+    expect(report.imported.tasks_updated).toBe(1);
+  });
+
+  it("con force una etiqueta puesta a mano en AgentOS se conserva (unión, no reemplazo)", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+    const task = (await listTasks(db)).find((t) => t.title === "Con cuerpo")!;
+    db.$client
+      .prepare(`INSERT INTO task_labels (task_id, label, created_by, created_at) VALUES (?, 'manual', 'ernesto', ?)`)
+      .run(task.id, Date.now());
+
+    await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()), force: true });
+    expect(await listTaskLabels(db, task.id)).toEqual(["convenios", "manual", "ventas"]);
+  });
+
+  it("dry-run con force sigue sin escribir nada", async () => {
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(enrichedFixture()),
+      dryRun: true,
+      force: true,
+    });
+    expect(report.mode).toBe("dry_run");
+    expect(await listTasks(db)).toHaveLength(0);
   });
 });
 

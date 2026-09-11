@@ -25,15 +25,18 @@ import {
   listNotionMigrationRuns,
   listNotionQuarantine,
   listProjects,
+  findNotionImportLinkByObject,
+  getTask,
   listTaskAssignees,
   listTaskEvents,
+  listTaskLabels,
   listTasks,
   openConfiguredDb,
   type AgentosDb,
 } from "@agentos/db";
 import { importNotionSnapshot } from "../src/importer.js";
 import { SnapshotReader } from "../src/snapshot-reader.js";
-import { projectPage, taskPage, writeSnapshotFixture } from "./fixtures.js";
+import { blocksTree, paragraphBlock, projectPage, taskPage, writeSnapshotFixture } from "./fixtures.js";
 
 const PG_URL = process.env.AGENTOS_PG_URL;
 const describePg = describe.skipIf(!PG_URL);
@@ -200,6 +203,83 @@ describePg("importador de Notion sobre Postgres", () => {
     expect(cuarentena.some((row) => row.sourceKind === "identity")).toBe(true);
     const mappings = await listNotionIdentityMappings(db);
     expect(mappings.some((row) => row.validationState === "pending_review")).toBe(true);
+  });
+
+  describe("cuerpo, etiquetas, created_at y --force", () => {
+    const CREATED = "2026-03-09T13:33:00.000Z";
+    const sqlClient = () =>
+      (db as unknown as { $client: { unsafe(q: string, params?: unknown[]): Promise<unknown> } }).$client;
+
+    function enrichedFixture(options: { body?: string } = {}) {
+      return {
+        projects: [projectPage({ id: "proj-1", name: "Cliente Alfa" })],
+        tasks: [
+          taskPage({
+            id: "task-1",
+            title: "Con cuerpo",
+            projectIds: ["proj-1"],
+            tags: ["VENTAS", "Convenios"],
+            createdTime: CREATED,
+          }),
+          taskPage({ id: "task-2", title: "Sin cuerpo", projectIds: ["proj-1"] }),
+        ],
+        blocks: {
+          "task-1": blocksTree("task-1", [paragraphBlock("p1", options.body ?? "Cuerpo original", { bold: true })]),
+        },
+      };
+    }
+
+    it("primera importación: description en Markdown, etiquetas y created_at original", async () => {
+      await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+      const tasks = await listTasks(db);
+      const conCuerpo = tasks.find((t) => t.title === "Con cuerpo")!;
+      const sinCuerpo = tasks.find((t) => t.title === "Sin cuerpo")!;
+      expect(conCuerpo.description).toBe("**Cuerpo original**");
+      expect(sinCuerpo.description).toBeNull();
+      expect(await listTaskLabels(db, conCuerpo.id)).toEqual(["convenios", "ventas"]);
+      expect(conCuerpo.createdAt).toBe(Date.parse(CREATED));
+    });
+
+    it("segunda corrida sin force no toca nada; con force actualiza description y conserva created_at", async () => {
+      await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+      const before = (await listTasks(db)).find((t) => t.title === "Con cuerpo")!;
+
+      const plain = await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture({ body: "Nuevo" })) });
+      expect(plain.imported.tasks_updated).toBe(0);
+      expect((await getTask(db, before.id))!.description).toBe("**Cuerpo original**");
+
+      const forced = await importNotionSnapshot({
+        db,
+        reader: await fixtureReader(enrichedFixture({ body: "Nuevo" })),
+        force: true,
+      });
+      expect(forced.imported.tasks_updated).toBe(2);
+      expect(forced.imported.tasks_created).toBe(0);
+      const after = (await getTask(db, before.id))!;
+      expect(after.description).toBe("**Nuevo**");
+      expect(after.createdAt).toBe(Date.parse(CREATED));
+      expect(await listTaskLabels(db, before.id)).toEqual(["convenios", "ventas"]);
+      expect(await listTasks(db)).toHaveLength(2);
+    });
+
+    it("force no relaja la cuarentena de edición humana posterior", async () => {
+      await importNotionSnapshot({ db, reader: await fixtureReader(enrichedFixture()) });
+      const task = (await listTasks(db)).find((t) => t.title === "Con cuerpo")!;
+      const link = (await findNotionImportLinkByObject(db, "task", task.id))!;
+      await sqlClient().unsafe(`UPDATE tasks SET description = 'Escrita a mano', updated_at = $1 WHERE id = $2`, [
+        link.importedAt + 60_000,
+        task.id,
+      ]);
+
+      const report = await importNotionSnapshot({
+        db,
+        reader: await fixtureReader(enrichedFixture({ body: "Nuevo" })),
+        force: true,
+      });
+      expect(report.quarantine.by_reason.editado_en_agentos_tras_importar).toBe(1);
+      expect((await getTask(db, task.id))!.description).toBe("Escrita a mano");
+      expect(report.imported.tasks_updated).toBe(1);
+    });
   });
 
   it("dry-run no escribe ni una fila en Postgres", async () => {

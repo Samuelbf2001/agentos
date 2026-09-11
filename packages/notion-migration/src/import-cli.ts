@@ -29,9 +29,12 @@ function has(name: string): boolean {
 
 function help(): void {
   console.log(
-    "Uso: tsx src/import-cli.ts --snapshot <dir> --db <ruta> [--pilot tareas,proyectos] [--dry-run] [--org <nombre>] [--identity-map <archivo.json>] [--confirmo-produccion]",
+    "Uso: tsx src/import-cli.ts --snapshot <dir> --db <ruta> [--pilot tareas,proyectos] [--dry-run] [--force] [--org <nombre>] [--identity-map <archivo.json>] [--confirmo-produccion]",
   );
   console.log("Lee el snapshot en disco y escribe SOLO en la base indicada. No contacta a Notion.");
+  console.log(
+    "--force: vuelve a escribir las tareas/proyectos ya importados aunque Notion no haya cambiado (rellena descripción y etiquetas; conserva created_at). Una tarea editada a mano en AgentOS tras importar sigue en cuarentena.",
+  );
   console.log("--identity-map: JSON {\"notion_person_id_o_correo\": \"people.id\"} con decisiones del administrador.");
   console.log("--confirmo-produccion: obligatorio si --db apunta a data/agentos.db (la base viva).");
   console.log("--pg <url>: importa contra Postgres (equivale a AGENTOS_DB_DRIVER=postgres + AGENTOS_PG_URL).");
@@ -124,6 +127,7 @@ try {
     db,
     reader: new SnapshotReader(path.resolve(snapshotDir)),
     dryRun: has("--dry-run"),
+    force: has("--force"),
     ...(pilot ? { pilot } : {}),
     ...(option("--org") ? { organizationName: option("--org")! } : {}),
     ...(adminDecisions ? { adminDecisions } : {}),

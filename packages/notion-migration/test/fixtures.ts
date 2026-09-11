@@ -49,8 +49,46 @@ export function tasksSchema(): JsonObject {
       },
       Tags: { id: "tg", type: "multi_select", multi_select: { options: [{ name: "MKT" }] } },
       "HH estimadas": { id: "hh", type: "number", number: {} },
+      "Created time": { id: "ct", type: "created_time", created_time: {} },
     },
   };
+}
+
+/** Bloque de párrafo con la MISMA forma que devuelve la API de Notion. */
+export function paragraphBlock(id: string, text: string, options: { bold?: boolean } = {}): JsonObject {
+  return {
+    object: "block",
+    id,
+    has_children: false,
+    type: "paragraph",
+    paragraph: {
+      rich_text: [
+        {
+          type: "text",
+          text: { content: text, link: null },
+          annotations: {
+            bold: options.bold === true,
+            italic: false,
+            strikethrough: false,
+            underline: false,
+            code: false,
+            color: "default",
+          },
+          plain_text: text,
+          href: null,
+        },
+      ],
+      color: "default",
+    },
+  };
+}
+
+/**
+ * Árbol de bloques con la MISMA forma que escribe el capturador
+ * (`snapshot.ts#captureBlocks`): `{ block_id, responses, children }`.
+ */
+export function blocksTree(pageId: string, blocks: JsonObject[], children: JsonObject[] = []): JsonObject {
+  return { block_id: pageId, responses: [{ object: "list", results: blocks }], children };
 }
 
 export function projectsSchema(): JsonObject {
@@ -83,20 +121,26 @@ export interface TaskPageInput {
   tags?: string[];
   archived?: boolean;
   lastEditedTime?: string;
+  /** `created_time` de la página (y de la propiedad `Created time`). */
+  createdTime?: string;
 }
 
+export const DEFAULT_CREATED_TIME = "2026-01-01T00:00:00.000Z";
+
 export function taskPage(input: TaskPageInput): JsonObject {
+  const createdTime = input.createdTime ?? DEFAULT_CREATED_TIME;
   return {
     object: "page",
     id: input.id,
     url: `https://notion.example/${input.id}`,
     archived: input.archived === true,
     in_trash: false,
-    created_time: "2026-01-01T00:00:00.000Z",
+    created_time: createdTime,
     last_edited_time: input.lastEditedTime ?? "2026-02-02T00:00:00.000Z",
     parent: { type: "database_id", database_id: TASKS_DB_ID },
     properties: {
       Name: titleValue(input.title),
+      "Created time": { id: "ct", type: "created_time", created_time: createdTime },
       Estado: {
         id: "st",
         type: "status",
@@ -179,6 +223,8 @@ export async function writeSnapshotFixture(options: {
   runId?: string;
   /** Manifiestos de adjuntos por id de página (`files/<id>.json`). */
   files?: Record<string, unknown>;
+  /** Árbol de bloques por id de página (`blocks/<id>.json`); sin entrada → cuerpo vacío. */
+  blocks?: Record<string, unknown>;
 }): Promise<SnapshotFixture> {
   const base = await mkdtemp(path.join(os.tmpdir(), "agentos-notion-fixture-"));
   const runId = options.runId ?? "notion-fixture-run";
@@ -206,7 +252,7 @@ export async function writeSnapshotFixture(options: {
       );
       await writeFile(
         path.join(sourceRoot, "blocks", `${id}.json`),
-        JSON.stringify({ block_id: id, responses: [{ object: "list", results: [] }], children: [] }, null, 2),
+        JSON.stringify(options.blocks?.[id] ?? blocksTree(id, []), null, 2),
       );
       await writeFile(
         path.join(sourceRoot, "comments", `${id}.json`),

@@ -28,6 +28,8 @@ export {
   NOTION_STATUS_TO_TASK_STATUS,
   plainText,
   PROJECT_FIELDS_WITHOUT_TARGET,
+  readCreatedTime,
+  readMultiSelectNames,
   readPeople,
   readRelationIds,
   resolveIdentity,
@@ -60,3 +62,6 @@ export {
 } from "./pilot-selection.js";
 
 export { importNotionSnapshot, type ImportOptions, type ImportReport, type PilotLimits } from "./importer.js";
+
+// Cuerpo de página → Markdown (lo que va a `tasks.description`).
+export { blocksToMarkdown, richTextToMarkdown } from "./blocks-to-markdown.js";
