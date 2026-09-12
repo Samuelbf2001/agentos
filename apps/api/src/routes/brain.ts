@@ -470,6 +470,14 @@ function buildModules(sources: BrainSource[]): BrainModule[] {
     ["wiki", "LLM Wiki / segundo cerebro", "Conocimiento y fuentes del 2brain.", "llm_wiki"],
     ["notion-migration", "Migración de Notion · Tasks y Projects", "Snapshot preservable de las dos páginas de origen.", "notion"],
     ["crm-whatsapp", "CRM y conversaciones de WhatsApp", "Conversaciones y agregados remotos en modo lectura.", "whatsapphub"],
+    // Módulos internalizados de 2brain (cimientos): la lógica llega módulo por
+    // módulo, pero ya cuentan en el panorama con su propia fuente.
+    ["conversaciones", "Conversaciones", "Chats de WhatsApp del agente 2brain y sus acciones.", "whatsapphub"],
+    ["voice_notes", "Notas de voz", "Notas transcritas y sincronizadas a Notion.", "whatsapphub"],
+    ["recorder", "Grabadora", "Graba una nota de voz desde el móvil.", "whatsapphub"],
+    ["videos", "Videos", "Transcripción de videos por URL.", "whatsapphub"],
+    ["graph", "Grafo", "Contactos, empresas, reuniones y temas conectados.", "whatsapphub"],
+    ["agent", "Agente 2brain", "Estado, prompt y herramientas del agente conversacional.", "whatsapphub"],
   ];
   return moduleDefinitions.map(([id, label, description, sourceId]) => ({
     id,

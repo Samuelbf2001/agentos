@@ -18,6 +18,12 @@ import ContextView from "../src/views/ContextView";
 import AdminView from "../src/views/AdminView";
 import { AgentsSection } from "../src/views/AgentsSection";
 import LoginView from "../src/views/LoginView";
+import ConversacionesView from "../src/views/brain/ConversacionesView";
+import NotasVozView from "../src/views/brain/NotasVozView";
+import GrabadoraView from "../src/views/brain/GrabadoraView";
+import VideosView from "../src/views/brain/VideosView";
+import GrafoView from "../src/views/brain/GrafoView";
+import AgenteView from "../src/views/brain/AgenteView";
 import {
   agents,
   makeApproval,
@@ -145,6 +151,11 @@ const baseRoutes = [
     },
   },
   { path: /^\/api\/tasks\/[^/]+$/, body: { task: makeTask(), events: [], artifacts: [], runs: [] } },
+  // Catch-all de los módulos de 2brain (cimientos): las vistas futuras aún no
+  // hacen fetch, pero cuando lo hagan no deben romper este smoke. Va DESPUÉS
+  // de "/api/brain/overview" para no tapar su cuerpo real (el matching es en
+  // orden y se queda con la primera ruta que encaja).
+  { path: /^\/api\/brain\/.*/, body: {} },
 ];
 
 describe("smoke de vistas", () => {
@@ -280,5 +291,35 @@ describe("smoke de vistas", () => {
   it("AdminView pinta la configuración", async () => {
     ui(<AdminView />);
     expect(await screen.findByText("app_config (semáforos y presupuestos)")).toBeTruthy();
+  });
+
+  it("ConversacionesView pinta su título (cimiento del módulo)", async () => {
+    ui(<ConversacionesView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Conversaciones" })).toBeTruthy();
+  });
+
+  it("NotasVozView pinta su título (cimiento del módulo)", async () => {
+    ui(<NotasVozView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Notas de voz" })).toBeTruthy();
+  });
+
+  it("GrabadoraView pinta su título (cimiento del módulo)", async () => {
+    ui(<GrabadoraView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Grabadora" })).toBeTruthy();
+  });
+
+  it("VideosView pinta su título (cimiento del módulo)", async () => {
+    ui(<VideosView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Videos" })).toBeTruthy();
+  });
+
+  it("GrafoView pinta su título (cimiento del módulo)", async () => {
+    ui(<GrafoView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Grafo" })).toBeTruthy();
+  });
+
+  it("AgenteView pinta su título (cimiento del módulo)", async () => {
+    ui(<AgenteView />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Agente 2brain" })).toBeTruthy();
   });
 });

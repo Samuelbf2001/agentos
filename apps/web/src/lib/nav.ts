@@ -53,7 +53,12 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/** El "2brain" de Sixteam vive hoy en WhatsAppHub, fuera de AgentOS. */
+/**
+ * Los seis módulos de 2brain (Conversaciones, Notas de voz, Grabadora, Videos,
+ * Grafo, Agente 2brain) ya son rutas internas de AgentOS. `BRAIN_URL` solo
+ * queda para los enlaces de cortesía "Abrir en 2brain" (p. ej. en Reuniones),
+ * que apuntan al hub original mientras conviene conservarlos.
+ */
 export const BRAIN_URL =
   import.meta.env.VITE_AGENTOS_2BRAIN_URL ?? "https://whatsfull.sixteam.pro";
 
@@ -118,44 +123,46 @@ export function agencyNav(): NavGroup[] {
         {
           id: "conversaciones",
           label: "Conversaciones",
-          to: `${BRAIN_URL}/conversaciones`,
+          to: paths.brainConversaciones(),
           icon: MessageSquare,
-          external: true,
+          cap: "nav:2brain",
         },
         {
           id: "notas",
           label: "Notas de voz",
-          to: `${BRAIN_URL}/notas`,
+          to: paths.brainNotasVoz(),
           icon: Mic,
-          external: true,
+          cap: "nav:2brain",
+          match: (p) => p.startsWith("/2brain/notas-voz"),
         },
         {
           id: "grabadora",
           label: "Grabadora",
-          to: `${BRAIN_URL}/recorder`,
+          to: paths.brainGrabadora(),
           icon: AudioLines,
-          external: true,
+          cap: "nav:2brain",
         },
         {
           id: "videos",
           label: "Videos",
-          to: `${BRAIN_URL}/video-ingest`,
+          to: paths.brainVideos(),
           icon: Clapperboard,
-          external: true,
+          cap: "nav:2brain",
+          match: (p) => p.startsWith("/2brain/videos"),
         },
         {
           id: "grafo",
           label: "Grafo",
-          to: `${BRAIN_URL}/grafo`,
+          to: paths.brainGrafo(),
           icon: Waypoints,
-          external: true,
+          cap: "nav:2brain",
         },
         {
           id: "agente",
           label: "Agente 2brain",
-          to: `${BRAIN_URL}/agente`,
+          to: paths.brainAgente(),
           icon: Bot,
-          external: true,
+          cap: "nav:2brain",
         },
       ],
     },

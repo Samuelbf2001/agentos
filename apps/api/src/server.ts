@@ -23,6 +23,7 @@ import { registerNotificationRoutes } from "./routes/notifications.js";
 import { registerNoteRoutes } from "./routes/notes.js";
 import { registerNotionOriginRoutes } from "./routes/notion-origin.js";
 import { registerBrainRoutes } from "./routes/brain.js";
+import { registerBrainModuleRoutes } from "./routes/brain/index.js";
 import { registerOrgGraphRoutes } from "./routes/org-graph.js";
 import { registerProcessRoutes } from "./routes/processes.js";
 import { registerToolCatalogRoutes } from "./routes/tool-catalog.js";
@@ -130,6 +131,7 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   registerNoteRoutes(app, ctx);
   registerNotionOriginRoutes(app, ctx);
   registerBrainRoutes(app, ctx);
+  registerBrainModuleRoutes(app, ctx);
   registerOrgGraphRoutes(app, ctx);
   registerProcessRoutes(app, ctx);
   registerToolCatalogRoutes(app, ctx);

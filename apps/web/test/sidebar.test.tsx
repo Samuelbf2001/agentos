@@ -9,7 +9,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, useLocation } from "react-router-dom";
 import App from "../src/App";
 import { useStore } from "../src/state/store";
-import { BRAIN_URL } from "../src/lib/nav";
 import { agents, makeTask, mockFetch, person, project, projectB } from "./helpers";
 
 const locationProbe: { pathname: string } = { pathname: "" };
@@ -103,16 +102,16 @@ describe("sidebar y cambio de perspectiva", () => {
     expect(sidebar.queryByText("2brain")).toBeNull();
   });
 
-  it("los enlaces de 2brain abren en pestaña nueva y apuntan a la URL de 2brain", async () => {
+  it("los módulos de 2brain son rutas internas", async () => {
     const { container } = renderApp("/hoy");
     await screen.findByRole("navigation", { name: "Navegación principal" });
     const aside = container.querySelector("aside") as HTMLElement;
     const sidebar = within(aside);
 
-    for (const label of ["Conversaciones", "Notas de voz", "Videos", "Grafo", "Agente 2brain"]) {
+    for (const label of ["Conversaciones", "Notas de voz", "Grabadora", "Videos", "Grafo", "Agente 2brain"]) {
       const link = sidebar.getByRole("link", { name: label });
-      expect(link.getAttribute("target")).toBe("_blank");
-      expect(link.getAttribute("href")).toMatch(new RegExp(`^${BRAIN_URL}`));
+      expect(link.getAttribute("target")).toBeNull();
+      expect(link.getAttribute("href")).toMatch(/^\/2brain\//);
     }
   });
 

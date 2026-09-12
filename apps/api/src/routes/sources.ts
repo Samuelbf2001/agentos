@@ -8,14 +8,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import {
-  AgentosError,
-  ErrorCodes,
-  errors,
-  ProjectSourceExternalRef,
-  ProjectSourceKind,
-  SourceConnectorError,
-} from "@agentos/shared";
+import { errors, ProjectSourceExternalRef, ProjectSourceKind } from "@agentos/shared";
 import {
   appendAudit,
   createProjectSource,
@@ -27,6 +20,7 @@ import {
 import { ingestProjectSource } from "@agentos/tools";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
+import { asDomainError, requireConnector } from "./brain/shared.js";
 
 const LinkSourceBody = z.object({
   kind: ProjectSourceKind,
@@ -105,24 +99,6 @@ function normalizeProcessingItem(raw: Record<string, unknown>): MeetingProcessin
     wiki_synced_at: dateOrNull(raw.wikiSyncedAt),
     processing_error: typeof raw.processingError === "string" ? displayText(raw.processingError, "", 500) || null : null,
   };
-}
-
-function requireConnector(ctx: ApiContext) {
-  if (!ctx.whatsappHub.isConfigured()) {
-    throw new AgentosError(
-      ErrorCodes.PROVIDER_NOT_CONFIGURED,
-      "Conector WhatsAppHub no configurado: define AGENTOS_WHATSAPPHUB_URL y AGENTOS_WHATSAPPHUB_KEY en el entorno de apps/api",
-    );
-  }
-  return ctx.whatsappHub;
-}
-
-/** Los errores del conector viajan como provider_error (502) con mensaje legible. */
-function asDomainError(err: unknown): unknown {
-  if (err instanceof SourceConnectorError) {
-    return new AgentosError(ErrorCodes.PROVIDER_ERROR, err.message, { connector_code: err.code });
-  }
-  return err;
 }
 
 export function registerSourcesRoutes(app: FastifyInstance, ctx: ApiContext): void {

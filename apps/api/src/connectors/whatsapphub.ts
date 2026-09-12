@@ -143,6 +143,18 @@ function extractMarkdown(raw: string, contentType: string | null): string {
   return raw;
 }
 
+/** Serializa la query de los métodos genéricos; omite claves `undefined`. */
+function serializeQuery(query?: Record<string, string | number | boolean | undefined>): string {
+  if (!query) return "";
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined) continue;
+    qs.set(key, String(value));
+  }
+  const suffix = qs.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
 export function createWhatsAppHubConnector(
   opts: WhatsAppHubConnectorOptions = {},
 ): WhatsAppHubConnector {
@@ -151,7 +163,22 @@ export function createWhatsAppHubConnector(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchFn = opts.fetchFn ?? fetch;
 
-  async function request(path: string): Promise<Response> {
+  /**
+   * Núcleo de toda llamada autenticada al hub. Los métodos genéricos
+   * (`hubGetJson`/`hubSendJson`/`hubGetText`/`hubGetRaw`, para los seis
+   * módulos de 2brain) reutilizan esta misma función con `opts`; las llamadas
+   * sin `opts` (los 5 endpoints históricos) se comportan exactamente igual que
+   * antes: GET, solo el header `x-wiki-key`, timeout por defecto.
+   */
+  async function request(
+    path: string,
+    callOpts: {
+      method?: string;
+      body?: unknown;
+      timeoutMs?: number;
+      headers?: Record<string, string>;
+    } = {},
+  ): Promise<Response> {
     if (!baseUrl || !apiKey) {
       throw new SourceConnectorError(
         "not_configured",
@@ -159,10 +186,18 @@ export function createWhatsAppHubConnector(
       );
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), callOpts.timeoutMs ?? timeoutMs);
     try {
       const res = await fetchFn(`${baseUrl}${path}`, {
-        headers: { "x-wiki-key": apiKey },
+        method: callOpts.method ?? "GET",
+        headers: {
+          "x-wiki-key": apiKey,
+          // `hubSendJson` manda cuerpo JSON: el content-type por defecto se
+          // puede sobrescribir vía `headers`, pero nadie más lo necesita hoy.
+          ...(callOpts.body !== undefined ? { "content-type": "application/json" } : {}),
+          ...(callOpts.headers ?? {}),
+        },
+        ...(callOpts.body !== undefined ? { body: JSON.stringify(callOpts.body) } : {}),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -178,7 +213,7 @@ export function createWhatsAppHubConnector(
       if (err instanceof Error && err.name === "AbortError") {
         throw new SourceConnectorError(
           "timeout",
-          `WhatsAppHub no respondió en ${timeoutMs} ms (${path}). El VPS puede estar saturado; reintenta más tarde.`,
+          `WhatsAppHub no respondió en ${callOpts.timeoutMs ?? timeoutMs} ms (${path}). El VPS puede estar saturado; reintenta más tarde.`,
         );
       }
       // Mensaje legible SIN detalles internos (y jamás la key).
@@ -235,13 +270,30 @@ export function createWhatsAppHubConnector(
     }
   }
 
-  async function requestJson(path: string): Promise<unknown> {
-    const res = await request(path);
+  async function requestJson(
+    path: string,
+    opts: { method?: string; body?: unknown; timeoutMs?: number } = {},
+  ): Promise<unknown> {
+    const res = await request(path, opts);
     try {
       return await res.json();
     } catch {
       throw new SourceConnectorError("http_error", `WhatsAppHub devolvió una respuesta no-JSON en ${path}`);
     }
+  }
+
+  async function requestText(path: string, opts: { timeoutMs?: number } = {}): Promise<string> {
+    const res = await request(path, opts);
+    return res.text();
+  }
+
+  async function requestRaw(
+    path: string,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<{ status: number; contentType: string | null; body: Uint8Array }> {
+    const res = await request(path, opts);
+    const buffer = await res.arrayBuffer();
+    return { status: res.status, contentType: res.headers.get("content-type"), body: new Uint8Array(buffer) };
   }
 
   async function requestOverviewJson(path: string): Promise<unknown> {
@@ -300,6 +352,30 @@ export function createWhatsAppHubConnector(
 
     async getDossierMarkdown(contactId) {
       return requestMarkdown(`/api/wiki/dossier/${encodeURIComponent(contactId)}`);
+    },
+
+    // ── Genéricos para los módulos de 2brain (conversaciones, notas de voz,
+    // grabadora, videos, grafo, agente): la ruta que llama valida la forma con
+    // Zod, este conector solo transporta la petición autenticada. ───────────
+
+    async hubGetJson(path, query, opts) {
+      return requestJson(`${path}${serializeQuery(query)}`, { timeoutMs: opts?.timeoutMs });
+    },
+
+    async hubSendJson(method, path, body, opts) {
+      return requestJson(path, {
+        method,
+        body,
+        timeoutMs: opts?.timeoutMs,
+      });
+    },
+
+    async hubGetText(path, opts) {
+      return requestText(path, { timeoutMs: opts?.timeoutMs });
+    },
+
+    async hubGetRaw(path, opts) {
+      return requestRaw(path, { timeoutMs: opts?.timeoutMs });
     },
   };
 }
