@@ -23,7 +23,7 @@
 import { generateText } from "ai";
 import { errors } from "@agentos/shared";
 import { getProviderProfileBySlug, type AgentosDb } from "@agentos/db";
-import { ProviderRegistry } from "@agentos/providers";
+import { normalizeUsage, ProviderRegistry, type TokenUsage } from "@agentos/providers";
 import { asProviderUnavailable } from "../notes/transcripcion.js";
 
 export const DEFAULT_ASSIST_PROVIDER_SLUG = "anthropic_api";
@@ -59,7 +59,7 @@ export interface TaskAssistInput {
 
 /** Frontera con el modelo. Los tests inyectan un doble. */
 export interface TaskAssistant {
-  complete(input: TaskAssistInput): Promise<{ text: string; model: string }>;
+  complete(input: TaskAssistInput): Promise<{ text: string; model: string; usage: TokenUsage | null }>;
 }
 
 export interface ModelTaskAssistantOptions {
@@ -73,7 +73,7 @@ export function createModelTaskAssistant(options: ModelTaskAssistantOptions): Ta
   const registry = options.registry ?? new ProviderRegistry(env);
 
   return {
-    async complete(input: TaskAssistInput): Promise<{ text: string; model: string }> {
+    async complete(input: TaskAssistInput): Promise<{ text: string; model: string; usage: TokenUsage | null }> {
       const slug = assistProviderSlug(env);
       const modelId = assistModelId(env);
       const profile = await getProviderProfileBySlug(options.db, slug);
@@ -124,7 +124,10 @@ export function createModelTaskAssistant(options: ModelTaskAssistantOptions): Ta
           { slug, model: modelId },
         );
       }
-      return { text, model: modelId };
+      const usage = normalizeUsage(result.usage);
+      // null cuando el proveedor no informó ni entrada ni salida: no hay nada que mostrar.
+      const usageOrNull = usage.tokensIn === null && usage.tokensOut === null ? null : usage;
+      return { text, model: modelId, usage: usageOrNull };
     },
   };
 }

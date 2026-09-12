@@ -52,6 +52,7 @@ const ASSIST_OK = {
     images: 2,
     sibling_tasks: 0,
     model: "test",
+    usage: { input_tokens: 1000, output_tokens: 200, cost_usd: 0.004 },
   },
 };
 
@@ -82,6 +83,7 @@ describe("FieldAssist", () => {
     const panel = await screen.findByTestId("field-assist-panel");
     expect(panel.textContent).toContain("Consultó 3 documentos de ACME S.A.");
     expect(panel.textContent).toContain("2 imágenes");
+    expect(panel.textContent).toContain("~$0.0040");
     expect(onApply).not.toHaveBeenCalled();
 
     const assist = calls.find((call) => call.url.endsWith("/api/ai/task-assist"));
@@ -147,7 +149,9 @@ describe("FieldAssist", () => {
     fireEvent.click(screen.getByTestId("field-assist-prompt"));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Trabaja la tarea…"));
-    expect(useStore.getState().toasts.some((t) => t.text.includes("Prompt copiado"))).toBe(true);
+    expect(
+      useStore.getState().toasts.some((t) => t.text.includes("Prompt copiado") && t.text.includes("~$0.0040")),
+    ).toBe(true);
   });
 
   it("si el portapapeles falla, el prompt se enseña para copiarlo a mano", async () => {

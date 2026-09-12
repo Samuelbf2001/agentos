@@ -17,8 +17,10 @@
 import type { FastifyInstance } from "fastify";
 import { appendAudit } from "@agentos/db";
 import { ErrorCodes, isAgentosError } from "@agentos/shared";
+import type { TokenUsage } from "@agentos/providers";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
+import { estimarCosteUsd } from "../tasks/assist-pricing.js";
 import { TaskAssistBody, buildTaskAssistContext } from "../tasks/assist-context.js";
 import {
   SYSTEM_ENRIQUECER,
@@ -50,6 +52,7 @@ export function registerAiRoutes(app: FastifyInstance, ctx: ApiContext): void {
 
     let text: string;
     let model: string;
+    let usage: TokenUsage | null = null;
     try {
       const completion = await ctx.taskAssistant.complete({
         system,
@@ -61,6 +64,7 @@ export function registerAiRoutes(app: FastifyInstance, ctx: ApiContext): void {
       });
       text = completion.text;
       model = completion.model;
+      usage = completion.usage;
     } catch (err) {
       if (body.mode === "execution_prompt") {
         // Plan B determinista: misma estructura, sin modelo.
@@ -81,6 +85,19 @@ export function registerAiRoutes(app: FastifyInstance, ctx: ApiContext): void {
       }
     }
 
+    // En modo plantilla no hubo llamada al modelo: coste cero, no "sin datos".
+    // Fuera de plantilla, sin usage (el proveedor no lo informó) es `null`, nunca cero inferido.
+    const usageInfo =
+      model === MODELO_PLANTILLA
+        ? { input_tokens: 0, output_tokens: 0, cost_usd: 0 }
+        : usage
+          ? {
+              input_tokens: usage.tokensIn ?? 0,
+              output_tokens: usage.tokensOut ?? 0,
+              cost_usd: estimarCosteUsd(model, usage),
+            }
+          : null;
+
     await appendAudit(db, {
       actor: personActor(req),
       source: "ui",
@@ -96,6 +113,9 @@ export function registerAiRoutes(app: FastifyInstance, ctx: ApiContext): void {
         images: assistContext.images.length,
         sibling_tasks: assistContext.siblingTasks.length,
         chars: text.length,
+        input_tokens: usageInfo?.input_tokens ?? null,
+        output_tokens: usageInfo?.output_tokens ?? null,
+        cost_usd: usageInfo?.cost_usd ?? null,
       },
     });
 
@@ -108,6 +128,7 @@ export function registerAiRoutes(app: FastifyInstance, ctx: ApiContext): void {
         images: assistContext.images.length,
         sibling_tasks: assistContext.siblingTasks.length,
         model,
+        usage: usageInfo,
       },
     };
   });

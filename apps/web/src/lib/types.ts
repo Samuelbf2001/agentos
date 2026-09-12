@@ -1022,6 +1022,8 @@ export interface TaskAssistContext {
   images: number;
   sibling_tasks: number;
   model: string;
+  /** null cuando el proveedor no informó tokens; en modo plantilla es coste 0 explícito. */
+  usage?: { input_tokens: number; output_tokens: number; cost_usd: number | null } | null;
 }
 
 export interface TaskAssistResponse {

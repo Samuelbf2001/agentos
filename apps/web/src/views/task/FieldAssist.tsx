@@ -31,6 +31,13 @@ const FIELD_LABELS: Record<TaskAssistField, string> = {
 const ICON_BUTTON =
   "press inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-tight text-small text-faint hover:bg-surface-2 hover:text-link focus:outline-none focus:ring-2 focus:ring-link disabled:cursor-not-allowed disabled:opacity-45";
 
+/** `~$0.0123`, o `<$0.0001` cuando el coste es tan bajo que redondearía a 0. */
+export function formatCosteUsd(cost: number | null | undefined): string | null {
+  if (cost === null || cost === undefined) return null;
+  if (cost > 0 && cost < 0.0001) return "<$0.0001";
+  return `~$${cost.toFixed(4)}`;
+}
+
 export function contextoLegible(context: TaskAssistContext | null): string {
   if (!context) return "";
   const parts = [`Consultó ${context.docs} ${context.docs === 1 ? "documento" : "documentos"} de ${context.org_name}`];
@@ -38,6 +45,8 @@ export function contextoLegible(context: TaskAssistContext | null): string {
   if (context.sibling_tasks > 0) {
     parts.push(`${context.sibling_tasks} ${context.sibling_tasks === 1 ? "tarea" : "tareas"} del proyecto`);
   }
+  const coste = formatCosteUsd(context.usage?.cost_usd);
+  if (coste !== null) parts.push(coste);
   return parts.join(" · ");
 }
 
@@ -72,7 +81,8 @@ export function ExecutionPromptButton({
       });
       try {
         await navigator.clipboard.writeText(result.text);
-        pushToast("ok", "Prompt copiado, pégalo en Claude Code");
+        const coste = formatCosteUsd(result.context.usage?.cost_usd);
+        pushToast("ok", `Prompt copiado, pégalo en Claude Code${coste ? ` · ${coste}` : ""}`);
       } catch {
         // Sin permiso de portapapeles (o sin HTTPS): se enseña el texto.
         setFallback(result.text);

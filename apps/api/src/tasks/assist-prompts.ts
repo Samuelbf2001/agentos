@@ -48,6 +48,24 @@ const NOMBRE_CAMPO: Record<TaskAssistFieldT, string> = {
   definition_of_done: "definición de terminado",
 };
 
+/**
+ * Sección `## Cómo trabajar`: metodología fija para la sesión de Claude Code
+ * que pega este prompt. Va SIEMPRE, literal, entre `## Detalle y pasos` y
+ * `## Definición de terminado` — ni el modelo (`SYSTEM_PROMPT_EJECUCION`) ni la
+ * plantilla determinista (`plantillaPromptEjecucion`) la reescriben.
+ */
+export const COMO_TRABAJAR_LINEAS = [
+  "## Cómo trabajar",
+  "- Empieza fijando las metas de esta sesión con `/goal` (3 a 5 metas verificables, sacadas de la definición de terminado) y ve marcándolas a medida que se cumplan.",
+  "- Avanza en secuencia, un punto a la vez. Antes de cada paso di en una línea qué vas a hacer y por qué, sin términos técnicos innecesarios.",
+  "- Resume. No expliques en detalle salvo que se te pida: respuestas cortas para gastar menos tokens.",
+  "- Pregunta los datos que te falten (accesos, decisiones, criterios) agrupados en un solo mensaje, antes de asumir.",
+  "- Cuando menciones una tarea, un proyecto o un documento, enlázalo (las URL están en Referencias).",
+  "- Lo que haya que hacer en la web (CRM, paneles, formularios) hazlo con la extensión del navegador. Lo que sea muy difícil o tarde demasiado, pídeselo a una persona con instrucciones claras en vez de insistir.",
+  "- Delega el trabajo sucio (buscar, leer archivos largos, borradores, pruebas repetitivas) a subagentes de menor consumo (Sonnet o Haiku); tú supervisas, revisas y apruebas antes de aplicar cualquier cambio.",
+  "- No hagas nada irreversible (borrar, publicar, enviar, desplegar, pagar) sin confirmación explícita.",
+];
+
 // ── Sistema ─────────────────────────────────────────────────────────────────
 
 export const SYSTEM_ENRIQUECER = [
@@ -97,8 +115,16 @@ export const SYSTEM_PROMPT_EJECUCION = [
   "documentos que te doy. Nada que no esté en el contexto.",
   "`## Objetivo` — una o dos frases: qué se consigue cuando esto esté hecho.",
   "`## Detalle y pasos` — pasos numerados y concretos.",
+  "`## Cómo trabajar` — va SIEMPRE, con este contenido EXACTO, sin reescribirlo,",
+  "resumirlo ni cambiarle una palabra (cópialo tal cual, viñeta por viñeta):",
+  "",
+  ...COMO_TRABAJAR_LINEAS,
+  "",
   "`## Definición de terminado` — criterios verificables, uno por línea.",
-  "`## Referencias` — enlaces e imágenes con URL ABSOLUTA, tal como te las doy.",
+  "`## Referencias` — enlaces e imágenes con URL ABSOLUTA. Te los doy YA armados",
+  "en el contexto (tarea, proyecto, documentos y lo que traiga el borrador):",
+  "cópialos TAL CUAL, uno por línea, en el orden en que te llegan. No inventes",
+  "ninguno ni los reescribas.",
   "`## Restricciones` — no inventar datos; preguntar antes de cualquier decisión",
   "irreversible; tocar sólo lo necesario para esta tarea.",
   "`## Al terminar` — resumen de lo hecho y qué evidencia adjuntar como",
@@ -279,7 +305,12 @@ export function construirPromptEjecucion(
   return lineas.join("\n");
 }
 
-/** Enlaces e imágenes del borrador y de los artefactos, ya absolutos. */
+/**
+ * Enlaces del contexto (tarea, proyecto, documentos) más los del borrador y de
+ * los artefactos, todos ya absolutos. En este orden: tarea en AgentOS (si ya
+ * tiene id), proyecto, documentos del proyecto, cada doc citado (máx. 5) y
+ * luego lo que ya había en el Markdown (enlaces, imágenes locales y externas).
+ */
 export function referenciasAbsolutas(
   ctx: TaskAssistContext,
   body: TaskAssistBodyT,
@@ -293,6 +324,15 @@ export function referenciasAbsolutas(
       out.push(valor);
     }
   };
+
+  const taskId = ctx.task?.id ?? body.task_id;
+  if (taskId) push(`Tarea en AgentOS: ${base}/tareas?tarea=${taskId}`);
+  if (ctx.project) {
+    push(`Proyecto: ${base}/proyectos/${ctx.project.id}/ruta`);
+    push(`Documentos del proyecto: ${base}/proyectos/${ctx.project.id}/contexto/documentos`);
+  }
+  for (const doc of ctx.docs.slice(0, 5)) push(`[doc:${doc.id}] ${doc.title}`);
+
   const textos = [body.draft?.description ?? "", ctx.task?.description ?? ""];
   for (const texto of textos) {
     for (const match of texto.matchAll(/(!?)\[([^\]]*)\]\(\s*<?([^)\s<>]+)>?[^)]*\)/g)) {
@@ -363,6 +403,8 @@ export function plantillaPromptEjecucion(
       ? absolutizarMarkdown(descripcion, base)
       : "1. (Sin detalle en la tarea: revisa el contexto del cliente y pregunta lo que falte antes de actuar.)",
   );
+
+  lineas.push("", ...COMO_TRABAJAR_LINEAS);
 
   lineas.push("");
   lineas.push("## Definición de terminado");

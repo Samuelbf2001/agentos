@@ -39,7 +39,11 @@ function fakeAssistant(text = "TEXTO DEL MODELO"): AssistDouble {
     calls,
     async complete(input) {
       calls.push(input);
-      return { text, model: "modelo-doble" };
+      return {
+        text,
+        model: "claude-sonnet-5",
+        usage: { tokensIn: 1000, tokensOut: 200, tokensCacheRead: null, tokensCacheWrite: null },
+      };
     },
   };
 }
@@ -172,6 +176,7 @@ describe("POST /api/ai/task-assist", () => {
         images: number;
         sibling_tasks: number;
         model: string;
+        usage: { input_tokens: number; output_tokens: number; cost_usd: number | null } | null;
       };
     };
     expect(body.text).toBe("## Contexto\nTexto mejorado por el modelo.");
@@ -180,7 +185,9 @@ describe("POST /api/ai/task-assist", () => {
     expect(body.context.docs).toBe(2);
     expect(body.context.images).toBe(1); // la externa se cuenta aparte y no se lee
     expect(body.context.sibling_tasks).toBe(1);
-    expect(body.context.model).toBe("modelo-doble");
+    expect(body.context.model).toBe("claude-sonnet-5");
+    // 1000 tokens de entrada + 200 de salida a la tarifa de claude-sonnet-5 (2/10 por Mtok).
+    expect(body.context.usage).toEqual({ input_tokens: 1000, output_tokens: 200, cost_usd: 0.004 });
 
     // El doble recibió los bytes reales de la imagen local, una sola vez.
     expect(assistant.calls).toHaveLength(1);
@@ -263,12 +270,20 @@ describe("POST /api/ai/task-assist", () => {
       payload: { mode: "execution_prompt", task_id: task.id, draft: {} },
     });
     expect(res.statusCode).toBe(200);
-    expect((res.json() as { context: { model: string } }).context.model).toBe("modelo-doble");
+    const body = res.json() as {
+      context: { model: string; usage: { input_tokens: number; output_tokens: number; cost_usd: number | null } | null };
+    };
+    expect(body.context.model).toBe("claude-sonnet-5");
+    expect(body.context.usage).toEqual({ input_tokens: 1000, output_tokens: 200, cost_usd: 0.004 });
 
     const call = assistant.calls[0]!;
     expect(call.system).toContain("# Tarea: <título>");
     expect(call.system).toContain("## Definición de terminado");
     expect(call.system).toContain("## Al terminar");
+    // La metodología de trabajo va SIEMPRE, literal, en el sistema.
+    expect(call.system).toContain("## Cómo trabajar");
+    expect(call.system).toContain("/goal");
+    expect(call.system).toContain("subagentes");
     expect(call.prompt).toContain("Rehacer el flujo de alta");
     expect(call.prompt).toContain("El alta no duplica al cliente");
     expect(call.prompt).toContain("ACME S.A.");
@@ -276,6 +291,9 @@ describe("POST /api/ai/task-assist", () => {
     // La referencia local va en ABSOLUTO (AGENTOS_PUBLIC_URL), nunca relativa.
     expect(call.prompt).toContain(`https://agentos.example.test${imagen.url}`);
     expect(call.prompt).toContain(task.id);
+    // Referencias fijas del contexto: tarea y proyecto, siempre absolutas.
+    expect(call.prompt).toContain(`https://agentos.example.test/tareas?tarea=${task.id}`);
+    expect(call.prompt).toContain(`https://agentos.example.test/proyectos/${fixture.project.id}/ruta`);
   });
 
   it("execution_prompt con el proveedor caído responde 200 con la plantilla determinista", async () => {
@@ -297,8 +315,13 @@ describe("POST /api/ai/task-assist", () => {
       payload: { mode: "execution_prompt", task_id: task.id, draft: {} },
     });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { text: string; context: { model: string } };
+    const body = res.json() as {
+      text: string;
+      context: { model: string; usage: { input_tokens: number; output_tokens: number; cost_usd: number | null } | null };
+    };
     expect(body.context.model).toBe("plantilla");
+    // Sin llamada al modelo: coste cero explícito, no "sin datos".
+    expect(body.context.usage).toEqual({ input_tokens: 0, output_tokens: 0, cost_usd: 0 });
     expect(body.text).toContain("# Tarea: Rehacer el flujo de alta");
     expect(body.text).toContain("## Contexto del cliente");
     expect(body.text).toContain("ACME S.A.");
@@ -309,6 +332,13 @@ describe("POST /api/ai/task-assist", () => {
     expect(body.text).toContain("## Restricciones");
     expect(body.text).toContain("## Al terminar");
     expect(body.text).toContain(task.id);
+    // La metodología de trabajo va SIEMPRE, literal, también en la plantilla.
+    expect(body.text).toContain("## Cómo trabajar");
+    expect(body.text).toContain("/goal");
+    expect(body.text).toContain("subagentes");
+    // Referencias fijas del contexto: tarea y proyecto, siempre absolutas.
+    expect(body.text).toContain(`https://agentos.example.test/tareas?tarea=${task.id}`);
+    expect(body.text).toContain(`https://agentos.example.test/proyectos/${fixture.project.id}/ruta`);
     // La plantilla no filtra nada del proveedor.
     expect(body.text).not.toMatch(/ANTHROPIC_API_KEY|credenciales/);
   });
