@@ -99,6 +99,8 @@ export default function VideosView() {
   const [jobsError, setJobsError] = useState<string | null>(null);
 
   const [health, setHealth] = useState<VideoHealth | null>(null);
+  /** La lista de jobs falló concretamente con 502: el hub no pudo hablar con el microservicio. */
+  const [jobsUnavailable, setJobsUnavailable] = useState(false);
 
   const [detail, setDetail] = useState<VideoJob | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -120,19 +122,33 @@ export default function VideosView() {
       const list = await listVideoJobs();
       setJobs(list);
       setJobsError(null);
+      setJobsUnavailable(false);
     } catch (err) {
       setJobsError(errorMessage(err, "No se pudo leer la cola de videos."));
+      setJobsUnavailable(err instanceof ApiError && err.status === 502);
     } finally {
       setJobsLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    void loadJobs();
+  const loadHealth = useCallback(() => {
     getVideoHealth()
       .then(setHealth)
       .catch(() => setHealth({ ok: false, reachable: false }));
-  }, [loadJobs]);
+  }, []);
+
+  useEffect(() => {
+    void loadJobs();
+    loadHealth();
+  }, [loadJobs, loadHealth]);
+
+  /** Servicio de video-ingest inalcanzable: health lo dice, o la cola de jobs 502ó. */
+  const serviceDown = jobsUnavailable || (health !== null && (!health.ok || !health.reachable));
+
+  function retryService() {
+    void loadJobs();
+    loadHealth();
+  }
 
   // Auto-refresco cada 10 s mientras haya al menos un job en curso.
   useEffect(() => {
@@ -227,7 +243,7 @@ export default function VideosView() {
   async function handleIngest(e: FormEvent) {
     e.preventDefault();
     const trimmed = url.trim();
-    if (!trimmed || ingesting) return;
+    if (!trimmed || ingesting || serviceDown) return;
     setIngesting(true);
     setIngestError(null);
     try {
@@ -273,9 +289,10 @@ export default function VideosView() {
           onChange={(e) => setUrl(e.target.value)}
           placeholder="Pega una URL de YouTube, TikTok, Instagram, X o Facebook…"
           aria-label="URL del video a ingerir"
-          className="min-w-0 flex-1 rounded-tight border border-line bg-surface px-3 py-2 text-small text-ink outline-none focus:border-link"
+          disabled={serviceDown}
+          className="min-w-0 flex-1 rounded-tight border border-line bg-surface px-3 py-2 text-small text-ink outline-none focus:border-link disabled:cursor-not-allowed disabled:opacity-60"
         />
-        <ActionButton type="submit" variant="primary" disabled={ingesting || !url.trim()}>
+        <ActionButton type="submit" variant="primary" disabled={ingesting || !url.trim() || serviceDown}>
           {ingesting ? "Ingiriendo…" : "Ingerir"}
         </ActionButton>
       </form>
@@ -290,6 +307,12 @@ export default function VideosView() {
         <Card className="max-h-[560px] overflow-y-auto p-2">
           {jobsLoading && jobs.length === 0 ? (
             <Spinner label="Cargando videos…" />
+          ) : serviceDown ? (
+            <EmptyState
+              title="El servicio de video no está disponible"
+              hint="Los videos se transcriben en un servicio aparte que ahora mismo no responde. Vuelve a intentarlo más tarde."
+              action={<ActionButton onClick={retryService}>Reintentar</ActionButton>}
+            />
           ) : jobsError ? (
             <ErrorBox message={jobsError} onRetry={() => void loadJobs()} />
           ) : jobs.length === 0 ? (

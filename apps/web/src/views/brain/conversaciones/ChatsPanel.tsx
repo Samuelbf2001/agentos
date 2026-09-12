@@ -23,7 +23,8 @@ export interface ChatsPanelProps {
   autoRefresh: boolean;
   onToggleAutoRefresh: (value: boolean) => void;
   onRefresh: () => void;
-  messagesEndRef: RefObject<HTMLDivElement | null>;
+  /** Contenedor real que hace scroll (no un centinela): el autoscroll mueve su scrollTop. */
+  messagesContainerRef: RefObject<HTMLDivElement | null>;
 }
 
 function filterThreads(threads: ConversacionThread[], search: string): ConversacionThread[] {
@@ -50,7 +51,7 @@ export function ChatsPanel({
   autoRefresh,
   onToggleAutoRefresh,
   onRefresh,
-  messagesEndRef,
+  messagesContainerRef,
 }: ChatsPanelProps) {
   const filteredThreads = filterThreads(threads, search);
   const selectedThread = threads.find((thread) => thread.phone === selectedPhone) ?? null;
@@ -80,7 +81,7 @@ export function ChatsPanel({
       ) : null}
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
-        <aside className="flex min-h-[420px] flex-col overflow-hidden rounded-panel bg-surface shadow-rest">
+        <aside className="flex max-h-[calc(100vh-260px)] min-h-[420px] flex-col overflow-hidden rounded-panel bg-surface shadow-rest">
           <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
             <span className="text-small font-semibold text-ink">Teléfonos</span>
             <span className="text-label text-muted">{filteredThreads.length}</span>
@@ -129,7 +130,7 @@ export function ChatsPanel({
           </div>
         </aside>
 
-        <section className="flex min-h-[420px] flex-col overflow-hidden rounded-panel bg-surface shadow-rest">
+        <section className="flex max-h-[calc(100vh-260px)] min-h-[420px] flex-col overflow-hidden rounded-panel bg-surface shadow-rest">
           <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
             <div>
               <h2 className="text-body font-semibold text-ink">
@@ -141,7 +142,7 @@ export function ChatsPanel({
             </div>
             {messagesLoading ? <span className="text-label text-muted">Cargando…</span> : null}
           </div>
-          <div className="flex-1 overflow-y-auto bg-canvas p-4">
+          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto bg-canvas p-4">
             {messagesError ? <ErrorBox message={messagesError} onRetry={onRefresh} /> : null}
             {!selectedPhone && !messagesError ? (
               <EmptyState title="Selecciona una conversación" hint="Elige un teléfono de la lista para ver sus mensajes." />
@@ -169,7 +170,6 @@ export function ChatsPanel({
                   </div>
                 );
               })}
-              <div ref={messagesEndRef} />
             </div>
           </div>
         </section>

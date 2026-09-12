@@ -141,6 +141,25 @@ describe("2brain › Conversaciones (vista)", () => {
     expect(await screen.findByText(/"ok": true/)).toBeTruthy();
   });
 
+  it("al abrir un hilo, el autoscroll no mueve la página: la cabecera sigue visible", async () => {
+    const scrollToSpy = vi.fn();
+    vi.stubGlobal("scrollTo", scrollToSpy);
+    mockFetch(baseRoutes());
+
+    render(
+      <MemoryRouter initialEntries={["/2brain/conversaciones"]}>
+        <ConversacionesView />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Se volvió a parar la línea 2, el plan no llegó.");
+    fireEvent.click(screen.getByText("Confirmado, gracias por la actualización"));
+    await screen.findByText("Todo confirmado, muchas gracias por avisar.");
+
+    expect(screen.getByRole("heading", { level: 1, name: "Conversaciones" })).toBeTruthy();
+    expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+
   it("abre directamente el hilo indicado por ?tel= (deep link)", async () => {
     mockFetch(baseRoutes());
 

@@ -50,7 +50,9 @@ export default function ConversacionesView() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  // Ref al CONTENEDOR de mensajes (no un centinela al final): el autoscroll
+  // mueve su scrollTop, nunca el de la página — así el h1 no desaparece.
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
   // ── Acciones ─────────────────────────────────────────────────────────────
   const [acciones, setAcciones] = useState<ConversacionAccion[]>([]);
@@ -139,10 +141,13 @@ export default function ConversacionesView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, selectedPhone]);
 
-  // Autoscroll al final al recibir mensajes (nunca a media carga).
+  // Autoscroll al final al recibir mensajes (nunca a media carga). Sobre el
+  // contenedor de mensajes, nunca sobre `window` (si no, la página entera se
+  // desplaza y la cabecera desaparece).
   useEffect(() => {
     if (!messagesLoading && messages.length > 0) {
-      messagesEndRef.current?.scrollIntoView({ block: "end" });
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
     }
   }, [messages, messagesLoading]);
 
@@ -209,7 +214,7 @@ export default function ConversacionesView() {
             autoRefresh={autoRefresh}
             onToggleAutoRefresh={setAutoRefresh}
             onRefresh={refreshChats}
-            messagesEndRef={messagesEndRef}
+            messagesContainerRef={messagesContainerRef}
           />
         ) : (
           <AccionesPanel

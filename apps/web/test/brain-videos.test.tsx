@@ -51,15 +51,46 @@ describe("2brain › Videos (vista)", () => {
     expect(await screen.findByText("Servicio activo")).toBeTruthy();
   });
 
-  it("estado vacío cuando no hay videos todavía", async () => {
+  it("estado vacío cuando no hay videos todavía (servicio activo)", async () => {
+    mockFetch([
+      { path: "/api/brain/videos/jobs", body: { jobs: [] } },
+      { path: "/api/brain/videos/health", body: healthOk },
+    ]);
+    ui();
+
+    expect(await screen.findByText("Aún no hay videos")).toBeTruthy();
+    expect(await screen.findByText("Servicio activo")).toBeTruthy();
+  });
+
+  it("servicio de video-ingest no disponible (health reachable:false): EmptyState claro y formulario deshabilitado", async () => {
     mockFetch([
       { path: "/api/brain/videos/jobs", body: { jobs: [] } },
       { path: "/api/brain/videos/health", body: { ok: false, reachable: false } },
     ]);
     ui();
 
-    expect(await screen.findByText("Aún no hay videos")).toBeTruthy();
-    expect(await screen.findByText("Sin respuesta")).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Videos" })).toBeTruthy();
+    expect(await screen.findByText("El servicio de video no está disponible")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Los videos se transcriben en un servicio aparte que ahora mismo no responde. Vuelve a intentarlo más tarde.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Aún no hay videos")).toBeNull();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+    expect((screen.getByLabelText("URL del video a ingerir") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("la lista de jobs falla con 502: EmptyState de servicio no disponible en vez de 'Algo falló'", async () => {
+    mockFetch([
+      { path: "/api/brain/videos/jobs", status: 502, body: { error: { code: "provider_error", message: "Error HTTP 502" } } },
+      { path: "/api/brain/videos/health", body: healthOk },
+    ]);
+    ui();
+
+    expect(await screen.findByText("El servicio de video no está disponible")).toBeTruthy();
+    expect(screen.queryByText("Algo falló")).toBeNull();
+    expect((screen.getByLabelText("URL del video a ingerir") as HTMLInputElement).disabled).toBe(true);
   });
 
   it("tolera que el hub responda vacío ({}), sin romper el render (smoke global)", async () => {
@@ -70,7 +101,7 @@ describe("2brain › Videos (vista)", () => {
     ui();
 
     expect(await screen.findByRole("heading", { level: 1, name: "Videos" })).toBeTruthy();
-    expect(await screen.findByText("Aún no hay videos")).toBeTruthy();
+    expect(await screen.findByText("El servicio de video no está disponible")).toBeTruthy();
   });
 
   it("ingerir una URL: llama a la API y refresca la lista", async () => {
