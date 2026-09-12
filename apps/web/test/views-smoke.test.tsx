@@ -145,6 +145,8 @@ const baseRoutes = [
     },
   },
   { path: /^\/api\/tasks\/[^/]+$/, body: { task: makeTask(), events: [], artifacts: [], runs: [] } },
+  // orden y se queda con la primera ruta que encaja).
+  { path: /^\/api\/brain\/.*/, body: {} },
 ];
 
 describe("smoke de vistas", () => {
@@ -224,7 +226,8 @@ describe("smoke de vistas", () => {
 
   it("Tareas pinta la base transversal: dos clientes en la misma lista", async () => {
     useStore.setState({ projects: [project, projectB], people: [person, personB] });
-    ui(<TareasView />, "/tareas");
+    // La tabla se pide en la URL: el modo por defecto es el tablero.
+    ui(<TareasView />, "/tareas?vista=tabla");
     expect(await screen.findByRole("heading", { level: 1, name: "Tareas" })).toBeTruthy();
     expect(await screen.findByTestId("tarea-fila-t1")).toBeTruthy();
     expect(screen.getByTestId("tarea-fila-t2")).toBeTruthy();

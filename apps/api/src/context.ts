@@ -27,6 +27,7 @@ import {
 import { createWhatsAppHubConnector } from "./connectors/whatsapphub.js";
 import { createModelTranscriber, type NoteTranscriber } from "./notes/transcripcion.js";
 import { createModelProposer, type NoteProposer } from "./notes/propuestas.js";
+import { createModelTaskAssistant, type TaskAssistant } from "./tasks/assist.js";
 import { busSink, createBus } from "./bus-bridge.js";
 import { createAuthService, resolveCookieSecure, type AuthService } from "./auth.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
@@ -183,6 +184,8 @@ export interface ApiOptions {
   noteTranscriber?: NoteTranscriber;
   /** Proponedor de tareas desde la transcripción (tests: SIEMPRE doble; jamás LLM real). */
   noteProposer?: NoteProposer;
+  /** Asistente de IA de la ficha de tarea (tests: SIEMPRE doble; jamás LLM real). */
+  taskAssistant?: TaskAssistant;
   /** Adaptador de avisos; por defecto queda apagado y no toca la red. */
   notificationDelivery?: NotificationDelivery;
   /** Reloj inyectable para tests de ventana 24h y deduplicación. */
@@ -212,6 +215,8 @@ export interface ApiContext {
   noteTranscriber: NoteTranscriber;
   /** Modelo que PROPONE tareas desde la transcripción (fase 3 de Notas); nunca las crea. */
   noteProposer: NoteProposer;
+  /** Modelo que mejora los campos de una tarea y redacta su prompt de ejecución. */
+  taskAssistant: TaskAssistant;
   /** Procesador de los únicos avisos permitidos por el MVP. */
   notifications: NotificationProcessor;
   /** Reloj que dispara `processDue`; apagado si el intervalo es 0. */
@@ -322,6 +327,8 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
   // resuelve perfil, clave y modelo en la llamada, no en el arranque.
   const noteTranscriber = options.noteTranscriber ?? createModelTranscriber({ db });
   const noteProposer = options.noteProposer ?? createModelProposer({ db });
+  // Igual que el transcriptor: no toca la red hasta que alguien pulsa el botón.
+  const taskAssistant = options.taskAssistant ?? createModelTaskAssistant({ db });
   const notifications = createNotificationProcessor({
     db,
     ...(options.notificationDelivery ? { delivery: options.notificationDelivery } : {}),
@@ -405,6 +412,7 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     whatsappHub,
     noteTranscriber,
     noteProposer,
+    taskAssistant,
     notifications,
     notificationScheduler,
     pool,

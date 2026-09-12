@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronsUpDown, Plus, Search, SlidersHorizontal } from "lucide-react";
 import {
   DndContext,
   KeyboardSensor,
@@ -69,9 +69,9 @@ import {
   chipsActivos,
   clienteLabel,
   clientesDe,
+  extractoDescripcion,
   filtrar,
   filtrosAParams,
-  guardarProyectoReciente,
   leerProyectoReciente,
   ordenar,
   orgIdOf,
@@ -82,6 +82,7 @@ import {
   personName,
   projectOf,
   responsablePrincipal,
+  responsables,
   type Agrupacion,
   type Columna,
   type Contexto,
@@ -446,9 +447,10 @@ function TaskRow({
 // ── Tablero por estado ──────────────────────────────────────────────────────
 
 /**
- * La misma tarea de la tabla, en tarjeta: título, de quién es el trabajo
- * (cliente · proyecto), quién responde, cuándo vence y con qué prioridad. Se
- * arrastra a otra columna para cambiarle el estado y se abre con un clic; no
+ * La misma tarea de la tabla, en tarjeta. "Las tarjetas son muy pequeñas":
+ * ahora caben el título en dos líneas, dos líneas de la descripción, las
+ * etiquetas y un pie con quién responde, cuándo vence y de quién es el trabajo.
+ * Se arrastra a otra columna para cambiarle el estado y se abre con un clic; no
  * se edita en línea (para eso está la tabla o la ficha).
  */
 function TareaTarjeta({ task, ctx }: { task: Task; ctx: Contexto }) {
@@ -459,8 +461,14 @@ function TareaTarjeta({ task, ctx }: { task: Task; ctx: Contexto }) {
   });
   const project = projectOf(task, ctx.projects);
   const orgId = orgIdOf(task, ctx.projects);
-  const responsable = responsablePrincipal(task);
-  const responsableNombre = personName(responsable, ctx.people);
+  const principal = responsablePrincipal(task);
+  const equipo = responsables(task);
+  // El principal primero: es a quien se mira cuando la tarjeta pasa de largo.
+  const ordenados = principal ? [principal, ...equipo.filter((id) => id !== principal)] : equipo;
+  const visibles = ordenados.slice(0, 3);
+  const resto = ordenados.length - visibles.length;
+  const etiquetas = getTaskLabels(task);
+  const extracto = extractoDescripcion(task.description);
 
   return (
     <div
@@ -486,31 +494,62 @@ function TareaTarjeta({ task, ctx }: { task: Task; ctx: Contexto }) {
           ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 30 }
           : undefined
       }
-      className={`group min-w-0 cursor-grab rounded-panel border border-line bg-surface p-2.5 text-left shadow-rest transition-shadow hover:shadow-raise focus:outline-none focus:ring-2 focus:ring-link ${
-        isDragging ? "opacity-70 shadow-float" : ""
+      className={`press group flex min-h-24 min-w-0 cursor-grab flex-col rounded-panel border border-line bg-surface p-3.5 text-left shadow-rest hover:shadow-raise focus:outline-none focus:ring-2 focus:ring-link ${
+        isDragging ? "scale-[0.97] opacity-70 shadow-float" : ""
       }`}
     >
-      <span className="flex items-start gap-1.5">
-        <PriorityDot priority={task.priority} />
-        <span className="min-w-0 flex-1 text-small font-medium leading-snug text-ink">
+      <span className="flex items-start gap-2">
+        <span className="mt-1.5">
+          <PriorityDot priority={task.priority} />
+        </span>
+        <span className="line-clamp-2 min-w-0 flex-1 text-body font-medium leading-snug text-ink">
           {task.title}
         </span>
       </span>
-      <p className="mt-1 truncate text-label text-muted">
-        {clienteLabel(orgId, ctx)}
-        {project ? ` · ${project.name}` : ""}
-      </p>
-      <div className="mt-2 flex min-w-0 items-center gap-1.5">
-        {responsable ? (
-          <span className="inline-flex min-w-0 items-center gap-1" title={responsableNombre}>
-            <PersonAvatar name={responsableNombre} size={5} />
-            <span className="max-w-[7rem] truncate text-label text-muted">{responsableNombre}</span>
+
+      {extracto ? (
+        <p className="mt-1.5 line-clamp-2 text-small text-muted">{extracto}</p>
+      ) : null}
+
+      {etiquetas.length > 0 ? (
+        <span className="mt-2 flex flex-wrap gap-1">
+          {etiquetas.slice(0, 3).map((label) => (
+            <span
+              key={label}
+              className="rounded-full bg-line-soft px-1.5 py-0.5 text-label font-medium text-ink-2"
+            >
+              {label}
+            </span>
+          ))}
+          {etiquetas.length > 3 ? (
+            <span className="px-1 py-0.5 text-label text-faint">+{etiquetas.length - 3}</span>
+          ) : null}
+        </span>
+      ) : null}
+
+      <div className="mt-auto flex min-w-0 items-center gap-2 pt-2.5">
+        {visibles.length > 0 ? (
+          <span className="flex shrink-0 -space-x-1.5" title={ordenados.map((id) => personName(id, ctx.people)).join(", ")}>
+            {visibles.map((id) => (
+              <span key={id} className="rounded-full ring-2 ring-[var(--color-surface)]">
+                <PersonAvatar name={personName(id, ctx.people)} size={5} />
+              </span>
+            ))}
+            {resto > 0 ? (
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-canvas-deep text-label text-muted ring-2 ring-[var(--color-surface)]">
+                +{resto}
+              </span>
+            ) : null}
           </span>
         ) : (
-          <span className="text-label text-faint">Sin responsable</span>
+          <span className="shrink-0 text-label text-faint">Sin responsable</span>
         )}
-        <span className="ml-auto shrink-0">
+        <span className="shrink-0">
           <DuePill task={task} />
+        </span>
+        <span className="ml-auto min-w-0 truncate text-right text-label text-muted">
+          {clienteLabel(orgId, ctx)}
+          {project ? ` · ${project.name}` : ""}
         </span>
       </div>
     </div>
@@ -521,16 +560,18 @@ function ColumnaEstado({
   status,
   tasks,
   ctx,
+  onNueva,
 }: {
   status: TaskStatus;
   tasks: Task[];
   ctx: Contexto;
+  onNueva: (status: TaskStatus) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status, data: { status } });
   return (
     <section
       data-testid={`tareas-columna-${status}`}
-      className="flex w-[16rem] shrink-0 flex-col rounded-panel border border-line bg-canvas-deep/40"
+      className="flex w-[21rem] shrink-0 flex-col rounded-panel border border-line bg-canvas-deep/40"
     >
       <div className="flex items-center gap-2 border-b border-line-soft px-2.5 py-2">
         <StatusPill status={status} />
@@ -540,6 +581,16 @@ function ColumnaEstado({
         >
           {tasks.length}
         </span>
+        <button
+          type="button"
+          data-testid={`tareas-nueva-en-${status}`}
+          aria-label={`Nueva tarea en ${STATUS_LABELS[status]}`}
+          title={`Nueva tarea en ${STATUS_LABELS[status]}`}
+          onClick={() => onNueva(status)}
+          className="press inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-tight text-title leading-none text-faint hover:bg-surface hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
+        >
+          <span aria-hidden="true">+</span>
+        </button>
       </div>
       <div
         ref={setNodeRef}
@@ -568,7 +619,6 @@ export default function TareasView() {
   const labelCatalog = useStore((s) => s.labelCatalog);
   const loadLabels = useStore((s) => s.loadLabels);
   const me = useStore((s) => s.person);
-  const createTask = useStore((s) => s.createTask);
   const openTask = useStore((s) => s.openTask);
   const detailTask = useStore((s) => s.taskDetail?.task ?? null);
   const taskDetailId = useStore((s) => s.taskDetailId);
@@ -578,9 +628,9 @@ export default function TareasView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState(-1);
-  const [quickTitle, setQuickTitle] = useState("");
-  const [quickProject, setQuickProject] = useState<string>(() => leerProyectoReciente() ?? "");
   const [dialogOpen, setDialogOpen] = useState(false);
+  /** Estado de la columna desde la que se pidió el alta ("+" de la cabecera). */
+  const [dialogStatus, setDialogStatus] = useState<TaskStatus | undefined>(undefined);
   const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
   // El panel de filtros es un plegable local: no viaja en la URL, así que un
   // enlace compartido no arrastra si el que lo abrió lo tenía desplegado.
@@ -632,10 +682,6 @@ export default function TareasView() {
       prev ? prev.map((task) => (task.id === detailTask.id ? detailTask : task)) : prev,
     );
   }, [detailTask]);
-
-  useEffect(() => {
-    if (!quickProject && projects.length > 0) setQuickProject(projects[0]!.id);
-  }, [projects, quickProject]);
 
   // El nombre del cliente ya no cuesta una petición por proyecto: `orgName`
   // viene en `GET /api/projects` y `clienteLabel` lo lee de ahí. Los proyectos
@@ -734,6 +780,18 @@ export default function TareasView() {
     () => (filtros.cliente ? projects.filter((p) => p.orgId === filtros.cliente) : projects),
     [projects, filtros.cliente],
   );
+  /**
+   * Proyecto con el que se abre el alta: el que está filtrado —si estás mirando
+   * un proyecto, la tarea nueva es de ese proyecto— y si no, el último usado.
+   * El formulario deja cambiarlo; esto sólo evita empezar de cero cada vez.
+   */
+  const proyectoDePartida = useMemo(() => {
+    const candidatos = [filtros.proyecto, leerProyectoReciente()];
+    for (const candidato of candidatos) {
+      if (candidato && projects.some((p) => p.id === candidato)) return candidato;
+    }
+    return proyectosDelCliente[0]?.id ?? "";
+  }, [filtros.proyecto, projects, proyectosDelCliente]);
   const mine = filtros.responsable === YO;
 
   const onChanged = useCallback((updated: Task) => {
@@ -783,6 +841,9 @@ export default function TareasView() {
         }
       } else if (event.key === "Escape") {
         setCursor(-1);
+      } else if (event.key === "n") {
+        event.preventDefault();
+        abrirAlta();
       } else if (event.key === "m") {
         event.preventDefault();
         aplicar({ ...filtros, responsable: mine ? null : YO });
@@ -805,16 +866,9 @@ export default function TareasView() {
     aplicar(filtros, { orden: { columna, direccion } });
   }
 
-  async function crearRapido(): Promise<void> {
-    const title = quickTitle.trim();
-    const project = projects.find((p) => p.id === quickProject);
-    if (!title || !project) return;
-    const task = await createTask({ project_id: project.id, title, stage: project.stage });
-    if (task) {
-      setQuickTitle("");
-      guardarProyectoReciente(project.id);
-      setTasks((prev) => (prev ? [task, ...prev] : [task]));
-    }
+  function abrirAlta(status?: TaskStatus): void {
+    setDialogStatus(status);
+    setDialogOpen(true);
   }
 
   const total = tasks?.length ?? 0;
@@ -822,7 +876,7 @@ export default function TareasView() {
 
   return (
     <div className="density-operar mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-display text-ink">Tareas</h1>
           <p className="mt-1.5 max-w-[68ch] text-body text-muted">
@@ -830,6 +884,18 @@ export default function TareasView() {
             cliente y el proyecto son filtros, no puertas que haya que cruzar.
           </p>
         </div>
+        {/* Crear no se esconde en una fila que parece un buscador: es el botón
+            más visible de la pantalla, al lado del título. */}
+        <button
+          type="button"
+          data-testid="tareas-nueva"
+          title="Nueva tarea (n)"
+          onClick={() => abrirAlta()}
+          className="press inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-small font-semibold text-surface shadow-rest hover:bg-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
+        >
+          <Plus size={16} strokeWidth={2.25} aria-hidden="true" />
+          Nueva tarea
+        </button>
       </div>
 
       {/* ── Buscar, filtrar y agrupar: todo en una fila ───────────────────── */}
@@ -1110,64 +1176,6 @@ export default function TareasView() {
         </div>
       ) : null}
 
-      {/* ── Creación rápida: una línea, sin salir de aquí ─────────────────── */}
-      <form
-        data-testid="tareas-alta-rapida"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void crearRapido();
-        }}
-        className="mt-3 flex flex-wrap items-center gap-2 rounded-full bg-surface px-3.5 py-2 shadow-rest"
-      >
-        <span aria-hidden="true" className="text-title leading-none text-faint">
-          +
-        </span>
-        <label htmlFor="tareas-alta-titulo" className="sr-only">
-          Título de la tarea nueva
-        </label>
-        <input
-          id="tareas-alta-titulo"
-          data-testid="tareas-alta-titulo"
-          value={quickTitle}
-          onChange={(event) => setQuickTitle(event.target.value)}
-          placeholder="Añade una tarea y pulsa Enter…"
-          className="min-h-8 min-w-48 flex-1 rounded-tight border border-transparent bg-transparent px-1.5 py-1 text-small text-ink focus:border-line focus:outline-none"
-        />
-        <label htmlFor="tareas-alta-proyecto" className="sr-only">
-          Proyecto de la tarea nueva
-        </label>
-        <select
-          id="tareas-alta-proyecto"
-          data-testid="tareas-alta-proyecto"
-          value={quickProject}
-          onChange={(event) => setQuickProject(event.target.value)}
-          className={selectClass}
-        >
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-        <ActionButton
-          type="submit"
-          variant="primary"
-          disabled={!quickTitle.trim() || !quickProject}
-          data-testid="tareas-alta-enviar"
-        >
-          Añadir
-        </ActionButton>
-        <button
-          type="button"
-          data-testid="tareas-alta-mas"
-          disabled={!quickProject}
-          onClick={() => setDialogOpen(true)}
-          className="press text-small font-semibold text-link hover:underline disabled:opacity-45"
-        >
-          Más campos…
-        </button>
-      </form>
-
       {/* ── Cuerpo ───────────────────────────────────────────────────────── */}
       <div className="mt-4">
         {loading && !tasks ? <Spinner label="Leyendo la base de tareas…" /> : null}
@@ -1242,7 +1250,7 @@ export default function TareasView() {
             title={sinFiltros ? "Todavía no hay tareas" : "Nada coincide con estos filtros"}
             hint={
               sinFiltros
-                ? "Escribe arriba el primer título, elige el proyecto y pulsa Enter: la tarea nace en el tablero de ese cliente."
+                ? "Pulsa «Nueva tarea» (o la tecla n): eliges cliente y proyecto, y la tarjeta nace en el tablero de ese cliente."
                 : "Prueba a quitar un filtro. También puedes limpiarlos todos y volver a la base completa."
             }
             {...(sinFiltros
@@ -1265,6 +1273,7 @@ export default function TareasView() {
                     status={status}
                     tasks={porEstado.get(status) ?? []}
                     ctx={ctx}
+                    onNueva={abrirAlta}
                   />
                 ))}
               </div>
@@ -1363,25 +1372,24 @@ export default function TareasView() {
             : ""}
         </span>
         <span className="text-faint">
-          j / k para moverte, Enter abre la ficha, m alterna tus tareas, / busca.
+          j / k para moverte, Enter abre la ficha, n crea, m alterna tus tareas, / busca.
         </span>
         <Link to={paths.proyectos()} className="press font-semibold text-link hover:underline">
           Ver los proyectos
         </Link>
       </p>
 
-      {quickProject ? (
-        <CreateTaskDialog
-          open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) void cargar();
-          }}
-          projectId={quickProject}
-          initialTitle={quickTitle}
-          defaultStage={projects.find((p) => p.id === quickProject)?.stage ?? "ENTENDER"}
-        />
-      ) : null}
+      <CreateTaskDialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) void cargar();
+        }}
+        {...(proyectoDePartida ? { projectId: proyectoDePartida } : {})}
+        {...(dialogStatus ? { initialStatus: dialogStatus } : {})}
+        defaultStage={projects.find((p) => p.id === proyectoDePartida)?.stage ?? "ENTENDER"}
+        allowProjectChange
+      />
     </div>
   );
 }

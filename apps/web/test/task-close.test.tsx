@@ -146,7 +146,6 @@ describe("mover a DONE sin artefacto", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByTestId("artifact-mode-link"));
     fireEvent.change(screen.getByTestId("artifact-url"), {
       target: { value: "https://example.com/informe.pdf" },
     });
@@ -176,7 +175,6 @@ describe("ArtifactAttacher aislado", () => {
     const onLink = vi.fn().mockResolvedValue(true);
     render(<ArtifactAttacher saving={false} onUpload={onUpload} onLink={onLink} />);
 
-    fireEvent.click(screen.getByTestId("artifact-mode-link"));
     fireEvent.change(screen.getByTestId("artifact-url"), { target: { value: "ftp://malo.com" } });
     expect(screen.getByRole("alert").textContent).toContain("http://");
     expect((screen.getByTestId("artifact-submit") as HTMLButtonElement).disabled).toBe(true);
@@ -193,7 +191,7 @@ describe("ArtifactAttacher aislado", () => {
     expect(onUpload).not.toHaveBeenCalled();
   });
 
-  it("sube un archivo con onUpload cuando el modo es archivo", async () => {
+  it("sube un archivo con onUpload cuando cae un archivo en la zona", async () => {
     const onUpload = vi.fn().mockResolvedValue(true);
     const onLink = vi.fn();
     render(<ArtifactAttacher saving={false} onUpload={onUpload} onLink={onLink} />);

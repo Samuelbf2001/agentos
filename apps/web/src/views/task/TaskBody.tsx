@@ -9,10 +9,35 @@ import { Link } from "react-router-dom";
 import { useStore } from "../../state/store";
 import { actorLabel, ErrorBox, fmtDate, Spinner } from "../../components/ui";
 import { paths } from "../../lib/paths";
-import type { KnowledgeDoc, ProjectSource } from "../../lib/types";
+import {
+  getTaskAssignees,
+  getTaskLabels,
+  taskAssigneePersonId,
+  taskDueTimestamp,
+  type Artifact,
+  type KnowledgeDoc,
+  type ProjectSource,
+  type TaskAssistDraft,
+} from "../../lib/types";
 import { ArtifactAttacher, ArtifactBlock, BlockedMoveNotice, DefinitionOfDoneEditor, TaskDescriptionEditor } from "./TaskBlocks";
 import { TaskProperties } from "./TaskProperties";
 import { TaskTitle } from "./TaskTitle";
+
+/**
+ * URL del original en Notion, si el volcado la trajo. Se mira `meta` primero
+ * (es donde el importador la deja) y el contenido después, por si el volcado
+ * viejo sólo la tenía escrita dentro.
+ */
+export function urlDeNotion(archives: Artifact[]): string | null {
+  for (const artifact of archives) {
+    const meta = (artifact.meta ?? {}) as Record<string, unknown>;
+    const candidate = meta.originalUrl ?? meta.original_url ?? meta.url;
+    if (typeof candidate === "string" && /^https?:\/\//i.test(candidate)) return candidate;
+    const found = artifact.content?.match(/https?:\/\/(?:www\.)?notion\.so\/\S+/i)?.[0];
+    if (found) return found.replace(/[)\]]+$/, "");
+  }
+  return null;
+}
 
 function ProjectContextSection({ projectId, sources, documents, onNavigate }: {
   projectId: string;
@@ -97,6 +122,27 @@ export function TaskBody() {
   const agent = task.assigneeAgentId ? agents.find((candidate) => candidate.id === task.assigneeAgentId) ?? null : null;
   const comments = detail.events.filter((event) => event.kind === "comment");
   const timeline = detail.events.filter((event) => event.kind !== "comment");
+  // Los volcados de la importación de Notion no se listan uno a uno: son
+  // procedencia, no evidencia, y con 1232 tareas importadas enterraban lo que
+  // sí lo es.
+  const archivosNotion = detail.artifacts.filter((artifact) => artifact.kind === "notion_archive");
+  const evidencia = detail.artifacts.filter((artifact) => artifact.kind !== "notion_archive");
+  const importada = archivosNotion.length > 0;
+  const notionUrl = urlDeNotion(archivosNotion);
+
+  /** Lo que la IA necesita del borrador guardado para redactar cualquier campo. */
+  const draftParaIA = (): TaskAssistDraft => ({
+    title: task.title,
+    description: task.description ?? "",
+    definition_of_done: task.definitionOfDone ?? "",
+    project_id: task.projectId,
+    priority: task.priority,
+    due_at: taskDueTimestamp(task),
+    labels: getTaskLabels(task),
+    assignee_person_ids: getTaskAssignees(task)
+      .map(taskAssigneePersonId)
+      .filter((id): id is string => Boolean(id)),
+  });
 
   return (
     <>
@@ -112,7 +158,11 @@ export function TaskBody() {
         />
       ) : null}
 
-      <TaskTitle value={task.title} onSave={(title) => updateTask(task.id, { title })} />
+      <TaskTitle
+        value={task.title}
+        onSave={(title) => updateTask(task.id, { title })}
+        assist={{ draft: draftParaIA, taskId: task.id }}
+      />
 
       <TaskProperties task={task} project={project} agent={agent} onNavigate={closeTask} />
 
@@ -137,19 +187,50 @@ export function TaskBody() {
         value={task.description ?? ""}
         saving={taskSaving}
         onSave={(description) => updateTask(task.id, { description })}
+        assist={{ draft: draftParaIA, taskId: task.id }}
       />
 
       <DefinitionOfDoneEditor
         value={task.definitionOfDone ?? ""}
         saving={taskSaving}
         onSave={(definition_of_done) => updateTask(task.id, { definition_of_done })}
+        assist={{ draft: draftParaIA, taskId: task.id }}
       />
 
       <ProjectContextSection projectId={task.projectId} sources={sources} documents={documents} onNavigate={closeTask} />
 
       <section className="mt-5" aria-labelledby="task-artifacts-title">
-        <h3 id="task-artifacts-title" className="text-small font-bold text-muted">Artefactos ({detail.artifacts.length})</h3>
-        <div className="mt-1 space-y-2">{detail.artifacts.length === 0 ? <p className="text-small text-faint">Sin artefactos. Nada llega a REVIEW/DONE sin evidencia.</p> : detail.artifacts.map((artifact) => <ArtifactBlock key={artifact.id} artifact={artifact} />)}</div>
+        <h3 id="task-artifacts-title" className="text-small font-bold text-muted">
+          Evidencia y adjuntos ({evidencia.length + (importada ? 1 : 0)})
+        </h3>
+        {/* "No entiendo qué es la parte de artefactos": se dice para qué sirve
+            y qué pasa si está vacía, en una línea. */}
+        <p className="mt-0.5 text-label text-faint">
+          Archivos, enlaces o resultados que demuestran el trabajo. Sin al menos uno, la tarea no
+          pasa a Revisión ni a Hecha.
+        </p>
+        <div className="mt-2 space-y-2">
+          {evidencia.length === 0 && !importada ? (
+            <p className="text-small text-faint">Todavía no hay nada adjunto.</p>
+          ) : null}
+          {/* El volcado de Notion no es evidencia del trabajo: es de dónde vino
+              la tarea. Una línea, no una lista de bloques crudos. */}
+          {importada ? (
+            <p className="text-small text-muted" data-testid="artifact-notion-archive">
+              <span aria-hidden="true" className="mr-1 text-faint">▤</span>
+              Importada de Notion
+              {notionUrl ? (
+                <>
+                  {" · "}
+                  <a href={notionUrl} target="_blank" rel="noreferrer" className="text-link underline underline-offset-2">
+                    ver el original
+                  </a>
+                </>
+              ) : null}
+            </p>
+          ) : null}
+          {evidencia.map((artifact) => <ArtifactBlock key={artifact.id} artifact={artifact} />)}
+        </div>
         <ArtifactAttacher
           saving={taskSaving}
           onUpload={(file, artifactTitle) => uploadTaskArtifact(task.id, file, artifactTitle)}

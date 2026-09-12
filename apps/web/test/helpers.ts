@@ -40,7 +40,17 @@ export function mockFetch(routes: MockRoute[]): { calls: FetchCall[] } {
       const url = String(input);
       const path = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0] ?? "";
       const method = (init?.method ?? "GET").toUpperCase();
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      // El cuerpo no siempre es JSON: las subidas van en FormData y hacer
+      // `JSON.parse` sobre ellas reventaba el mock entero.
+      let body: unknown;
+      if (init?.body instanceof FormData) body = init.body;
+      else if (init?.body) {
+        try {
+          body = JSON.parse(String(init.body));
+        } catch {
+          body = String(init.body);
+        }
+      }
       calls.push({ url, method, body });
       for (const route of routes) {
         const matches =

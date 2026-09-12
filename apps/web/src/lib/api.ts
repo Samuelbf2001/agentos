@@ -46,6 +46,8 @@ import type {
   Stage,
   TaskAssignee,
   TaskAssigneePerson,
+  TaskAssistRequest,
+  TaskAssistResponse,
   TaskDetailResponse,
   Task,
   TaskEvent,
@@ -54,6 +56,7 @@ import type {
   TaskStatus,
   Thread,
   ToolCatalogEntry,
+  UploadedImage,
 } from "./types";
 
 const configuredApiBase =
@@ -466,6 +469,64 @@ export const api = {
     }
     return json as { artifact: Artifact };
   },
+
+  // ── Imágenes en texto largo ───────────────────────────────────────────────
+  /**
+   * Sube una imagen para incrustarla en una descripción. Como `uploadArtifact`,
+   * va por `fetch` directo: el cuerpo es FormData y el boundary lo pone el
+   * navegador.
+   *
+   * `url` vuelve del servidor como ruta (`/api/uploads/<id>`); aquí se
+   * absolutiza contra `API_BASE` porque en desarrollo la web (4301) y la API
+   * (4300) son orígenes distintos y un `<img src="/api/uploads/…">` apuntaría
+   * al puerto de Vite. La cookie de sesión es SameSite=Lax y ambos puertos son
+   * el mismo sitio, así que la imagen se sirve igual.
+   */
+  uploadImage: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const headers: Record<string, string> = {};
+    if (currentToken) headers["authorization"] = `Bearer ${currentToken}`;
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/uploads/images`, {
+        method: "POST",
+        headers,
+        body: form,
+        credentials: "include",
+      });
+    } catch {
+      throw new ApiError("network_error", "No se pudo subir la imagen (¿la API está viva?)", 0);
+    }
+    let json: unknown = null;
+    try {
+      json = await res.json();
+    } catch {
+      /* respuesta sin cuerpo */
+    }
+    if (!res.ok) {
+      const err = (json as { error?: { code?: string; message?: string } })?.error;
+      if (res.status === 401 && onUnauthorized) onUnauthorized();
+      throw new ApiError(
+        err?.code ?? "http_error",
+        err?.message ?? `Error HTTP ${res.status}`,
+        res.status,
+      );
+    }
+    const raw = json as UploadedImage;
+    return { ...raw, url: raw.url?.startsWith("/") ? `${API_BASE}${raw.url}` : raw.url };
+  },
+
+  // ── Asistencia de IA sobre un campo de la tarea ───────────────────────────
+  /**
+   * Redacta (o mejora) un campo consultando el contexto del cliente, o devuelve
+   * el prompt de ejecución para pegar en Claude Code. 503 llega como
+   * `ApiError("provider_unavailable")`: el asistente no está disponible, la
+   * tarea sí.
+   */
+  taskAssist: (body: TaskAssistRequest) =>
+    request<TaskAssistResponse>("/api/ai/task-assist", { method: "POST", body }),
+
   // ── Runs ──────────────────────────────────────────────────────────────────
   runs: (q: { status?: string; agent_id?: string; task_id?: string; project_id?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();
