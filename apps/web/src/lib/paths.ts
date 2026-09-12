@@ -78,6 +78,15 @@ export const paths = {
   activo: () => "/activo",
   brain: () => "/2brain",
   brainReuniones: () => "/2brain/reuniones",
+  brainConversaciones: () => "/2brain/conversaciones",
+  /** Lienzo de notas de voz; con `?nota=<id>` abre una nota concreta. */
+  brainNotasVoz: (noteId?: string) =>
+    noteId ? `/2brain/notas-voz?nota=${encodeURIComponent(noteId)}` : "/2brain/notas-voz",
+  brainGrabadora: () => "/2brain/grabadora",
+  /** Cola de videos; con `?job=<id>` abre un job concreto. */
+  brainVideos: (jobId?: string) => (jobId ? `/2brain/videos?job=${encodeURIComponent(jobId)}` : "/2brain/videos"),
+  brainGrafo: () => "/2brain/grafo",
+  brainAgente: () => "/2brain/agente",
   /** Lienzo de notas manuscritas; con `?nota=<id>` abre una nota concreta. */
   notas: (noteId?: string | null) => (noteId ? `/notas?nota=${encodeURIComponent(noteId)}` : "/notas"),
   /**

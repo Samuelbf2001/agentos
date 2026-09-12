@@ -61,7 +61,7 @@ const meetingsPending = {
 describe("2brain como módulo propio", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("/2brain pinta los módulos, el chip de pendientes y los enlaces externos", async () => {
+  it("/2brain pinta los módulos, el chip de pendientes y los enlaces internos a cada módulo", async () => {
     mockFetch([
       { path: "/api/brain/overview", body: overview },
       { path: "/api/meetings/processing", body: meetingsPending },
@@ -88,13 +88,17 @@ describe("2brain como módulo propio", () => {
     }
 
     expect(await screen.findByText("3 pendientes de revisión")).toBeTruthy();
-    const openLink = screen.getByRole("link", { name: "Abrir" });
-    expect(openLink.getAttribute("href")).toBe("/2brain/reuniones");
-
-    const externalLinks = screen.getAllByRole("link", { name: /Abrir en 2brain/ });
-    expect(externalLinks.length).toBeGreaterThan(0);
-    for (const link of externalLinks) {
-      expect(link.getAttribute("target")).toBe("_blank");
+    const openLinks = screen.getAllByRole("link", { name: "Abrir" });
+    const hrefs = openLinks.map((link) => link.getAttribute("href"));
+    expect(hrefs).toContain("/2brain/reuniones");
+    expect(hrefs).toContain("/2brain/conversaciones");
+    expect(hrefs).toContain("/2brain/notas-voz");
+    expect(hrefs).toContain("/2brain/grabadora");
+    expect(hrefs).toContain("/2brain/videos");
+    expect(hrefs).toContain("/2brain/grafo");
+    expect(hrefs).toContain("/2brain/agente");
+    for (const link of openLinks) {
+      expect(link.getAttribute("target")).toBeNull();
     }
   });
 

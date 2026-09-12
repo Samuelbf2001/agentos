@@ -118,6 +118,21 @@ export interface WhatsAppHubConnector {
   getWikiStats?: () => Promise<WhatsAppHubWikiStats>;
   /** Estado agregado del espejo de páginas, sin devolver las páginas. */
   getWikiPagesStatus?: () => Promise<WhatsAppHubWikiPagesStatus>;
+  /** GET JSON genérico a la API del hub para los módulos de 2brain; la ruta que lo llama valida la forma con Zod. */
+  hubGetJson?: (
+    path: string,
+    query?: Record<string, string | number | boolean | undefined>,
+    opts?: { timeoutMs?: number },
+  ) => Promise<unknown>;
+  /** POST/PUT JSON genérico; timeout configurable (p. ej. ingesta de notas de voz tarda minutos). */
+  hubSendJson?: (method: "POST" | "PUT", path: string, body: unknown, opts?: { timeoutMs?: number }) => Promise<unknown>;
+  /** GET de texto plano (markdown/transcripciones). */
+  hubGetText?: (path: string, opts?: { timeoutMs?: number }) => Promise<string>;
+  /** GET binario passthrough (miniaturas, keyframes): estado, content-type y cuerpo. */
+  hubGetRaw?: (
+    path: string,
+    opts?: { timeoutMs?: number },
+  ) => Promise<{ status: number; contentType: string | null; body: Uint8Array }>;
 }
 
 /** Códigos de fallo del conector — siempre con mensaje legible para la UI. */

@@ -33,6 +33,12 @@ import ProjectLayout from "./views/ProjectLayout";
 import SystemLayout from "./views/SystemLayout";
 import BrainView from "./views/BrainView";
 import BrainMeetingsView from "./views/BrainMeetingsView";
+import ConversacionesView from "./views/brain/ConversacionesView";
+import NotasVozView from "./views/brain/NotasVozView";
+import GrabadoraView from "./views/brain/GrabadoraView";
+import VideosView from "./views/brain/VideosView";
+import GrafoView from "./views/brain/GrafoView";
+import AgenteView from "./views/brain/AgenteView";
 import NotasView from "./views/NotasView";
 import AssetView from "./views/AssetView";
 import RunDetailView from "./views/RunDetailView";
@@ -268,6 +274,12 @@ function Shell() {
             <Route path="/activo" element={<AssetView />} />
             <Route path="/2brain" element={<BrainView />} />
             <Route path="/2brain/reuniones" element={<BrainMeetingsView />} />
+            <Route path="/2brain/conversaciones" element={<ConversacionesView />} />
+            <Route path="/2brain/notas-voz" element={<NotasVozView />} />
+            <Route path="/2brain/grabadora" element={<GrabadoraView />} />
+            <Route path="/2brain/videos" element={<VideosView />} />
+            <Route path="/2brain/grafo" element={<GrafoView />} />
+            <Route path="/2brain/agente" element={<AgenteView />} />
             <Route path="/notas" element={<NotasView />} />
 
             {/* Rutas anteriores: se conservan como redirección, no como destino. */}

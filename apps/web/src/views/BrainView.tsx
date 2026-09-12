@@ -1,8 +1,9 @@
 /**
  * 2brain como módulo propio (PLAN-v1.5 §2brain). Panorama de los módulos del
- * segundo cerebro de Sixteam: Reuniones ya vive dentro de AgentOS (lectura
- * operativa de WhatsAppHub); el resto sigue abriéndose en 2brain mientras se
- * integra, con su estado de conexión a la vista.
+ * segundo cerebro de Sixteam: Reuniones, Conversaciones, Notas de voz,
+ * Grabadora, Videos, Grafo y Agente 2brain ya son rutas internas de AgentOS
+ * (los cimientos; cada módulo se rellena por separado), con su estado de
+ * conexión al hub a la vista.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -12,7 +13,6 @@ import {
   BookOpen,
   Clapperboard,
   Database,
-  ExternalLink,
   MessageSquare,
   Mic,
   Video,
@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { paths } from "../lib/paths";
-import { BRAIN_URL } from "../lib/nav";
 import { useBrainOverview } from "../state/useBrainOverview";
 import { Card, Chip, SectionHead, type Tone } from "../components/system";
 import type { BrainSource, BrainSourceStatus } from "../lib/types";
@@ -42,20 +41,6 @@ function wikiPagesLabel(sources: BrainSource[]): string {
   if (values.length === 0) return "Sin datos de páginas";
   const total = values.reduce((sum, v) => sum + v, 0);
   return total === 1 ? "1 página" : `${total} páginas`;
-}
-
-function ExternalAction({ href }: { href: string }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="press inline-flex items-center gap-1 text-small font-semibold text-link hover:underline"
-    >
-      Abrir en 2brain
-      <ExternalLink size={12} aria-hidden="true" />
-    </a>
-  );
 }
 
 function ModuleCard({
@@ -123,8 +108,8 @@ export default function BrainView() {
     <div className="mx-auto max-w-[1180px] px-4 pb-20 pt-6 sm:px-5">
       <h1 className="text-display text-ink">2brain</h1>
       <p className="mt-1.5 max-w-[60ch] text-body text-muted">
-        El segundo cerebro de Sixteam: reuniones, conversaciones, notas de voz y conocimiento. Las reuniones ya
-        viven aquí; el resto se abre en 2brain mientras se integra.
+        El segundo cerebro de Sixteam: reuniones, conversaciones, notas de voz, videos y conocimiento, todo dentro
+        de AgentOS.
       </p>
 
       {error ? <p className="mt-4 text-small text-muted">No se pudo leer el estado de 2brain</p> : null}
@@ -153,42 +138,66 @@ export default function BrainView() {
           name="Conversaciones"
           description="Chats de WhatsApp del agente 2brain y sus acciones."
           status={hubChip ? <Chip tone={hubChip.tone}>{hubChip.label}</Chip> : null}
-          action={<ExternalAction href={`${BRAIN_URL}/conversaciones`} />}
+          action={
+            <Link to={paths.brainConversaciones()} className="press text-small font-semibold text-link hover:underline">
+              Abrir
+            </Link>
+          }
         />
         <ModuleCard
           icon={Mic}
           name="Notas de voz"
           description="Notas transcritas y sincronizadas a Notion."
           status={hubChip ? <Chip tone={hubChip.tone}>{hubChip.label}</Chip> : null}
-          action={<ExternalAction href={`${BRAIN_URL}/notas`} />}
+          action={
+            <Link to={paths.brainNotasVoz()} className="press text-small font-semibold text-link hover:underline">
+              Abrir
+            </Link>
+          }
         />
         <ModuleCard
           icon={AudioLines}
           name="Grabadora"
           description="Graba una nota de voz desde el móvil."
           status={hubChip ? <Chip tone={hubChip.tone}>{hubChip.label}</Chip> : null}
-          action={<ExternalAction href={`${BRAIN_URL}/recorder`} />}
+          action={
+            <Link to={paths.brainGrabadora()} className="press text-small font-semibold text-link hover:underline">
+              Abrir
+            </Link>
+          }
         />
         <ModuleCard
           icon={Clapperboard}
           name="Videos"
           description="Transcripción de videos por URL."
           status={hubChip ? <Chip tone={hubChip.tone}>{hubChip.label}</Chip> : null}
-          action={<ExternalAction href={`${BRAIN_URL}/video-ingest`} />}
+          action={
+            <Link to={paths.brainVideos()} className="press text-small font-semibold text-link hover:underline">
+              Abrir
+            </Link>
+          }
         />
         <ModuleCard
           icon={Waypoints}
           name="Grafo"
           description="Contactos, empresas, reuniones y temas conectados."
           status={hubChip ? <Chip tone={hubChip.tone}>{hubChip.label}</Chip> : null}
-          action={<ExternalAction href={`${BRAIN_URL}/grafo`} />}
+          action={
+            <Link to={paths.brainGrafo()} className="press text-small font-semibold text-link hover:underline">
+              Abrir
+            </Link>
+          }
         />
         <ModuleCard
           icon={Bot}
           name="Agente 2brain"
           description="Estado, prompt y herramientas del agente conversacional."
           status={hubChip ? <Chip tone={hubChip.tone}>{hubChip.label}</Chip> : null}
-          action={<ExternalAction href={`${BRAIN_URL}/agente`} />}
+          action={
+            <Link to={paths.brainAgente()} className="press text-small font-semibold text-link hover:underline">
+              Abrir
+            </Link>
+          }
         />
         <ModuleCard
           icon={BookOpen}

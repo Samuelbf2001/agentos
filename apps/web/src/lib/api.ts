@@ -251,6 +251,20 @@ async function request<T>(
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
+/**
+ * Petición genérica tipada para clientes de módulo (2brain): cada módulo
+ * (`lib/brain/<modulo>.ts`) la usa sin tocar este archivo. Mismo token,
+ * mismos errores (`ApiError`) que el resto de `api`.
+ */
+export function apiRequest<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  return request<T>(path, init);
+}
+
+/** URL absoluta de un recurso de la API (para `<img>`/`<a>`; la sesión viaja en cookie). */
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 export const api = {
   people: () => request<{ people: Person[] }>("/api/auth/people"),
   login: (password: string, personId: string) =>
