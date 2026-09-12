@@ -26,6 +26,8 @@ import {
   PEEK_MODES,
   type PeekMode,
 } from "../../lib/tareas";
+import { getTaskAssignees, getTaskLabels, taskAssigneePersonId, taskDueTimestamp } from "../../lib/types";
+import { ExecutionPromptButton } from "./FieldAssist";
 import { TaskBody } from "./TaskBody";
 
 export const PEEK_INSET_VAR = "--task-peek-inset";
@@ -247,6 +249,27 @@ export function TaskPeekShell() {
                   </button>
                 ))}
               </div>
+            ) : null}
+            {/* El prompt de ejecución es de la tarea entera, no de un campo:
+                por eso vive aquí y no junto a la descripción. */}
+            {detail ? (
+              <ExecutionPromptButton
+                variant="text"
+                taskId={detail.task.id}
+                draft={() => ({
+                  title: detail.task.title,
+                  description: detail.task.description ?? "",
+                  definition_of_done: detail.task.definitionOfDone ?? "",
+                  project_id: detail.task.projectId,
+                  priority: detail.task.priority,
+                  due_at: taskDueTimestamp(detail.task),
+                  labels: getTaskLabels(detail.task),
+                  assignee_person_ids: getTaskAssignees(detail.task)
+                    .map(taskAssigneePersonId)
+                    .filter((id): id is string => Boolean(id)),
+                })}
+                className="ml-1 hidden sm:inline-flex"
+              />
             ) : null}
             <span className="ml-2 min-w-0 flex-1 truncate text-label font-bold text-faint">Ficha de tarea</span>
             <Dialog.Close

@@ -18,10 +18,13 @@ import {
   agrupar,
   chipsActivos,
   clienteLabel,
+  extractoDescripcion,
   filtrar,
   filtrosAParams,
+  insertarEnCursor,
   ordenar,
   parseFiltros,
+  parseVista,
   type Contexto,
 } from "../src/lib/tareas";
 import {
@@ -325,6 +328,66 @@ describe("cliente y query", () => {
       )[0]!.value,
     ).toBe("Delta Logística");
   });
+
+  it("el tablero es el modo por defecto y sólo la tabla viaja en la query", () => {
+    expect(parseVista(new URLSearchParams(""))).toBe("tablero");
+    expect(parseVista(new URLSearchParams("vista=tabla"))).toBe("tabla");
+    // Un valor inventado no rompe la vista: vuelve al default.
+    expect(parseVista(new URLSearchParams("vista=grafo"))).toBe("tablero");
+    expect(filtrosAParams(FILTROS_VACIOS, { vista: "tablero" }).toString()).toBe("");
+    expect(filtrosAParams(FILTROS_VACIOS, { vista: "tabla" }).get("vista")).toBe("tabla");
+  });
+});
+
+// ── Texto de la tarjeta y escritura en el cursor (puros) ────────────────────
+
+describe("extractoDescripcion (puro)", () => {
+  it("deja prosa: sin imágenes, sin sintaxis y con el texto de los enlaces", () => {
+    const markdown = [
+      "## Objetivo",
+      "",
+      "Mapear el **proceso** de cobranza con [el brief](https://x.test/brief).",
+      "",
+      "![Diagrama](https://img.test/a.png)",
+      "",
+      "- primer paso",
+    ].join("\n");
+    const extracto = extractoDescripcion(markdown);
+    expect(extracto).toBe("Objetivo Mapear el proceso de cobranza con el brief. primer paso");
+    expect(extracto).not.toContain("![");
+    expect(extracto).not.toContain("https://");
+  });
+
+  it("recorta con puntos suspensivos y aguanta vacío o nulo", () => {
+    expect(extractoDescripcion(null)).toBe("");
+    expect(extractoDescripcion("")).toBe("");
+    const largo = extractoDescripcion("palabra ".repeat(60), 40);
+    expect(largo.length).toBeLessThanOrEqual(41);
+    expect(largo.endsWith("…")).toBe(true);
+  });
+
+  it("tira los bloques de código enteros: en dos líneas no cabe un programa", () => {
+    expect(extractoDescripcion("Antes\n\n```js\nconst a = 1;\n```\n\nDespués")).toBe("Antes Después");
+  });
+});
+
+describe("insertarEnCursor (puro)", () => {
+  it("escribe en la posición y devuelve dónde queda el cursor", () => {
+    const { value, cursor } = insertarEnCursor("hola", 4, "X");
+    expect(value).toBe("hola\n\nX");
+    expect(cursor).toBe(value.length);
+  });
+
+  it("separa con líneas en blanco cuando cae pegado a otro contenido", () => {
+    const { value, cursor } = insertarEnCursor("uno\ndos", 3, "![a](u)");
+    expect(value).toBe("uno\n\n![a](u)\ndos");
+    expect(value.slice(0, cursor).endsWith("![a](u)")).toBe(true);
+  });
+
+  it("acota una posición imposible en vez de romper el texto", () => {
+    expect(insertarEnCursor("abc", 99, "Z").value).toBe("abc\n\nZ");
+    expect(insertarEnCursor("abc", -5, "Z").value).toBe("Z\n\nabc");
+  });
 });
 
 // ── La vista ────────────────────────────────────────────────────────────────
@@ -396,7 +459,11 @@ function Ubicacion() {
   return <span data-testid="ubicacion">{location.search}</span>;
 }
 
-function renderTareas(entry = "/tareas") {
+/**
+ * La vista arranca en TABLERO desde el rediseño; los tests de la tabla piden
+ * la tabla en la URL, igual que hace un humano al pulsar el conmutador.
+ */
+function renderTareas(entry = "/tareas?vista=tabla") {
   useStore.setState({
     person,
     token: "tok",
@@ -510,7 +577,7 @@ describe("TareasView (render)", () => {
   it("la cabecera ordena por su columna y alterna el sentido", async () => {
     // Sin agrupar: el orden de columna se ve en la lista entera, no partido
     // en cabeceras de grupo (que además repetirían el testid del botón).
-    renderTareas("/tareas?agrupar=ninguna");
+    renderTareas("/tareas?agrupar=ninguna&vista=tabla");
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
 
     const ids = () =>
@@ -572,20 +639,30 @@ describe("TareasView (render)", () => {
   });
 
   it("arranca con el filtro ya puesto cuando viene en la query", async () => {
-    renderTareas("/tareas?responsable=yo");
+    renderTareas("/tareas?responsable=yo&vista=tabla");
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
     expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull();
     expect(screen.getByTestId("tareas-chip-responsable").textContent).toContain("Yo");
   });
 
-  it("la creación rápida manda título y proyecto, y recuerda el último usado", async () => {
+  it("«Nueva tarea» abre el modal, deja elegir proyecto y crea", async () => {
     renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tareas-alta-titulo")).toBeTruthy());
-    fireEvent.change(screen.getByTestId("tareas-alta-titulo"), {
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("tareas-nueva"));
+
+    const dialog = await screen.findByTestId("create-task-dialog");
+    // El proyecto de partida trae su cliente puesto; para irse a otro cliente
+    // se cambia el cliente primero, que es justo lo que filtra los proyectos.
+    fireEvent.change(within(dialog).getByTestId("new-task-client"), {
+      target: { value: projectBConOrg.orgId },
+    });
+    fireEvent.change(within(dialog).getByTestId("new-task-project"), {
+      target: { value: projectB.id },
+    });
+    fireEvent.change(within(dialog).getByTestId("new-task-title"), {
       target: { value: "Llamar al sponsor" },
     });
-    fireEvent.change(screen.getByTestId("tareas-alta-proyecto"), { target: { value: projectB.id } });
-    fireEvent.click(screen.getByTestId("tareas-alta-enviar"));
+    fireEvent.click(within(dialog).getByTestId("new-task-submit"));
 
     await waitFor(() => {
       const post = calls.find((c) => c.method === "POST" && c.url.includes("/api/tasks"));
@@ -593,22 +670,44 @@ describe("TareasView (render)", () => {
       expect(post!.body).toMatchObject({
         project_id: projectB.id,
         title: "Llamar al sponsor",
+        // La etapa acompaña al proyecto elegido, no a la del proyecto de partida.
         stage: projectB.stage,
       });
     });
+    // El proyecto elegido se recuerda para la próxima alta.
     expect(localStorage.getItem("agentos_tareas_ultimo_proyecto")).toBe(projectB.id);
-    // La tarea recién creada entra en la base sin recargar la vista.
-    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-nueva")).toBeTruthy());
   });
 
-  it("«Más campos…» abre el diálogo completo con el título ya escrito", async () => {
+  it("la tecla n abre el alta sin tocar el ratón", async () => {
     renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tareas-alta-titulo")).toBeTruthy());
-    fireEvent.change(screen.getByTestId("tareas-alta-titulo"), { target: { value: "Preparar acta" } });
-    fireEvent.click(screen.getByTestId("tareas-alta-mas"));
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    expect(screen.queryByTestId("create-task-dialog")).toBeNull();
+    fireEvent.keyDown(window, { key: "n" });
+    expect(await screen.findByTestId("create-task-dialog")).toBeTruthy();
+  });
 
+  it("el cliente filtra los proyectos que ofrece el alta", async () => {
+    renderTareas();
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("tareas-nueva"));
     const dialog = await screen.findByTestId("create-task-dialog");
-    expect((within(dialog).getByLabelText(/Título/) as HTMLInputElement).value).toBe("Preparar acta");
+    const proyecto = within(dialog).getByTestId("new-task-project") as HTMLSelectElement;
+    const opciones = () => [...proyecto.querySelectorAll("option")].map((o) => o.value);
+    // El proyecto de partida trae su cliente puesto: sólo se ven los suyos.
+    expect(opciones()).toContain(project.id);
+    expect(opciones()).not.toContain(projectB.id);
+
+    // "Todos los clientes" devuelve la base entera, agrupada por cliente.
+    fireEvent.change(within(dialog).getByTestId("new-task-client"), { target: { value: "" } });
+    expect(opciones()).toContain(projectB.id);
+    expect([...proyecto.querySelectorAll("optgroup")].map((g) => g.label)).toContain("ACME S.A.");
+
+    // Y elegir el otro cliente recorta a sus proyectos.
+    fireEvent.change(within(dialog).getByTestId("new-task-client"), {
+      target: { value: projectBConOrg.orgId },
+    });
+    expect(opciones()).toContain(projectB.id);
+    expect(opciones()).not.toContain(project.id);
   });
 
   it("desde cada fila se salta al proyecto (Ruta) y al cliente, sin salir del trabajo", async () => {
@@ -827,29 +926,36 @@ describe("TareasView (tablero)", () => {
     localStorage.clear();
   });
 
-  it("el conmutador lleva al tablero, lo deja en la URL y un enlace así arranca en tablero", async () => {
-    const { unmount } = renderTareas();
-    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
-    expect(screen.queryByTestId("tareas-tablero")).toBeNull();
-
-    fireEvent.click(screen.getByTestId("tareas-vista-tablero"));
+  it("el tablero es el modo por defecto y la tabla es la que deja rastro en la URL", async () => {
+    const { unmount } = renderTareas("/tareas");
+    // Sin el parámetro vista en la query se abre el TABLERO.
     await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
-    // La tabla se va: son dos modos de la misma base, no dos listas a la vez.
     expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull();
     expect(screen.getByTestId("tareas-vista-tablero").getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByTestId("tareas-vista-tabla").getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tablero");
-    unmount();
 
-    // El mismo enlace, abierto de cero: arranca en tablero.
-    renderTareas("/tareas?vista=tablero");
-    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
-    expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy();
-
-    // Y volver a la tabla limpia la URL: la tabla es el default.
     fireEvent.click(screen.getByTestId("tareas-vista-tabla"));
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+    // La tabla se va: son dos modos de la misma base, no dos listas a la vez.
+    expect(screen.queryByTestId("tareas-tablero")).toBeNull();
+    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tabla");
+    unmount();
+
+    // El mismo enlace, abierto de cero: arranca en tabla.
+    renderTareas("/tareas?vista=tabla");
+    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-hoy")).toBeTruthy());
+
+    // Y volver al tablero limpia la URL: el tablero es el default.
+    fireEvent.click(screen.getByTestId("tareas-vista-tablero"));
+    await waitFor(() => expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy());
     expect(screen.getByTestId("ubicacion").textContent).not.toContain("vista=");
+  });
+
+  it("el «+» de una columna abre el alta con ese estado inicial", async () => {
+    renderTareas("/tareas");
+    await waitFor(() => expect(screen.getByTestId("tareas-tablero")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("tareas-nueva-en-READY"));
+    const dialog = await screen.findByTestId("create-task-dialog");
+    expect((within(dialog).getByTestId("new-task-status") as HTMLSelectElement).value).toBe("READY");
   });
 
   it("hay una columna por estado, con su conteo, y las tarjetas respetan el filtro", async () => {
@@ -876,7 +982,9 @@ describe("TareasView (tablero)", () => {
     expect(tarjeta.textContent).toContain("Zanjar el mapa SIPOC");
     expect(tarjeta.textContent).toContain("ACME S.A.");
     expect(tarjeta.textContent).toContain(project.name);
-    expect(tarjeta.textContent).toContain("Jorge");
+    // Los responsables van como avatares apilados: el nombre está en el título
+    // del grupo, no repetido en el texto de la tarjeta.
+    expect(within(tarjeta).getAllByTitle(/Jorge/).length).toBeGreaterThan(0);
 
     // "Mis tareas" recorta el tablero igual que recorta la tabla.
     fireEvent.click(screen.getByTestId("tareas-mias"));
@@ -1002,9 +1110,10 @@ describe("Tareas en la navegación global", () => {
     ]);
 
     const { unmount } = renderApp("/my-tasks");
-    await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
+    // La redirección lleva a la vista en su modo por defecto: el tablero.
+    await waitFor(() => expect(screen.getByTestId("tarea-tarjeta-t-acme-vencida")).toBeTruthy());
     // Es el filtro por responsable el que manda: nada de otra persona.
-    expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull();
+    expect(screen.queryByTestId("tarea-tarjeta-t-acme-hoy")).toBeNull();
     expect(screen.getByTestId("tareas-chip-responsable")).toBeTruthy();
     unmount();
 
@@ -1104,7 +1213,7 @@ describe("TareasView (las terminadas ocultas se anuncian)", () => {
     mockFetch(rutasConCerradas());
     // ACME tiene dos de las tres terminadas; con su filtro puesto, el aviso
     // tiene que hablar de ESE cliente y no de la base entera.
-    renderTareas(`/tareas?cliente=${project.orgId}`);
+    renderTareas(`/tareas?cliente=${project.orgId}&vista=tabla`);
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
 
     expect(screen.getByTestId("tareas-contador").textContent).toContain("2 tareas");
@@ -1140,8 +1249,10 @@ describe("TareasView (las terminadas ocultas se anuncian)", () => {
     await waitFor(() => expect(screen.getByTestId("tareas-conteo-DONE").textContent).toBe("2"));
     expect(screen.getByTestId("tareas-conteo-CANCELLED").textContent).toBe("1");
     expect(screen.getByTestId("tarea-tarjeta-t-acme-cerrada")).toBeTruthy();
-    // Y sigue siendo el tablero: no se ha cambiado de modo por el camino.
-    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tablero");
+    // Y sigue siendo el tablero: no se ha cambiado de modo por el camino. El
+    // tablero es el default, así que su rastro es la AUSENCIA del parámetro.
+    expect(screen.getByTestId("ubicacion").textContent).not.toContain("vista=tabla");
+    expect(screen.getByTestId("tareas-tablero")).toBeTruthy();
   });
 });
 
@@ -1176,7 +1287,7 @@ describe("TareasView (filtros rápidos en la barra)", () => {
     await waitFor(() => expect(screen.queryByTestId("tarea-fila-t-acme-hoy")).toBeNull());
     expect(screen.getByTestId("tarea-fila-t-beta-semana")).toBeTruthy();
     expect(screen.getByTestId("ubicacion").textContent).toBe(
-      `?${filtrosAParams({ ...FILTROS_VACIOS, cliente: projectB.orgId }).toString()}`,
+      `?${filtrosAParams({ ...FILTROS_VACIOS, cliente: projectB.orgId }, { vista: "tabla" }).toString()}`,
     );
 
     // Responsable: se combina con el anterior, no lo reemplaza.
@@ -1188,7 +1299,7 @@ describe("TareasView (filtros rápidos en la barra)", () => {
         ...FILTROS_VACIOS,
         cliente: projectB.orgId,
         responsable: YO,
-      }).toString()}`,
+      }, { vista: "tabla" }).toString()}`,
     );
 
     // Vencimiento: los mismos cortes de siempre.
@@ -1202,7 +1313,7 @@ describe("TareasView (filtros rápidos en la barra)", () => {
           cliente: projectB.orgId,
           responsable: YO,
           vencimiento: "sin-fecha",
-        }).toString()}`,
+        }, { vista: "tabla" }).toString()}`,
       ),
     );
     expect(screen.queryByTestId("tarea-fila-t-beta-semana")).toBeNull();
@@ -1216,7 +1327,7 @@ describe("TareasView (filtros rápidos en la barra)", () => {
 
   it("reflejan al montar lo que venga en la URL (enlace compartido)", async () => {
     mockFetch(viewRoutes);
-    renderTareas(`/tareas?cliente=${project.orgId}&responsable=yo&vencimiento=vencidas`);
+    renderTareas(`/tareas?cliente=${project.orgId}&responsable=yo&vencimiento=vencidas&vista=tabla`);
     await waitFor(() => expect(screen.getByTestId("tarea-fila-t-acme-vencida")).toBeTruthy());
 
     expect((screen.getByTestId("tareas-filtro-cliente") as HTMLSelectElement).value).toBe(
@@ -1243,7 +1354,8 @@ describe("TareasView (filtros rápidos en la barra)", () => {
     expect(screen.getByTestId("tarea-tarjeta-t-acme-hoy")).toBeTruthy();
     expect(screen.getByTestId("tareas-conteo-READY").textContent).toBe("1");
     expect(screen.getByTestId("tareas-conteo-BACKLOG").textContent).toBe("0");
-    expect(screen.getByTestId("ubicacion").textContent).toContain("vista=tablero");
+    // El tablero es el default: no deja rastro, la tabla sí lo dejaría.
+    expect(screen.getByTestId("ubicacion").textContent).not.toContain("vista=tabla");
     expect(screen.getByTestId("ubicacion").textContent).toContain(`cliente=${project.orgId}`);
   });
 });

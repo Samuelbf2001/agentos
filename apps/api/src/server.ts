@@ -28,6 +28,8 @@ import { registerOrgGraphRoutes } from "./routes/org-graph.js";
 import { registerProcessRoutes } from "./routes/processes.js";
 import { registerToolCatalogRoutes } from "./routes/tool-catalog.js";
 import { registerRoleAgentRoutes } from "./routes/role-agent.js";
+import { registerUploadRoutes } from "./routes/uploads.js";
+import { registerAiRoutes } from "./routes/ai.js";
 import { registerWebChannel } from "./routes/channel-web.js";
 import { registerWs } from "./ws.js";
 
@@ -136,6 +138,8 @@ export async function buildApi(options: ApiOptions = {}): Promise<Api> {
   registerProcessRoutes(app, ctx);
   registerToolCatalogRoutes(app, ctx);
   registerRoleAgentRoutes(app, ctx);
+  registerUploadRoutes(app, ctx);
+  registerAiRoutes(app, ctx);
   registerWebChannel(app, ctx);
   registerWs(app, ctx);
 

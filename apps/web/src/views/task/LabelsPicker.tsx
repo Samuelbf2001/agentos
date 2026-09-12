@@ -62,10 +62,13 @@ export function LabelsEditor({
   value,
   onChange,
   catalog,
+  /** En el popover el foco va al campo; en un formulario largo, no: lo tiene el título. */
+  autoFocus = true,
 }: {
   value: string[];
   onChange(labels: string[]): void;
   catalog: LabelUsage[];
+  autoFocus?: boolean;
 }) {
   const [input, setInput] = useState("");
   const suggestions = useMemo(() => {
@@ -105,7 +108,7 @@ export function LabelsEditor({
       <input
         id="task-label-input"
         data-testid="task-label-input"
-        autoFocus
+        autoFocus={autoFocus}
         value={input}
         onChange={(event) => setInput(event.target.value)}
         onKeyDown={(event) => {

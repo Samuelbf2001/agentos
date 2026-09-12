@@ -1,75 +1,51 @@
 /**
- * Bloques del cuerpo de la ficha que NO cambian con el rediseño Notion
- * (artefactos, adjuntar evidencia, aviso de movimiento bloqueado) más los dos
- * editores de texto largo, que pierden el botón "Editar": textarea siempre
- * visible que guarda al perder el foco. `TaskDrawer.tsx` los reexporta para
- * no romper a quien ya los importaba (Hoy, alta de tarea, tests).
+ * Bloques del cuerpo de la ficha (evidencia, adjuntar, aviso de movimiento
+ * bloqueado) más los dos editores de texto largo, sin botón "Editar": el campo
+ * está siempre en sitio y guarda al perder el foco. `TaskDrawer.tsx` los
+ * reexporta para no romper a quien ya los importaba (Hoy, alta de tarea,
+ * tests).
+ *
+ * La descripción ya no tiene formulario de "insertar enlace o imagen por URL":
+ * la imagen se pega, se suelta o se elige (`MarkdownField`) y el enlace se pega
+ * tal cual.
  */
 import { useEffect, useRef, useState } from "react";
 import type { BlockedMove } from "../../state/store";
 import { CodeBlock, Markdown } from "../../components/Markdown";
-import type { Artifact } from "../../lib/types";
+import type { Artifact, TaskAssistDraft } from "../../lib/types";
+import { FieldAssist } from "./FieldAssist";
+import { MarkdownField } from "./MarkdownField";
 
-type DescriptionInsertKind = "link" | "image";
-
-function cleanMarkdownLabel(value: string, fallback: string): string {
-  const clean = value.trim().replace(/[\[\]]/g, "");
-  return clean || fallback;
-}
-
-/** Solo dejamos insertar recursos web explícitos; evita enlaces javascript: y data: en tareas. */
-export function buildDescriptionInsert(kind: DescriptionInsertKind, label: string, url: string): string | null {
-  const candidate = url.trim();
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
-    const safeLabel = cleanMarkdownLabel(label, kind === "image" ? "Imagen" : "Enlace");
-    return kind === "image"
-      ? `![${safeLabel}](<${parsed.toString()}>)`
-      : `[${safeLabel}](<${parsed.toString()}>)`;
-  } catch {
-    return null;
-  }
-}
-
-function insertMarkdownAtCursor(
-  value: string,
-  insertion: string,
-  selectionStart: number,
-  selectionEnd: number,
-): { value: string; cursor: number } {
-  const before = value.slice(0, selectionStart);
-  const after = value.slice(selectionEnd);
-  const prefix = before && !before.endsWith("\n") ? "\n\n" : "";
-  const suffix = after && !after.startsWith("\n") ? "\n\n" : "";
-  const next = `${before}${prefix}${insertion}${suffix}${after}`;
-  return { value: next, cursor: before.length + prefix.length + insertion.length };
+/** Lo que los editores necesitan para poder llamar al asistente. */
+export interface FieldAssistHook {
+  draft: () => TaskAssistDraft;
+  taskId?: string;
 }
 
 /**
- * Descripción siempre editable (patrón Notion): textarea en sitio, inserciones
- * guiadas de enlace/imagen y vista previa. Guarda al salir del bloque si hay
- * cambios; no hay botón de guardar. Usa el PATCH con optimistic locking del
- * store, como el resto de la ficha.
+ * Descripción siempre editable (patrón Notion): campo Markdown en sitio con
+ * imágenes y asistencia de IA, y vista previa. Guarda al salir del bloque si
+ * hay cambios; no hay botón de guardar. Usa el PATCH con optimistic locking
+ * del store, como el resto de la ficha.
  */
 export function TaskDescriptionEditor({
   value,
   saving,
   onSave,
+  assist,
 }: {
   value: string;
   saving: boolean;
   onSave: (value: string | null) => Promise<boolean>;
+  assist?: FieldAssistHook;
 }) {
   const [draft, setDraft] = useState(value);
-  const [insertKind, setInsertKind] = useState<DescriptionInsertKind | null>(null);
-  const [insertLabel, setInsertLabel] = useState("");
-  const [insertUrl, setInsertUrl] = useState("");
-  const [insertError, setInsertError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   /** Último texto enviado: si `value` vuelve igual, no pisa lo escrito después. */
   const sentRef = useRef<string | null>(null);
+  /** El borrador vivo, para que el asistente lea lo que hay AHORA en pantalla. */
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   useEffect(() => {
     const sent = sentRef.current;
@@ -82,42 +58,11 @@ export function TaskDescriptionEditor({
 
   const dirty = draft !== value;
 
-  function openInsert(kind: DescriptionInsertKind) {
-    const textarea = textareaRef.current;
-    const selected = textarea
-      ? draft.slice(textarea.selectionStart, textarea.selectionEnd).trim()
-      : "";
-    setInsertKind(kind);
-    setInsertLabel(selected);
-    setInsertUrl("");
-    setInsertError(null);
-  }
-
-  function addInsert() {
-    if (!insertKind) return;
-    const markdown = buildDescriptionInsert(insertKind, insertLabel, insertUrl);
-    if (!markdown) {
-      setInsertError("Usa una URL que empiece por http:// o https://.");
-      return;
-    }
-    const textarea = textareaRef.current;
-    const start = textarea?.selectionStart ?? draft.length;
-    const end = textarea?.selectionEnd ?? draft.length;
-    const result = insertMarkdownAtCursor(draft, markdown, start, end);
-    setDraft(result.value);
-    setInsertKind(null);
-    setInsertLabel("");
-    setInsertUrl("");
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(result.cursor, result.cursor);
-    });
-  }
-
   async function saveDescription() {
-    if (!dirty) return;
-    sentRef.current = draft;
-    const ok = await onSave(draft.trim() ? draft : null);
+    if (draftRef.current === value) return;
+    const next = draftRef.current;
+    sentRef.current = next;
+    const ok = await onSave(next.trim() ? next : null);
     if (!ok) sentRef.current = null;
   }
 
@@ -132,52 +77,30 @@ export function TaskDescriptionEditor({
         void saveDescription();
       }}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="task-description-title" className="text-small font-bold text-muted">Descripción</h3>
-        <div className="flex flex-wrap items-center gap-2" aria-label="Insertar contenido en descripción">
-          <button type="button" onClick={() => openInsert("link")} className="min-h-9 rounded-soft border border-line bg-surface px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link">↗ Enlace</button>
-          <button type="button" onClick={() => openInsert("image")} className="min-h-9 rounded-soft border border-line bg-surface px-3 py-1.5 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link">▧ Imagen</button>
-          {saving && dirty ? <span className="text-label text-faint">Guardando…</span> : null}
-        </div>
-      </div>
-
-      {insertKind ? (
-        <fieldset className="mt-2 rounded-panel border border-link bg-surface p-3">
-          <legend className="px-1 text-small font-semibold text-link">{insertKind === "image" ? "Añadir imagen por URL" : "Añadir enlace"}</legend>
-          <label className="block text-label font-medium text-muted" htmlFor="description-insert-label">{insertKind === "image" ? "Texto alternativo" : "Texto visible"}</label>
-          <input id="description-insert-label" value={insertLabel} onChange={(event) => setInsertLabel(event.target.value)} placeholder={insertKind === "image" ? "Ej. Boceto de flujo" : "Ej. Documento de referencia"} className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link" />
-          <label className="mt-2 block text-label font-medium text-muted" htmlFor="description-insert-url">URL</label>
-          <input id="description-insert-url" value={insertUrl} onChange={(event) => { setInsertUrl(event.target.value); setInsertError(null); }} placeholder="https://…" inputMode="url" className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link" />
-          {insertError ? <p className="mt-1 text-label text-broken" role="alert">{insertError}</p> : null}
-          <div className="mt-3 flex gap-2">
-            <button type="button" onClick={addInsert} className="min-h-10 rounded-soft bg-ink px-3 py-1.5 text-small font-semibold text-surface hover:bg-ink-2 focus:outline-none focus:ring-2 focus:ring-link">Insertar</button>
-            <button type="button" onClick={() => { setInsertKind(null); setInsertError(null); }} className="min-h-10 rounded-soft px-3 py-1.5 text-small font-semibold text-muted hover:bg-line-soft focus:outline-none focus:ring-2 focus:ring-link">Cancelar</button>
-          </div>
-        </fieldset>
-      ) : null}
-
-      <label htmlFor="task-description-editor" className="sr-only">Descripción</label>
-      <textarea
-        ref={textareaRef}
+      <MarkdownField
         id="task-description-editor"
-        data-testid="task-description-input"
+        testId="task-description-input"
+        label="Descripción"
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-            event.preventDefault();
-            void saveDescription();
-          }
-        }}
-        placeholder="Explica el objetivo, pega enlaces o añade una imagen…"
-        className="mt-2 min-h-24 w-full resize-y rounded-panel border border-transparent bg-transparent px-2 py-1.5 text-body leading-relaxed hover:border-line focus:border-link focus:bg-surface focus:outline-none focus:ring-2 focus:ring-link"
+        onChange={setDraft}
+        onCommit={() => void saveDescription()}
+        placeholder="Explica el objetivo, pega enlaces o arrastra una imagen…"
+        header={
+          <h3 id="task-description-title" className="text-small font-bold text-muted">
+            Descripción
+          </h3>
+        }
+        status={saving && dirty ? <span className="text-label text-faint">Guardando…</span> : null}
+        {...(assist
+          ? {
+              assist: {
+                field: "description" as const,
+                draft: () => ({ ...assist.draft(), description: draftRef.current }),
+                ...(assist.taskId ? { taskId: assist.taskId } : {}),
+              },
+            }
+          : {})}
       />
-      {draft.trim() ? (
-        <div className="mt-2 rounded-panel border border-line-soft bg-surface-2 p-3" aria-live="polite">
-          <p className="text-label font-bold text-faint">Vista previa</p>
-          <div className="mt-1 text-body"><Markdown>{draft}</Markdown></div>
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -190,13 +113,17 @@ export function DefinitionOfDoneEditor({
   value,
   saving,
   onSave,
+  assist,
 }: {
   value: string;
   saving: boolean;
   onSave: (value: string | null) => Promise<boolean>;
+  assist?: FieldAssistHook;
 }) {
   const [draft, setDraft] = useState(value);
   const sentRef = useRef<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   useEffect(() => {
     if (sentRef.current !== null && value === sentRef.current) {
@@ -207,7 +134,7 @@ export function DefinitionOfDoneEditor({
   }, [value]);
 
   async function save(): Promise<void> {
-    const next = draft.trim();
+    const next = draftRef.current.trim();
     if (next === value.trim()) return;
     sentRef.current = next;
     const ok = await onSave(next ? next : null);
@@ -216,11 +143,23 @@ export function DefinitionOfDoneEditor({
 
   return (
     <section className="mt-5" aria-labelledby="task-dod-title">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
         <h3 id="task-dod-title" className="text-small font-bold text-muted">
           Definición de terminado
         </h3>
-        {saving && draft.trim() !== value.trim() ? <span className="text-label text-faint">Guardando…</span> : null}
+        <span className="ml-auto flex items-center gap-0.5">
+          {saving && draft.trim() !== value.trim() ? (
+            <span className="text-label text-faint">Guardando…</span>
+          ) : null}
+          {assist ? (
+            <FieldAssist
+              field="definition_of_done"
+              draft={() => ({ ...assist.draft(), definition_of_done: draftRef.current })}
+              {...(assist.taskId ? { taskId: assist.taskId } : {})}
+              onApply={(text) => setDraft(text)}
+            />
+          ) : null}
+        </span>
       </div>
       <label htmlFor="task-dod-input" className="sr-only">
         Definición de terminado
@@ -295,9 +234,10 @@ export function fromDateTimeLocal(value: string): number | null {
 }
 
 /**
- * Adjuntar evidencia: archivo real (multipart) o enlace. Es lo que convierte
- * la regla anti-teatro del motor en algo que un humano puede satisfacer desde
- * la interfaz sin pedirle nada a un agente.
+ * Adjuntar evidencia: un solo sitio donde cae todo. Se suelta un archivo, se
+ * elige con el botón o se pega un enlace en el mismo campo; el título es
+ * opcional y hay un único botón. Antes eran dos pestañas y cuatro controles
+ * para una acción sola ("muchos botones para guardar o eliminar cosas").
  */
 export function ArtifactAttacher({
   saving,
@@ -308,89 +248,86 @@ export function ArtifactAttacher({
   onUpload: (file: File, title?: string) => Promise<boolean>;
   onLink: (input: { title: string; url: string }) => Promise<boolean>;
 }) {
-  const [mode, setMode] = useState<"file" | "link">("file");
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const urlError =
-    mode === "link" && url.trim() && !/^https?:\/\//i.test(url.trim())
+    !file && url.trim() && !/^https?:\/\//i.test(url.trim())
       ? "Usa una URL que empiece por http:// o https://."
       : null;
 
+  function limpiar(): void {
+    setFile(null);
+    setTitle("");
+    setUrl("");
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
   async function submit(): Promise<void> {
     setError(null);
-    if (mode === "file") {
-      if (!file) {
-        setError("Elige un archivo.");
-        return;
-      }
+    if (file) {
       const ok = await onUpload(file, title.trim() || undefined);
-      if (ok) {
-        setFile(null);
-        setTitle("");
-        if (fileRef.current) fileRef.current.value = "";
-      }
+      if (ok) limpiar();
       return;
     }
     if (!url.trim() || urlError) {
-      setError(urlError ?? "Escribe la URL del entregable.");
+      setError(urlError ?? "Suelta un archivo o pega el enlace del entregable.");
       return;
     }
     const ok = await onLink({ title: title.trim() || url.trim(), url: url.trim() });
-    if (ok) {
-      setUrl("");
-      setTitle("");
-    }
+    if (ok) limpiar();
   }
 
   return (
-    <div className="mt-2 rounded-panel border border-dashed border-line bg-surface-2 p-3" data-testid="artifact-attacher">
-      <div className="flex gap-1.5" role="tablist" aria-label="Tipo de artefacto">
-        {(["file", "link"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={mode === value}
-            data-testid={`artifact-mode-${value}`}
-            onClick={() => {
-              setMode(value);
-              setError(null);
-            }}
-            className={`min-h-9 rounded-soft px-3 py-1.5 text-small font-semibold ${
-              mode === value ? "bg-ink text-surface" : "border border-line bg-surface text-muted"
-            }`}
+    <div
+      data-testid="artifact-attacher"
+      onDragOver={(event) => {
+        if (![...(event.dataTransfer?.types ?? [])].includes("Files")) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        setDragging(false);
+        const dropped = event.dataTransfer?.files?.[0];
+        if (!dropped) return;
+        event.preventDefault();
+        setFile(dropped);
+        setUrl("");
+        setError(null);
+      }}
+      className={`mt-2 rounded-panel border border-dashed p-3 transition-colors ${
+        dragging ? "border-link bg-link-bg" : "border-line bg-surface-2"
+      }`}
+    >
+      <label htmlFor="artifact-url" className="text-label font-semibold text-muted">
+        Suelta un archivo aquí o pega un enlace
+      </label>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {file ? (
+          <span
+            data-testid="artifact-file-chip"
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-surface px-2 py-1 text-small text-ink-2"
           >
-            {value === "file" ? "Archivo" : "Enlace"}
-          </button>
-        ))}
-      </div>
-
-      {mode === "file" ? (
-        <div className="mt-2">
-          <label htmlFor="artifact-file" className="text-label font-semibold text-muted">
-            Archivo del entregable
-          </label>
-          <input
-            ref={fileRef}
-            id="artifact-file"
-            data-testid="artifact-file"
-            type="file"
-            onChange={(event) => {
-              setFile(event.target.files?.[0] ?? null);
-              setError(null);
-            }}
-            className="mt-1 block w-full text-small text-muted file:mr-2 file:min-h-9 file:rounded-soft file:border-0 file:bg-ink file:px-3 file:py-2 file:text-small file:font-semibold file:text-surface"
-          />
-        </div>
-      ) : (
-        <div className="mt-2">
-          <label htmlFor="artifact-url" className="text-label font-semibold text-muted">
-            URL del entregable
-          </label>
+            <span aria-hidden="true">▤</span>
+            <span className="max-w-[14rem] truncate">{file.name}</span>
+            <button
+              type="button"
+              aria-label={`Quitar ${file.name}`}
+              onClick={() => {
+                setFile(null);
+                if (fileRef.current) fileRef.current.value = "";
+              }}
+              className="press min-h-5 min-w-5 rounded-full text-faint hover:text-broken focus:outline-none focus:ring-2 focus:ring-link"
+            >
+              ×
+            </button>
+          </span>
+        ) : (
           <input
             id="artifact-url"
             data-testid="artifact-url"
@@ -401,15 +338,36 @@ export function ArtifactAttacher({
               setError(null);
             }}
             placeholder="https://…"
-            className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+            className="min-h-10 min-w-0 flex-1 rounded-soft border border-line bg-surface px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
           />
-          {urlError ? (
-            <p className="mt-1 text-label text-broken" role="alert">
-              {urlError}
-            </p>
-          ) : null}
-        </div>
-      )}
+        )}
+        <input
+          ref={fileRef}
+          id="artifact-file"
+          data-testid="artifact-file"
+          type="file"
+          className="sr-only"
+          aria-label="Elegir archivo del entregable"
+          onChange={(event) => {
+            setFile(event.target.files?.[0] ?? null);
+            setUrl("");
+            setError(null);
+          }}
+        />
+        <button
+          type="button"
+          data-testid="artifact-file-pick"
+          onClick={() => fileRef.current?.click()}
+          className="press min-h-10 shrink-0 rounded-soft border border-line bg-surface px-3 text-small font-semibold text-ink-2 hover:border-link hover:text-link focus:outline-none focus:ring-2 focus:ring-link"
+        >
+          Elegir archivo
+        </button>
+      </div>
+      {urlError ? (
+        <p className="mt-1 text-label text-broken" role="alert">
+          {urlError}
+        </p>
+      ) : null}
 
       <label htmlFor="artifact-title" className="mt-2 block text-label font-semibold text-muted">
         Título (opcional)
@@ -420,7 +378,7 @@ export function ArtifactAttacher({
         value={title}
         onChange={(event) => setTitle(event.target.value)}
         placeholder="Ej. Informe de diagnóstico v2"
-        className="mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+        className="mt-1 min-h-10 w-full rounded-soft border border-line bg-surface px-2.5 py-2 text-small focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
       />
 
       {error ? (
@@ -434,9 +392,9 @@ export function ArtifactAttacher({
         data-testid="artifact-submit"
         disabled={saving || Boolean(urlError)}
         onClick={() => void submit()}
-        className="mt-2 min-h-10 w-full rounded-soft bg-link px-3 py-2 text-small font-semibold text-surface hover:bg-link disabled:cursor-not-allowed disabled:opacity-40"
+        className="press mt-2 min-h-10 w-full rounded-soft bg-ink px-3 py-2 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {saving ? "Adjuntando…" : "Adjuntar artefacto"}
+        {saving ? "Adjuntando…" : "Adjuntar"}
       </button>
     </div>
   );

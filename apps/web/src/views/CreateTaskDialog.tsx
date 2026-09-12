@@ -1,19 +1,36 @@
 /**
- * Alta de tarea desde el tablero.
+ * Alta de tarea: una ventana centrada, no un cajón.
  *
- * El formulario pide justo lo que las invariantes del motor van a exigir más
- * tarde: sin definición de terminado y sin responsable, la tarjeta se queda
- * atascada en BACKLOG porque `BACKLOG→READY` las reclama. Por eso ambos campos
- * se avisan aquí (en línea, mientras se escribe) en vez de dejar que el humano
- * descubra el bloqueo al arrastrar la tarjeta.
+ * "El crear tareas de añadir no es tan útil, se deja muy poca info" y "no
+ * permite elegir proyecto, de cliente; hazlo en ventana central en medio de la
+ * pantalla". Así que aquí se elige CLIENTE y PROYECTO (el cliente filtra los
+ * proyectos), el texto largo admite imágenes y asistencia de IA, y hay un solo
+ * botón para terminar: sin "Cancelar" ni "Guardar" compitiendo con él — se
+ * cierra con la × o con Esc, como cualquier ventana.
+ *
+ * El formulario sigue pidiendo lo que las invariantes del motor exigirán
+ * después: sin definición de terminado y sin responsable la tarjeta se queda
+ * en BACKLOG porque `BACKLOG→READY` las reclama. Se avisa aquí, en línea, en
+ * vez de dejar que el humano descubra el bloqueo al arrastrar.
+ *
+ * El estado inicial no viaja en el POST (`POST /api/tasks` no lo acepta: mira
+ * `apps/api/src/task-create.ts`): toda tarea nace en BACKLOG y, si se pidió
+ * otro estado alcanzable en un movimiento humano legal, se mueve justo después
+ * con `api.moveTask`. Si ese movimiento falla, la tarea ya existe y sólo se
+ * avisa por toast.
  */
-import * as Dialog from "@radix-ui/react-dialog";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../lib/api";
+import { Modal } from "../components/ui/Modal";
 import { useStore } from "../state/store";
-import { PersonAvatar } from "../components/ui";
-import { displayPersonName, useProjectRoster } from "../lib/roster";
-import { STAGES, type Stage, type TaskPriority } from "../lib/types";
-import { fromDateTimeLocal } from "./TaskDrawer";
+import { clienteLabel, clientesDe, guardarProyectoReciente } from "../lib/tareas";
+import { HUMAN_TRANSITIONS, STAGES, type Stage, type TaskPriority, type TaskStatus } from "../lib/types";
+import { STATUS_LABELS } from "../components/ui";
+import { FieldAssist } from "./task/FieldAssist";
+import { LabelsEditor } from "./task/LabelsPicker";
+import { MarkdownField } from "./task/MarkdownField";
+import { PeopleEditor } from "./task/PeopleEditor";
+import { fromDateTimeLocal } from "./task/TaskBlocks";
 
 export const STAGE_OPTION_LABEL: Record<Stage, string> = {
   ENTENDER: "Entender",
@@ -26,6 +43,18 @@ export const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
   { value: "normal", label: "Normal" },
   { value: "high", label: "Alta" },
   { value: "urgent", label: "Urgente" },
+];
+
+/**
+ * Estados en los que una tarea puede NACER: BACKLOG y los destinos humanos
+ * legales desde BACKLOG. CANCELLED se queda fuera porque nadie crea una tarea
+ * para cancelarla. Cualquier otro estado exige varios saltos y sus requisitos
+ * (evidencia, responsable), así que no se ofrece: la máquina de estados no se
+ * relaja desde la UI.
+ */
+export const ESTADOS_INICIALES: TaskStatus[] = [
+  "BACKLOG",
+  ...HUMAN_TRANSITIONS.BACKLOG.filter((status) => status !== "CANCELLED"),
 ];
 
 export interface CreateTaskDraft {
@@ -82,86 +111,124 @@ export function validateDraft(draft: CreateTaskDraft): { issues: DraftIssues; bl
   return { issues, blocking: Boolean(issues.title || issues.due) };
 }
 
-function normalizeLabelInput(raw: string): string {
-  return raw.trim().replace(/\s+/g, " ").toLocaleLowerCase("es");
-}
-
 export function CreateTaskDialog({
   open,
   onOpenChange,
   projectId,
-  defaultStage,
+  defaultStage = "ENTENDER",
   initialTitle = "",
+  initialStatus,
+  allowProjectChange = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projectId: string;
-  defaultStage: Stage;
+  /** Proyecto de partida. Siempre visible; editable sólo con `allowProjectChange`. */
+  projectId?: string;
+  defaultStage?: Stage;
   /**
-   * Título ya escrito fuera del diálogo. La creación rápida de la vista Tareas
-   * es una línea con título y proyecto: al pedir "más campos" no se puede
+   * Título ya escrito fuera del diálogo: al abrir "más campos" no se puede
    * perder lo que la persona ya tecleó.
    */
   initialTitle?: string;
+  /** Estado de la columna desde la que se pulsó "+" en el tablero. */
+  initialStatus?: TaskStatus;
+  /** La base transversal deja elegir cliente y proyecto; el tablero no. */
+  allowProjectChange?: boolean;
 }) {
   const createTask = useStore((state) => state.createTask);
   const taskCreating = useStore((state) => state.taskCreating);
   const labelCatalog = useStore((state) => state.labelCatalog);
   const openTask = useStore((state) => state.openTask);
-  // Roster compartido con la ficha: el proyecto manda cuando la API lo dio.
-  const roster = useProjectRoster(open ? projectId : null);
-  const peopleLoading = roster.loading;
-  const peopleOptions = roster.people;
+  const pushToast = useStore((state) => state.pushToast);
+  const projects = useStore((state) => state.projects);
+  const loadProjects = useStore((state) => state.loadProjects);
 
+  const [project, setProject] = useState<string>(projectId ?? "");
+  const [client, setClient] = useState<string>("");
+  const [status, setStatus] = useState<TaskStatus>("BACKLOG");
   const [draft, setDraft] = useState<CreateTaskDraft>(() => ({
     ...emptyDraft(defaultStage),
     title: initialTitle,
   }));
-  const [labelInput, setLabelInput] = useState("");
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [moving, setMoving] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const clientes = useMemo(() => clientesDe({ projects }), [projects]);
+  const proyectosVisibles = useMemo(
+    () => (client ? projects.filter((candidate) => candidate.orgId === client) : projects),
+    [projects, client],
+  );
+  /** Agrupados por cliente, igual que el selector de proyecto de la ficha. */
+  const gruposDeProyectos = useMemo(
+    () =>
+      clientes
+        .map((cliente) => ({
+          ...cliente,
+          projects: proyectosVisibles
+            .filter((candidate) => candidate.orgId === cliente.id)
+            .sort((a, b) => a.name.localeCompare(b.name, "es")),
+        }))
+        .filter((cliente) => cliente.projects.length > 0),
+    [clientes, proyectosVisibles],
+  );
+  const proyectoActual = projects.find((candidate) => candidate.id === project) ?? null;
 
   useEffect(() => {
     if (!open) return;
-    setDraft({ ...emptyDraft(defaultStage), title: initialTitle });
-    setLabelInput("");
+    if (allowProjectChange && projects.length === 0) void loadProjects();
+    const partida = projects.find((candidate) => candidate.id === projectId) ?? null;
+    setProject(projectId ?? "");
+    setClient(partida?.orgId ?? "");
+    setStatus(initialStatus && ESTADOS_INICIALES.includes(initialStatus) ? initialStatus : "BACKLOG");
+    setDraft({ ...emptyDraft(partida?.stage ?? defaultStage), title: initialTitle });
     setTouched({});
-    // El foco al primer campo evita que el humano tenga que buscar dónde escribir.
-    requestAnimationFrame(() => titleRef.current?.focus());
-  }, [open, defaultStage, initialTitle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, projectId, defaultStage, initialTitle, initialStatus]);
 
   const { issues, blocking } = validateDraft(draft);
+  const busy = taskCreating || moving;
+  /** El "+" de una columna a la que no se llega en un salto legal: se dice. */
+  const estadoInalcanzable =
+    initialStatus && !ESTADOS_INICIALES.includes(initialStatus) ? initialStatus : null;
 
   function patch(next: Partial<CreateTaskDraft>): void {
     setDraft((current) => ({ ...current, ...next }));
   }
 
-  function togglePerson(personId: string, checked: boolean): void {
-    setDraft((current) => {
-      const assigneeIds = checked
-        ? [...current.assigneeIds, personId]
-        : current.assigneeIds.filter((id) => id !== personId);
-      const primaryAssigneeId = assigneeIds.includes(current.primaryAssigneeId)
-        ? current.primaryAssigneeId
-        : assigneeIds[0] ?? "";
-      return { ...current, assigneeIds, primaryAssigneeId };
-    });
+  function elegirProyecto(nextId: string): void {
+    setProject(nextId);
+    const next = projects.find((candidate) => candidate.id === nextId);
+    if (next) {
+      setClient(next.orgId);
+      // La etapa acompaña al proyecto mientras nadie la haya tocado a mano.
+      if (!touched.stage) patch({ stage: next.stage });
+    }
   }
 
-  function addLabel(raw: string): void {
-    const label = normalizeLabelInput(raw);
-    if (!label) return;
-    setDraft((current) =>
-      current.labels.includes(label) ? current : { ...current, labels: [...current.labels, label] },
-    );
-    setLabelInput("");
+  /** Lo que la IA necesita saber del borrador, exista o no la tarea todavía. */
+  function draftParaIA() {
+    const current = draftRef.current;
+    return {
+      title: current.title,
+      description: current.description,
+      definition_of_done: current.definitionOfDone,
+      ...(project ? { project_id: project } : {}),
+      priority: current.priority,
+      due_at: fromDateTimeLocal(current.due),
+      labels: current.labels,
+      assignee_person_ids: current.assigneeIds,
+    };
   }
 
   async function submit(): Promise<void> {
-    setTouched({ title: true, due: true });
-    if (blocking || taskCreating) return;
+    setTouched((t) => ({ ...t, title: true, due: true, project: true }));
+    if (blocking || busy) return;
+    if (!project) return;
     const task = await createTask({
-      project_id: projectId,
+      project_id: project,
       title: draft.title.trim(),
       stage: draft.stage,
       ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
@@ -172,305 +239,351 @@ export function CreateTaskDialog({
       due_at: fromDateTimeLocal(draft.due),
       ...(draft.labels.length > 0 ? { labels: draft.labels } : {}),
     });
-    if (task) {
-      onOpenChange(false);
-      // Abrir la ficha recién creada cierra el bucle: se ve lo que se creó.
-      void openTask(task.id);
+    if (!task) return;
+    guardarProyectoReciente(project);
+    if (status !== "BACKLOG" && HUMAN_TRANSITIONS.BACKLOG.includes(status)) {
+      setMoving(true);
+      try {
+        await api.moveTask(task.id, { to: status, expected_version: task.version });
+      } catch (err) {
+        // La tarea ya existe: el estado es lo único que no se consiguió.
+        pushToast(
+          "error",
+          err instanceof Error
+            ? `Tarea creada, pero sigue en BACKLOG: ${err.message}`
+            : `Tarea creada, pero no pudo pasar a ${STATUS_LABELS[status]}`,
+        );
+      } finally {
+        setMoving(false);
+      }
     }
+    onOpenChange(false);
+    // Abrir la ficha recién creada cierra el bucle: se ve lo que se creó.
+    void openTask(task.id);
   }
 
-  const inputClass =
-    "mt-1 min-h-10 w-full rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
+  const fieldClass =
+    "mt-1 min-h-10 w-full rounded-soft border border-line bg-surface px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
+  const labelClass = "text-label font-semibold text-muted";
   const hintClass = "mt-1 text-label text-work";
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-[1px]" />
-        <Dialog.Content
-          className="fixed inset-0 z-50 flex h-[100dvh] w-full flex-col overflow-hidden bg-surface shadow-float focus:outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:w-[480px] sm:max-w-[100vw]"
-          aria-describedby="create-task-description"
-          data-testid="create-task-dialog"
-        >
-          <div className="flex shrink-0 items-start gap-3 border-b border-line px-4 py-3 sm:px-5">
-            <div className="min-w-0 flex-1">
-              <p className="text-label font-bold text-faint">Nueva tarea</p>
-              <Dialog.Title className="mt-1 text-title font-semibold leading-snug text-ink">
-                Crear tarea en el tablero
-              </Dialog.Title>
-              <Dialog.Description id="create-task-description" className="mt-0.5 text-label text-muted">
-                Nace en BACKLOG. Para pasar a READY necesitará definición de terminado y responsable.
-              </Dialog.Description>
-            </div>
-            <Dialog.Close
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-soft text-title text-faint hover:bg-line-soft hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
-              aria-label="Cerrar formulario"
-            >
-              ×
-            </Dialog.Close>
-          </div>
-
-          <form
-            className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 sm:px-5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submit();
-            }}
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      testId="create-task-dialog"
+      closeLabel="Cerrar el alta de tarea"
+      title="Nueva tarea"
+      description={
+        estadoInalcanzable
+          ? `Nace en BACKLOG: a ${STATUS_LABELS[estadoInalcanzable]} se llega moviéndola cuando cumpla sus requisitos.`
+          : "Para pasar a READY necesitará definición de terminado y responsable."
+      }
+      onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        requestAnimationFrame(() => titleRef.current?.focus());
+      }}
+      footer={
+        <div className="flex items-center gap-3">
+          <p className="min-w-0 flex-1 text-label text-faint">
+            {proyectoActual
+              ? `${clienteLabel(proyectoActual.orgId, { projects })} · ${proyectoActual.name}`
+              : "Elige el proyecto al que pertenece"}
+          </p>
+          <button
+            type="button"
+            data-testid="new-task-submit"
+            disabled={blocking || busy || !project}
+            onClick={() => void submit()}
+            className="press min-h-10 shrink-0 rounded-soft bg-ink px-4 py-2 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <div>
-              <label htmlFor="new-task-title" className="text-label font-semibold text-muted">
-                Título <span className="text-broken">*</span>
-              </label>
-              <input
-                ref={titleRef}
-                id="new-task-title"
-                data-testid="new-task-title"
-                value={draft.title}
-                onChange={(event) => {
-                  patch({ title: event.target.value });
-                  setTouched((t) => ({ ...t, title: true }));
-                }}
-                onBlur={() => setTouched((t) => ({ ...t, title: true }))}
-                aria-invalid={Boolean(touched.title && issues.title)}
-                placeholder="Ej. Mapear el proceso de cobranza"
-                className={inputClass}
-              />
-              {touched.title && issues.title ? (
-                <p className="mt-1 text-label text-broken" role="alert">
-                  {issues.title}
-                </p>
-              ) : null}
-            </div>
+            {busy ? "Creando…" : "Crear tarea"}
+          </button>
+        </div>
+      }
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+        onKeyDown={(event) => {
+          // Ctrl/Cmd+Enter crea desde cualquier campo, incluidos los textarea.
+          if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+            event.preventDefault();
+            void submit();
+          }
+        }}
+      >
+        {/* ── De quién es el trabajo ───────────────────────────────────── */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="new-task-client" className={labelClass}>
+              Cliente
+            </label>
+            <select
+              id="new-task-client"
+              data-testid="new-task-client"
+              value={client}
+              disabled={!allowProjectChange}
+              onChange={(event) => {
+                const next = event.target.value;
+                setClient(next);
+                // Si el proyecto elegido ya no es de este cliente, se suelta.
+                if (next && proyectoActual && proyectoActual.orgId !== next) setProject("");
+              }}
+              className={`${fieldClass} disabled:opacity-60`}
+            >
+              <option value="">Todos los clientes</option>
+              {clientes.map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="new-task-project" className={labelClass}>
+              Proyecto <span className="text-broken">*</span>
+            </label>
+            <select
+              id="new-task-project"
+              data-testid="new-task-project"
+              value={project}
+              disabled={!allowProjectChange}
+              aria-invalid={Boolean(touched.project && !project)}
+              onChange={(event) => elegirProyecto(event.target.value)}
+              className={`${fieldClass} disabled:opacity-60`}
+            >
+              <option value="">Elige un proyecto…</option>
+              {gruposDeProyectos.map((cliente) => (
+                <optgroup key={cliente.id} label={cliente.label}>
+                  {cliente.projects.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            {touched.project && !project ? (
+              <p className="mt-1 text-label text-broken" role="alert">
+                Elige el proyecto al que pertenece la tarea.
+              </p>
+            ) : null}
+          </div>
+        </div>
 
-            <div className="mt-3">
-              <label htmlFor="new-task-description" className="text-label font-semibold text-muted">
+        {/* ── El título: lo primero que se escribe ─────────────────────── */}
+        <div className="mt-4">
+          <div className="flex items-center gap-2">
+            <label htmlFor="new-task-title" className={labelClass}>
+              Título <span className="text-broken">*</span>
+            </label>
+            <span className="ml-auto">
+              <FieldAssist
+                field="title"
+                draft={draftParaIA}
+                showPrompt={false}
+                onApply={(text) => patch({ title: text.trim().replace(/\s+/g, " ") })}
+              />
+            </span>
+          </div>
+          <input
+            ref={titleRef}
+            id="new-task-title"
+            data-testid="new-task-title"
+            value={draft.title}
+            onChange={(event) => {
+              patch({ title: event.target.value });
+              setTouched((t) => ({ ...t, title: true }));
+            }}
+            onBlur={() => setTouched((t) => ({ ...t, title: true }))}
+            aria-invalid={Boolean(touched.title && issues.title)}
+            placeholder="Qué hay que conseguir. Ej. Mapear el proceso de cobranza de ACME"
+            className="mt-1 min-h-12 w-full rounded-soft border border-line bg-surface px-3 py-2 text-title font-medium text-ink focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+          />
+          {touched.title && issues.title ? (
+            <p className="mt-1 text-label text-broken" role="alert">
+              {issues.title}
+            </p>
+          ) : null}
+        </div>
+
+        {/* ── Descripción: con imágenes y con IA ───────────────────────── */}
+        <div className="mt-4">
+          <MarkdownField
+            id="new-task-description"
+            testId="new-task-description"
+            label="Descripción"
+            value={draft.description}
+            onChange={(value) => patch({ description: value })}
+            rows={4}
+            preview={false}
+            placeholder="Contexto, pasos, enlaces. Pega o suelta una imagen aquí."
+            header={
+              <span className={labelClass} id="new-task-description-label">
                 Descripción
-              </label>
-              <textarea
-                id="new-task-description"
-                data-testid="new-task-description"
-                value={draft.description}
-                onChange={(event) => patch({ description: event.target.value })}
-                rows={3}
-                placeholder="Contexto, enlaces, qué se espera…"
-                className="mt-1 w-full resize-y rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+              </span>
+            }
+            textareaClassName="mt-1 w-full resize-y rounded-soft border border-line bg-surface px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+            assist={{ field: "description", draft: draftParaIA }}
+          />
+        </div>
+
+        {/* ── Cuándo, en qué fase y con qué urgencia ───────────────────── */}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <label htmlFor="new-task-status" className={labelClass}>
+              Estado inicial
+            </label>
+            <select
+              id="new-task-status"
+              data-testid="new-task-status"
+              value={status}
+              onChange={(event) => setStatus(event.target.value as TaskStatus)}
+              className={fieldClass}
+            >
+              {ESTADOS_INICIALES.map((value) => (
+                <option key={value} value={value}>
+                  {STATUS_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="new-task-stage" className={labelClass}>
+              Etapa
+            </label>
+            <select
+              id="new-task-stage"
+              data-testid="new-task-stage"
+              value={draft.stage}
+              onChange={(event) => {
+                patch({ stage: event.target.value as Stage });
+                setTouched((t) => ({ ...t, stage: true }));
+              }}
+              className={fieldClass}
+            >
+              {STAGES.map((stage) => (
+                <option key={stage} value={stage}>
+                  {STAGE_OPTION_LABEL[stage]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="new-task-priority" className={labelClass}>
+              Prioridad
+            </label>
+            <select
+              id="new-task-priority"
+              data-testid="new-task-priority"
+              value={draft.priority}
+              onChange={(event) => patch({ priority: event.target.value as TaskPriority })}
+              className={fieldClass}
+            >
+              {PRIORITY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="new-task-due" className={labelClass}>
+              Vencimiento
+            </label>
+            <input
+              id="new-task-due"
+              data-testid="new-task-due"
+              type="datetime-local"
+              value={draft.due}
+              onChange={(event) => {
+                patch({ due: event.target.value });
+                setTouched((t) => ({ ...t, due: true }));
+              }}
+              className={fieldClass}
+            />
+            {touched.due && issues.due ? (
+              <p className="mt-1 text-label text-broken" role="alert">
+                {issues.due}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        {/* ── Quién responde ───────────────────────────────────────────── */}
+        <div className="mt-4">
+          <p className={labelClass} id="new-task-people-label">
+            Responsables
+          </p>
+          <div className="mt-1.5" role="group" aria-labelledby="new-task-people-label">
+            <PeopleEditor
+              variant="chips"
+              projectId={open && project ? project : null}
+              ids={draft.assigneeIds}
+              primary={draft.primaryAssigneeId}
+              onChange={(ids, primary) => patch({ assigneeIds: ids, primaryAssigneeId: primary })}
+            />
+          </div>
+          {issues.assignees ? (
+            <p className={hintClass} data-testid="new-task-assignee-hint">
+              ⚠ {issues.assignees}
+            </p>
+          ) : null}
+        </div>
+
+        {/* ── Etiquetas ────────────────────────────────────────────────── */}
+        <div className="mt-4">
+          <p className={labelClass}>Etiquetas</p>
+          <div className="mt-1.5">
+            <LabelsEditor
+              value={draft.labels}
+              onChange={(labels) => patch({ labels })}
+              catalog={labelCatalog}
+              autoFocus={false}
+            />
+          </div>
+        </div>
+
+        {/* ── Definición de terminado ──────────────────────────────────── */}
+        <div className="mt-4">
+          <div className="flex items-center gap-2">
+            <label htmlFor="new-task-dod" className={labelClass}>
+              Definición de terminado
+            </label>
+            <span className="ml-auto">
+              <FieldAssist
+                field="definition_of_done"
+                draft={draftParaIA}
+                onApply={(text) => patch({ definitionOfDone: text })}
               />
-            </div>
+            </span>
+          </div>
+          <textarea
+            id="new-task-dod"
+            data-testid="new-task-dod"
+            value={draft.definitionOfDone}
+            onChange={(event) => patch({ definitionOfDone: event.target.value })}
+            rows={2}
+            placeholder="Qué tiene que existir para darla por cerrada. Ej. Mapa SIPOC validado por el cliente"
+            className="mt-1 w-full resize-y rounded-soft border border-line bg-surface px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
+          />
+          {issues.definitionOfDone ? (
+            <p className={hintClass} data-testid="new-task-dod-hint">
+              ⚠ {issues.definitionOfDone}
+            </p>
+          ) : null}
+        </div>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="new-task-stage" className="text-label font-semibold text-muted">
-                  Etapa
-                </label>
-                <select
-                  id="new-task-stage"
-                  data-testid="new-task-stage"
-                  value={draft.stage}
-                  onChange={(event) => patch({ stage: event.target.value as Stage })}
-                  className={inputClass}
-                >
-                  {STAGES.map((stage) => (
-                    <option key={stage} value={stage}>
-                      {STAGE_OPTION_LABEL[stage]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="new-task-priority" className="text-label font-semibold text-muted">
-                  Prioridad
-                </label>
-                <select
-                  id="new-task-priority"
-                  data-testid="new-task-priority"
-                  value={draft.priority}
-                  onChange={(event) => patch({ priority: event.target.value as TaskPriority })}
-                  className={inputClass}
-                >
-                  {PRIORITY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <label htmlFor="new-task-dod" className="text-label font-semibold text-muted">
-                Definición de terminado
-              </label>
-              <textarea
-                id="new-task-dod"
-                data-testid="new-task-dod"
-                value={draft.definitionOfDone}
-                onChange={(event) => patch({ definitionOfDone: event.target.value })}
-                rows={2}
-                placeholder="Ej. Mapa SIPOC validado por el cliente"
-                className="mt-1 w-full resize-y rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
-              />
-              {issues.definitionOfDone ? (
-                <p className={hintClass} data-testid="new-task-dod-hint">
-                  ⚠ {issues.definitionOfDone}
-                </p>
-              ) : null}
-            </div>
-
-            <div className="mt-3">
-              <label htmlFor="new-task-due" className="text-label font-semibold text-muted">
-                Vencimiento
-              </label>
-              <input
-                id="new-task-due"
-                data-testid="new-task-due"
-                type="datetime-local"
-                value={draft.due}
-                onChange={(event) => {
-                  patch({ due: event.target.value });
-                  setTouched((t) => ({ ...t, due: true }));
-                }}
-                className={inputClass}
-              />
-              {touched.due && issues.due ? (
-                <p className="mt-1 text-label text-broken" role="alert">
-                  {issues.due}
-                </p>
-              ) : null}
-            </div>
-
-            <fieldset className="mt-4 rounded-panel border border-line p-3">
-              <legend className="px-1 text-label font-semibold text-muted">Responsables</legend>
-              {peopleLoading ? <p className="text-small text-faint">Cargando equipo…</p> : null}
-              {!peopleLoading && peopleOptions.length === 0 ? (
-                <p className="text-small text-work" data-testid="no-project-people">
-                  La organización de este proyecto no tiene personas registradas. Una tarea sólo
-                  admite responsables de la organización dueña del proyecto.
-                </p>
-              ) : null}
-              <div className="space-y-1">
-                {peopleOptions.map((person) => (
-                  <label
-                    key={person.id}
-                    className="flex min-h-9 cursor-pointer items-center gap-2 rounded-tight px-1.5 py-1 hover:bg-surface-2"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={draft.assigneeIds.includes(person.id)}
-                      onChange={(event) => togglePerson(person.id, event.target.checked)}
-                      className="h-4 w-4 rounded border-line text-ink focus:ring-link"
-                    />
-                    <PersonAvatar name={displayPersonName(person)} size={5} />
-                    <span className="min-w-0 flex-1 truncate text-small font-medium text-ink-2">
-                      {displayPersonName(person)}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              {draft.assigneeIds.length > 1 ? (
-                <div className="mt-2 border-t border-line-soft pt-2">
-                  <label htmlFor="new-task-primary" className="text-label font-semibold text-muted">
-                    Persona principal
-                  </label>
-                  <select
-                    id="new-task-primary"
-                    value={draft.primaryAssigneeId}
-                    onChange={(event) => patch({ primaryAssigneeId: event.target.value })}
-                    className={inputClass}
-                  >
-                    {peopleOptions
-                      .filter((person) => draft.assigneeIds.includes(person.id))
-                      .map((person) => (
-                        <option key={person.id} value={person.id}>
-                          {displayPersonName(person)}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              ) : null}
-              {issues.assignees ? (
-                <p className={hintClass} data-testid="new-task-assignee-hint">
-                  ⚠ {issues.assignees}
-                </p>
-              ) : null}
-            </fieldset>
-
-            <div className="mt-4">
-              <label htmlFor="new-task-label" className="text-label font-semibold text-muted">
-                Etiquetas
-              </label>
-              <div className="mt-1 flex gap-2">
-                <input
-                  id="new-task-label"
-                  data-testid="new-task-label"
-                  value={labelInput}
-                  list="label-catalog"
-                  onChange={(event) => setLabelInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === ",") {
-                      event.preventDefault();
-                      addLabel(labelInput);
-                    }
-                  }}
-                  placeholder="cliente, urgente…"
-                  className="min-h-10 min-w-0 flex-1 rounded-soft border border-line px-2.5 py-2 text-body focus:border-link focus:outline-none focus:ring-2 focus:ring-link"
-                />
-                <button
-                  type="button"
-                  onClick={() => addLabel(labelInput)}
-                  disabled={!labelInput.trim()}
-                  className="min-h-10 rounded-soft border border-line px-3 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Añadir
-                </button>
-              </div>
-              <datalist id="label-catalog">
-                {labelCatalog.map((usage) => (
-                  <option key={usage.label} value={usage.label} />
-                ))}
-              </datalist>
-              {draft.labels.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {draft.labels.map((label) => (
-                    <span
-                      key={label}
-                      className="inline-flex items-center gap-1 rounded-full bg-line-soft px-2 py-0.5 text-label font-medium text-ink-2"
-                    >
-                      {label}
-                      <button
-                        type="button"
-                        aria-label={`Quitar etiqueta ${label}`}
-                        onClick={() => patch({ labels: draft.labels.filter((item) => item !== label) })}
-                        className="text-faint hover:text-broken"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-line-soft pt-3">
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className="min-h-10 rounded-soft px-3 py-2 text-small font-semibold text-muted hover:bg-line-soft"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                data-testid="new-task-submit"
-                disabled={blocking || taskCreating}
-                className="min-h-10 rounded-soft bg-ink px-4 py-2 text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {taskCreating ? "Creando…" : "Crear tarea"}
-              </button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        {/* Enter dentro de un input no debe crear a medias: el envío real es
+            el botón del pie o Ctrl/Cmd+Enter. */}
+        <button type="submit" className="sr-only" tabIndex={-1} aria-hidden="true">
+          Crear tarea
+        </button>
+      </form>
+    </Modal>
   );
 }
 

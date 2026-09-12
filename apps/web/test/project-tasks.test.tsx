@@ -157,12 +157,24 @@ describe("contrato visual de proyectos y tareas", () => {
     });
   });
 
-  it("edita la descripción en la ficha e inserta enlace e imagen con vista previa", async () => {
+  it("edita la descripción en la ficha: se pega una imagen, se sube y se escribe en el Markdown", async () => {
     const task = makeTask({ description: null });
     useStore.setState({
       taskDetail: { task, events: [], artifacts: [], runs: [], project },
     });
     const { calls } = mockFetch([
+      {
+        method: "POST",
+        path: "/api/uploads/images",
+        status: 201,
+        body: {
+          id: "img-1",
+          url: "/api/uploads/img-1",
+          name: "mapa.png",
+          mime: "image/png",
+          bytes: 12,
+        },
+      },
       {
         method: "PATCH",
         path: "/api/tasks/t1",
@@ -180,26 +192,36 @@ describe("contrato visual de proyectos y tareas", () => {
     // Rediseño Notion: el textarea está siempre visible y guarda al salir del
     // bloque; no existen "Editar" ni "Guardar descripción".
     expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
-    fireEvent.change(screen.getByTestId("task-description-input"), { target: { value: "Preparar el material." } });
+    const campo = screen.getByTestId("task-description-input");
+    fireEvent.change(campo, { target: { value: "Preparar el material." } });
 
-    fireEvent.click(screen.getByRole("button", { name: /Enlace/ }));
-    fireEvent.change(screen.getByLabelText("Texto visible"), { target: { value: "Brief" } });
-    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://example.com/brief" } });
-    fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
-    expect(screen.getByRole("link", { name: "Brief" }).getAttribute("href")).toBe("https://example.com/brief");
+    // Ya no hay formulario de "insertar por URL": la imagen se pega.
+    expect(screen.queryByRole("button", { name: "Insertar" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /Imagen/ }));
-    fireEvent.change(screen.getByLabelText("Texto alternativo"), { target: { value: "Mapa del proceso" } });
-    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://images.example.com/mapa.png" } });
-    fireEvent.click(screen.getByRole("button", { name: "Insertar" }));
-    expect(screen.getByAltText("Mapa del proceso").getAttribute("src")).toBe("https://images.example.com/mapa.png");
+    const file = new File(["png"], "mapa.png", { type: "image/png" });
+    fireEvent.paste(campo, { clipboardData: { files: [file], types: ["Files"] } });
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.url.endsWith("/api/uploads/images"))).toBe(true);
+    });
+    // El Markdown se escribe con la URL absoluta de la API: en desarrollo la
+    // web vive en otro puerto y una ruta relativa no cargaría.
+    await waitFor(() =>
+      expect((screen.getByTestId("task-description-input") as HTMLTextAreaElement).value).toContain(
+        "![mapa](http://localhost:4300/api/uploads/img-1)",
+      ),
+    );
+    // Y la vista previa la pinta de verdad.
+    expect(screen.getByAltText("mapa").getAttribute("src")).toBe(
+      "http://localhost:4300/api/uploads/img-1",
+    );
 
     expect(screen.queryByRole("button", { name: "Guardar descripción" })).toBeNull();
-    fireEvent.blur(screen.getByTestId("task-description-input"));
+    fireEvent.blur(campo);
     await waitFor(() => {
       expect(calls.find((call) => call.method === "PATCH" && call.url.includes("/api/tasks/t1"))?.body).toEqual({
         expected_version: 3,
-        description: expect.stringContaining("![Mapa del proceso](<https://images.example.com/mapa.png>)"),
+        description: expect.stringContaining("![mapa](http://localhost:4300/api/uploads/img-1)"),
       });
     });
   });

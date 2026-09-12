@@ -427,9 +427,13 @@ export function parseAgrupacion(params: URLSearchParams): Agrupacion {
   return pick(params.get("agrupar"), AGRUPACIONES) ?? "cliente";
 }
 
-/** El modo por defecto es la tabla; `vista=tablero` lo cambia. */
+/**
+ * El modo por defecto es el TABLERO: es como el equipo mira el trabajo cada
+ * día ("la vista predeterminada de este módulo debe ser la de tablero"). La
+ * tabla sigue a un clic y deja rastro en la URL (`vista=tabla`).
+ */
 export function parseVista(params: URLSearchParams): Vista {
-  return pick(params.get("vista"), VISTAS) ?? "tabla";
+  return pick(params.get("vista"), VISTAS) ?? "tablero";
 }
 
 export function parseOrden(params: URLSearchParams): { columna: Columna; direccion: Direccion } {
@@ -461,8 +465,8 @@ export function filtrosAParams(
   if (extra.agrupacion && extra.agrupacion !== "cliente") params.set("agrupar", extra.agrupacion);
   if (extra.orden && extra.orden.columna !== "vencimiento") params.set("orden", extra.orden.columna);
   if (extra.orden && extra.orden.direccion === "desc") params.set("dir", "desc");
-  // La tabla es el default: sólo el tablero deja rastro en la URL.
-  if (extra.vista && extra.vista !== "tabla") params.set("vista", extra.vista);
+  // El tablero es el default: sólo la tabla deja rastro en la URL.
+  if (extra.vista && extra.vista !== "tablero") params.set("vista", extra.vista);
   return params;
 }
 
@@ -532,6 +536,66 @@ export function guardarProyectoReciente(projectId: string): void {
   } catch {
     // Idem: el selector simplemente empezará vacío la próxima vez.
   }
+}
+
+// ── Texto: extracto de la descripción y escritura en el cursor ──────────────
+
+/**
+ * Extracto legible de una descripción en Markdown, para el pie de la tarjeta
+ * del tablero. Las imágenes desaparecen (una tarjeta no es un visor), los
+ * enlaces se quedan con su texto visible y la sintaxis se limpia: lo que se
+ * lee en dos líneas tiene que ser prosa, no `**negrita**` ni `![](url)`.
+ *
+ * Puro a propósito: la tarjeta no debe pensar, sólo pintar lo que esto diga.
+ */
+export function extractoDescripcion(markdown: string | null | undefined, max = 180): string {
+  if (!markdown) return "";
+  let text = markdown;
+  // Bloques de código: el contenido no aporta al vistazo, el hueco sí molesta.
+  text = text.replace(/```[\s\S]*?```/g, " ");
+  text = text.replace(/~~~[\s\S]*?~~~/g, " ");
+  // Imágenes primero: si no, el enlace de dentro sobreviviría como texto.
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+  // Referencias sueltas y HTML crudo.
+  text = text.replace(/<[^>]+>/g, " ");
+  // Marcas de bloque al principio de línea: títulos, citas, listas, tablas.
+  text = text.replace(/^[ \t]*#{1,6}[ \t]+/gm, "");
+  text = text.replace(/^[ \t]*>[ \t]?/gm, "");
+  text = text.replace(/^[ \t]*[-*+][ \t]+/gm, "");
+  text = text.replace(/^[ \t]*\d+[.)][ \t]+/gm, "");
+  text = text.replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, " ");
+  // Énfasis y código en línea.
+  text = text.replace(/`+([^`]*)`+/g, "$1");
+  text = text.replace(/(\*\*|__)(.*?)\1/g, "$2");
+  text = text.replace(/(\*|_)([^*_\n]+)\1/g, "$2");
+  text = text.replace(/~~(.*?)~~/g, "$1");
+  text = text.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/**
+ * Escribe `fragmento` en `pos` dentro de `texto` y dice dónde queda el cursor.
+ * Se separa con saltos de línea si cae pegado a otro contenido: una imagen
+ * pegada al final de un párrafo no se ve como imagen en Markdown.
+ */
+export function insertarEnCursor(
+  texto: string,
+  pos: number,
+  fragmento: string,
+): { value: string; cursor: number } {
+  const at = Math.max(0, Math.min(texto.length, Math.round(Number.isFinite(pos) ? pos : texto.length)));
+  const before = texto.slice(0, at);
+  const after = texto.slice(at);
+  const prefix = before && !before.endsWith("\n") ? "\n\n" : "";
+  const suffix = after && !after.startsWith("\n") ? "\n\n" : "";
+  return {
+    value: `${before}${prefix}${fragmento}${suffix}${after}`,
+    cursor: before.length + prefix.length + fragmento.length,
+  };
 }
 
 // ── Persistencia de la ficha (side peek) ────────────────────────────────────

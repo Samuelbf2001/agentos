@@ -11,7 +11,6 @@ export {
   BlockedMoveNotice,
   DefinitionOfDoneEditor,
   TaskDescriptionEditor,
-  buildDescriptionInsert,
   fromDateTimeLocal,
   toDateTimeLocal,
 } from "./task/TaskBlocks";

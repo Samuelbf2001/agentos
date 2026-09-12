@@ -978,6 +978,57 @@ export interface CanvasNote {
   updatedAt: number;
 }
 
+// ── Imágenes incrustadas y asistencia de IA por campo ───────────────────────
+
+/** Respuesta de `POST /api/uploads/images`. */
+export interface UploadedImage {
+  id: string;
+  /** Ruta servida por la API; `api.uploadImage` la devuelve ya absoluta. */
+  url: string;
+  name: string;
+  mime: string;
+  bytes: number;
+}
+
+/** Los dos campos de texto largo más el título aceptan asistencia. */
+export type TaskAssistField = "title" | "description" | "definition_of_done";
+
+/** Lo que la IA necesita saber del borrador, esté guardado o no. */
+export interface TaskAssistDraft {
+  title?: string;
+  description?: string;
+  definition_of_done?: string;
+  project_id?: string;
+  priority?: TaskPriority;
+  due_at?: number | null;
+  labels?: string[];
+  assignee_person_ids?: string[];
+}
+
+export interface TaskAssistRequest {
+  /** `enrich` reescribe el campo; `execution_prompt` devuelve el prompt entero. */
+  mode: "enrich" | "execution_prompt";
+  field?: TaskAssistField;
+  task_id?: string;
+  draft: TaskAssistDraft;
+  instructions?: string;
+}
+
+/** El contexto consultado se enseña: "Consultó N documentos de <cliente>". */
+export interface TaskAssistContext {
+  org_name: string;
+  project_name: string;
+  docs: number;
+  images: number;
+  sibling_tasks: number;
+  model: string;
+}
+
+export interface TaskAssistResponse {
+  text: string;
+  context: TaskAssistContext;
+}
+
 /** Extrae el payload de dominio (busSink envuelve en {type, timestamp, payload}). */
 export function domainPayload(ev: TopicEvent): Record<string, unknown> {
   const inner = (ev.payload as { payload?: unknown }).payload;

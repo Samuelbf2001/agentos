@@ -125,7 +125,7 @@ describe("CreateTaskDialog (render)", () => {
     });
     expect(screen.queryByTestId("new-task-dod-hint")).toBeNull();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /Ernesto/ }));
+    fireEvent.click(screen.getByTestId("person-chip-p-ernesto"));
     expect(screen.queryByTestId("new-task-assignee-hint")).toBeNull();
   });
 
@@ -159,9 +159,9 @@ describe("CreateTaskDialog (render)", () => {
     fireEvent.change(screen.getByTestId("new-task-dod"), {
       target: { value: "Propuesta firmada por el cliente" },
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: /Ernesto/ }));
-    fireEvent.change(screen.getByTestId("new-task-label"), { target: { value: "cliente" } });
-    fireEvent.keyDown(screen.getByTestId("new-task-label"), { key: "Enter" });
+    fireEvent.click(screen.getByTestId("person-chip-p-ernesto"));
+    fireEvent.change(screen.getByTestId("task-label-input"), { target: { value: "cliente" } });
+    fireEvent.keyDown(screen.getByTestId("task-label-input"), { key: "Enter" });
 
     fireEvent.click(screen.getByTestId("new-task-submit"));
 
@@ -224,15 +224,17 @@ describe("CreateTaskDialog (render)", () => {
       target: { value: "Propuesta firmada por el cliente" },
     });
 
-    // Con un solo responsable marcado, no se pide elegir principal.
-    fireEvent.click(screen.getByRole("checkbox", { name: /Ernesto/ }));
-    expect(screen.queryByLabelText("Persona principal")).toBeNull();
+    // Con un solo responsable marcado no se pregunta quién es el principal:
+    // la estrella sólo aparece cuando hay más de uno.
+    fireEvent.click(screen.getByTestId("person-chip-p-ernesto"));
+    expect(screen.queryByTestId("person-primary-p-ernesto")).toBeNull();
 
-    // Al añadir un segundo, el selector aparece y permite cambiar al recién añadido.
-    fireEvent.click(screen.getByRole("checkbox", { name: /Sofía/ }));
-    const primarySelect = screen.getByLabelText("Persona principal") as HTMLSelectElement;
-    expect(primarySelect.value).toBe("p-ernesto");
-    fireEvent.change(primarySelect, { target: { value: "p-otro" } });
+    // Al añadir un segundo, aparece la estrella y se puede pasar al nuevo.
+    fireEvent.click(screen.getByTestId("person-chip-p-otro"));
+    expect(
+      screen.getByTestId("person-primary-p-ernesto").getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(screen.getByTestId("person-primary-p-otro"));
 
     fireEvent.click(screen.getByTestId("new-task-submit"));
 
@@ -243,6 +245,56 @@ describe("CreateTaskDialog (render)", () => {
         primary_assignee_person_id: "p-otro",
       });
     });
+  });
+
+  it("el estado inicial no viaja en el POST: se mueve después con expected_version", async () => {
+    const created = makeTask({ id: "t-new-3", title: "Arrancar el diagnóstico", version: 1 });
+    const { calls } = mockFetch([
+      { method: "POST", path: "/api/tasks/t-new-3/move", body: { task: { ...created, status: "READY", version: 2 } } },
+      { method: "POST", path: "/api/tasks", body: { task: created } },
+      { path: "/api/tasks/t-new-3", body: { task: created, events: [], artifacts: [], runs: [] } },
+      { path: "/api/board/proj-1", body: { project, board_seq: 1, total: 0, columns: {}, cells: {} } },
+      { path: "/api/labels", body: { labels: [] } },
+      { path: "/api/auth/people", body: { people: [person] } },
+    ]);
+    render(
+      <CreateTaskDialog
+        open
+        onOpenChange={vi.fn()}
+        projectId={project.id}
+        defaultStage="ENTENDER"
+        initialStatus="READY"
+      />,
+    );
+
+    // El "+" de la columna READY llega como estado inicial ya elegido.
+    expect((screen.getByTestId("new-task-status") as HTMLSelectElement).value).toBe("READY");
+    fireEvent.change(screen.getByTestId("new-task-title"), {
+      target: { value: "Arrancar el diagnóstico" },
+    });
+    fireEvent.click(screen.getByTestId("new-task-submit"));
+
+    await waitFor(() => {
+      const createCall = calls.find(
+        (call) => call.method === "POST" && call.url.endsWith("/api/tasks"),
+      );
+      // `POST /api/tasks` no acepta `status`: la tarea nace en BACKLOG.
+      expect(createCall?.body).not.toHaveProperty("status");
+    });
+    await waitFor(() => {
+      const move = calls.find((call) => call.url.endsWith("/api/tasks/t-new-3/move"));
+      expect(move?.body).toMatchObject({ to: "READY", expected_version: created.version });
+    });
+  });
+
+  it("sólo ofrece estados a los que se llega en un movimiento humano legal", () => {
+    render(
+      <CreateTaskDialog open onOpenChange={vi.fn()} projectId={project.id} defaultStage="ENTENDER" />,
+    );
+    const estados = [...(screen.getByTestId("new-task-status") as HTMLSelectElement).options].map(
+      (option) => option.value,
+    );
+    expect(estados).toEqual(["BACKLOG", "READY"]);
   });
 });
 
