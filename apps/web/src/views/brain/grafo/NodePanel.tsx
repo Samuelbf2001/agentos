@@ -12,13 +12,13 @@ import { styleForType } from "./palette";
 export interface NodePanelProps {
   node: GraphNode | null;
   degree: number;
-  /** Hay un foco activo (grafo recargado con `focus=<id>`): enseña "Vista general". */
-  hasFocus: boolean;
+  /** Hay una vista enfocada activa: enseña "Vista general". Opcional. */
+  hasFocus?: boolean;
   onClose: () => void;
-  /** Recarga el grafo centrado en los vecinos de este nodo (parámetro `focus`). */
+  /** Trae la ego-red de este nodo y la MEZCLA en el grafo (nunca lo reemplaza). */
   onFocus: () => void;
-  /** Quita el foco y vuelve a la vista general. */
-  onClearFocus: () => void;
+  /** Quita el foco y vuelve a la vista general; solo tiene sentido con `hasFocus`. */
+  onClearFocus?: () => void;
 }
 
 function readableDate(value: string | null | undefined): string | null {
@@ -147,7 +147,7 @@ export function NodePanel({ node, degree, hasFocus, onClose, onFocus, onClearFoc
         >
           Ver vecinos
         </button>
-        {hasFocus ? (
+        {hasFocus && onClearFocus ? (
           <button
             type="button"
             onClick={onClearFocus}

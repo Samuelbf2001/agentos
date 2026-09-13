@@ -1,122 +1,205 @@
 /**
- * 2brain › Grafo (vista): un único `<canvas>` accesible (role="img"), leyenda
- * por tipo y el panel lateral que abre al seleccionar un nodo. Datos siempre
- * mock — la vista debe tolerar también una respuesta vacía o `{}` sin romper.
+ * 2brain › Grafo (vista): carga progresiva sobre el proxy dinámico.
+ *
+ * El lienzo se mockea entero: sigma necesita WebGL y el layout de FA2 se
+ * instancia desde un `blob:` — nada de eso existe en jsdom. Lo que se prueba
+ * aquí es el cableado de la vista: esqueleto → pintado → indicador, filtros,
+ * panel del nodo, "ver vecinos" que MEZCLA, búsqueda contra el servidor y el
+ * desmontaje sin peticiones colgando.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import GrafoView from "../src/views/brain/GrafoView";
-import { mockFetch } from "./helpers";
 
-const GRAPH_SAMPLE = {
-  nodes: [
-    {
-      id: "contacto:1",
-      type: "contacto",
-      label: "Jefe de Producción ACME",
-      refId: 1,
-      meta: { phone: "+58 412 111 1111", leadStatus: "cliente" },
-    },
-    {
-      id: "nota_voz:9",
-      type: "nota_voz",
-      label: "Idea rápida",
-      refId: 9,
-      meta: { category: "idea", createdBy: "equipo@sixteam.pro" },
-    },
-  ],
-  edges: [{ source: "contacto:1", target: "nota_voz:9", type: "creada-por", weight: 0.6 }],
-  stats: { nodeCount: 2, edgeCount: 1, byType: { contacto: 1, nota_voz: 1 }, truncated: false },
+const canvasHandle = {
+  refresh: vi.fn(),
+  setHighlight: vi.fn(),
+  setTypeFilter: vi.fn(),
+  setSearchHit: vi.fn(),
+  setSelected: vi.fn(),
+  fit: vi.fn(),
+  destroy: vi.fn(),
 };
 
-/**
- * Posición inicial (espiral) que calcula `useGraphSim.setData` para el nodo
- * en el índice `i` de `n`, antes de que corra ningún tick de física — misma
- * fórmula que `useGraphSim.ts`. Congelamos `requestAnimationFrame` para que
- * ningún tick se dispare y esta posición sea la que ve el hit-test del click.
- */
-function initialSpiralPosition(index: number, total: number, width = 900, height = 600) {
-  const angle = index * 2.399963229728653;
-  const radius = Math.sqrt((index + 1) / Math.max(1, total)) * Math.min(width, height) * 0.38;
-  return { x: width / 2 + Math.cos(angle) * radius, y: height / 2 + Math.sin(angle) * radius };
+/** Lienzo falso: expone el handle y un botón para simular el clic en un nodo. */
+vi.mock("../src/views/brain/grafo/SigmaCanvas", () => ({
+  SigmaCanvas: ({
+    onSelect,
+    onReady,
+    ariaLabel,
+  }: {
+    onSelect: (id: string | null) => void;
+    onReady?: (h: typeof canvasHandle) => void;
+    ariaLabel: string;
+  }) => {
+    onReady?.(canvasHandle);
+    return (
+      <div role="img" aria-label={ariaLabel}>
+        <button type="button" onClick={() => onSelect("contacto:1")}>
+          simular clic en nodo
+        </button>
+      </div>
+    );
+  },
+}));
+
+import GrafoView, { progressLabel } from "../src/views/brain/GrafoView";
+import { mockFetch } from "./helpers";
+
+const TYPES = ["contacto", "empresa", "equipo", "reunion", "nota", "nota_voz", "pagina", "tema"];
+const EDGE_TYPES = [
+  "pertenece-a", "asignado-a", "reunion-contacto", "reunion-empresa", "nota-contacto",
+  "nota-empresa", "participo-en", "tagged", "relacionada-con", "creada-por",
+];
+
+const SKELETON = {
+  v: 1,
+  index: "default:1757700000000:1547:4009",
+  refs: ["contacto:1", "empresa:1"],
+  nodes: { count: 2, type: [0, 1], label: ["Jefe de Producción ACME", "ACME"], ts: [1757000000000, null], deg: [3, 9] },
+  stubs: { count: 0, type: [], label: [], ts: [] },
+  edges: { count: 1, s: [0], t: [1], type: [0], w: [1] },
+  meta: {
+    types: TYPES,
+    edgeTypes: EDGE_TYPES,
+    counts: { contacto: 1, empresa: 1, reunion: 1 },
+    loaded: { contacto: 1, empresa: 1 },
+    range: { reunion: { min: 1700000000000, max: 1757000000000 } },
+    totals: { nodes: 3, edges: 2 },
+  },
+};
+
+const LAYER_DONE = {
+  v: 1,
+  index: "default:1757700000000:1547:4009",
+  refs: ["reunion:88", "contacto:1"],
+  nodes: { count: 1, type: [3], label: ["Kickoff ACME"], ts: [1756900000000], deg: [2] },
+  stubs: { count: 1, type: [0], label: ["Jefe de Producción ACME"], ts: [1757000000000] },
+  edges: { count: 1, s: [0], t: [1], type: [2], w: [1] },
+  meta: { types: TYPES, edgeTypes: EDGE_TYPES },
+  cursor: { next: null, remainingByType: {}, done: true },
+};
+
+const EMPTY_LAYER = { ...LAYER_DONE, refs: [], nodes: { count: 0, type: [], label: [], ts: [], deg: [] }, stubs: { count: 0, type: [], label: [], ts: [] }, edges: { count: 0, s: [], t: [], type: [], w: [] } };
+
+function ui() {
+  return render(
+    <MemoryRouter initialEntries={["/2brain/grafo"]}>
+      <GrafoView />
+    </MemoryRouter>,
+  );
 }
 
 describe("2brain › Grafo (vista)", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("pinta el lienzo (canvas accesible), la leyenda por tipo y abre el panel al seleccionar un nodo", async () => {
-    // Sin física: el nodo queda exactamente en su posición inicial en espiral,
-    // así el click en coordenadas conocidas siempre acierta.
-    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
-    vi.stubGlobal("cancelAnimationFrame", vi.fn());
-    mockFetch([{ path: /^\/api\/brain\/grafo/, body: GRAPH_SAMPLE }]);
-    render(
-      <MemoryRouter initialEntries={["/2brain/grafo"]}>
-        <GrafoView />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByRole("heading", { level: 1, name: "Grafo" })).toBeTruthy();
-
-    // Leyenda por tipo, con conteo de `stats.byType` (uno por cada tipo presente).
-    expect(await screen.findByText("Contacto")).toBeTruthy();
-    expect(screen.getByText("Nota de voz")).toBeTruthy();
-    expect(screen.getAllByText("(1)")).toHaveLength(2);
-
-    // Un solo <canvas> accesible como imagen, con el nº de nodos en el aria-label.
-    const canvas = await screen.findByRole("img");
-    expect(canvas.tagName).toBe("CANVAS");
-    expect(canvas.getAttribute("aria-label")).toMatch(/2 nodos/);
-
-    // Sin selección: el panel enseña el estado vacío.
-    expect(screen.getByText("Sin nodo seleccionado")).toBeTruthy();
-
-    // Clic en las coordenadas del primer nodo ("contacto:1", índice 0 de 2).
-    const { x, y } = initialSpiralPosition(0, GRAPH_SAMPLE.nodes.length);
-    fireEvent.pointerDown(canvas, { clientX: x, clientY: y, pointerId: 1 });
-    fireEvent.pointerUp(canvas, { clientX: x, clientY: y, pointerId: 1 });
-
-    const panel = screen.getByTestId("grafo-panel-nodo");
-    expect(within(panel).getByText("Jefe de Producción ACME")).toBeTruthy();
-    expect(within(panel).getByText(/Teléfono: \+58 412 111 1111/)).toBeTruthy();
-    expect(within(panel).getByText(/1 conexión en esta vista/)).toBeTruthy();
-    const link = within(panel).getByRole("link", { name: /Ver en Conversaciones/ });
-    expect(link.getAttribute("href")).toBe("/2brain/conversaciones?tel=%2B58%20412%20111%201111");
-
-    // "Ver vecinos" recarga con `focus=<id>`; sin foco activo, "Vista general" no aparece.
-    expect(within(panel).queryByRole("button", { name: "Vista general" })).toBeNull();
-    fireEvent.click(within(panel).getByRole("button", { name: "Ver vecinos" }));
-    expect(await screen.findByRole("button", { name: "Vista general" })).toBeTruthy();
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const fn of Object.values(canvasHandle)) fn.mockClear();
   });
 
-  it("estado vacío: EmptyState cuando el grafo no tiene nodos", async () => {
+  it("pinta el esqueleto, encadena la tanda y termina con el conteo real", async () => {
+    mockFetch([
+      { path: "/api/brain/grafo/skeleton", body: SKELETON },
+      { path: "/api/brain/grafo/layer", body: LAYER_DONE },
+    ]);
+    ui();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Grafo" })).toBeTruthy();
+    // Leyenda con el conteo real del grafo vivo (no el del servidor).
+    expect(await screen.findByText("Contacto")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("grafo-conteo").textContent).toBe("3 nodos · 2 aristas"));
+    await waitFor(() => expect(screen.getByTestId("grafo-progreso").textContent).toBe("3 de 3 nodos"));
+    // El lienzo anuncia el tamaño para lectores de pantalla.
+    expect(screen.getByRole("img").getAttribute("aria-label")).toMatch(/3 nodos y 2 aristas/);
+  });
+
+  it("clic en un nodo abre el panel; 'Ver vecinos' MEZCLA la ego-red", async () => {
+    const { calls } = mockFetch([
+      { path: "/api/brain/grafo/skeleton", body: SKELETON },
+      { path: "/api/brain/grafo/layer", body: EMPTY_LAYER },
+      { path: /^\/api\/brain\/grafo\/neighbors\//, body: LAYER_DONE },
+    ]);
+    ui();
+
+    fireEvent.click(await screen.findByRole("button", { name: "simular clic en nodo" }));
+    const panel = await screen.findByTestId("grafo-panel-nodo");
+    expect(within(panel).getByText("Jefe de Producción ACME")).toBeTruthy();
+    expect(within(panel).getByText(/1 conexión en esta vista/)).toBeTruthy();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Ver vecinos" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes("/api/brain/grafo/neighbors/contacto%3A1"))).toBe(true),
+    );
+    // Mezcla: el nodo nuevo entra y los anteriores siguen ahí.
+    await waitFor(() => expect(screen.getByTestId("grafo-conteo").textContent).toBe("3 nodos · 2 aristas"));
+  });
+
+  it("la búsqueda consulta al servidor y al elegir un resultado lo centra", async () => {
+    const { calls } = mockFetch([
+      { path: "/api/brain/grafo/skeleton", body: SKELETON },
+      { path: "/api/brain/grafo/layer", body: EMPTY_LAYER },
+      {
+        path: "/api/brain/grafo/search",
+        body: { v: 1, index: "default:1", results: [{ id: "reunion:88", type: "reunion", label: "Kickoff ACME", ts: 1 }] },
+      },
+      { path: /^\/api\/brain\/grafo\/neighbors\//, body: LAYER_DONE },
+    ]);
+    ui();
+
+    fireEvent.change(await screen.findByLabelText("Buscar en todo el grafo"), { target: { value: "kickoff" } });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+
+    const hit = await screen.findByRole("button", { name: "Kickoff ACME" });
+    expect(calls.some((c) => c.url.includes("/api/brain/grafo/search?q=kickoff"))).toBe(true);
+
+    fireEvent.click(hit);
+    // El nodo no estaba cargado: primero se trae su ego-red, luego se centra.
+    await waitFor(() => expect(canvasHandle.fit).toHaveBeenCalledWith("reunion:88"));
+    expect(canvasHandle.setSearchHit).toHaveBeenCalledWith("reunion:88");
+  });
+
+  it("los filtros por tipo bajan al lienzo como reducers, no como recarga", async () => {
+    const { calls } = mockFetch([
+      { path: "/api/brain/grafo/skeleton", body: SKELETON },
+      { path: "/api/brain/grafo/layer", body: EMPTY_LAYER },
+    ]);
+    ui();
+
+    const checkbox = await screen.findByLabelText("Mostrar Contacto");
+    // Espera a que la tanda inicial haya pasado: así lo que se mide es el clic.
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/api/brain/grafo/layer"))).toBe(true));
+    const before = calls.length;
+    fireEvent.click(checkbox);
+
+    await waitFor(() => expect(canvasHandle.setTypeFilter).toHaveBeenCalled());
+    const visible = canvasHandle.setTypeFilter.mock.calls.at(-1)![0] as Set<string>;
+    expect(visible.has("contacto")).toBe(false);
+    expect(visible.has("empresa")).toBe(true);
+    expect(calls).toHaveLength(before); // ni una petición más
+  });
+
+  it("'cargar más antiguos' pide otra tanda al servidor", async () => {
+    const { calls } = mockFetch([
+      { path: "/api/brain/grafo/skeleton", body: SKELETON },
+      { path: "/api/brain/grafo/layer", body: { ...EMPTY_LAYER, cursor: { next: { ts: 1, id: "reunion:2" }, remainingByType: { reunion: 5 }, done: false } } },
+    ]);
+    ui();
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/api/brain/grafo/layer"))).toBe(true));
+    const before = calls.filter((c) => c.url.includes("/layer")).length;
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más antiguos" }));
+    await waitFor(() => expect(calls.filter((c) => c.url.includes("/layer")).length).toBeGreaterThan(before));
+  });
+
+  it("error del servidor: caja de error legible, sin lienzo roto", async () => {
     mockFetch([
       {
-        path: /^\/api\/brain\/grafo/,
-        body: { nodes: [], edges: [], stats: { nodeCount: 0, edgeCount: 0, byType: {}, truncated: false } },
+        path: "/api/brain/grafo/skeleton",
+        status: 502,
+        body: { error: { code: "provider_error", message: "WhatsAppHub no responde" } },
       },
     ]);
-    render(
-      <MemoryRouter initialEntries={["/2brain/grafo"]}>
-        <GrafoView />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText("Todavía no hay datos para graficar")).toBeTruthy();
-  });
-
-  it("tolera una respuesta vacía ({}) sin romper", async () => {
-    mockFetch([{ path: /^\/api\/brain\/grafo/, body: {} }]);
-    render(
-      <MemoryRouter initialEntries={["/2brain/grafo"]}>
-        <GrafoView />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByRole("heading", { level: 1, name: "Grafo" })).toBeTruthy();
-    expect(await screen.findByText("Todavía no hay datos para graficar")).toBeTruthy();
-    expect(screen.getByText("0 nodos · 0 aristas")).toBeTruthy();
+    ui();
+    expect(await screen.findByText("WhatsAppHub no responde")).toBeTruthy();
   });
 
   it("aborta el fetch en curso al desmontar (no deja la petición colgada)", async () => {
@@ -124,22 +207,34 @@ describe("2brain › Grafo (vista)", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-        capturedSignal = init?.signal ?? undefined;
-        return new Promise<Response>(() => {}); // nunca resuelve dentro del test
+        capturedSignal ??= init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
       }),
     );
 
-    const { unmount } = render(
-      <MemoryRouter initialEntries={["/2brain/grafo"]}>
-        <GrafoView />
-      </MemoryRouter>,
-    );
-
+    const { unmount } = ui();
     await vi.waitFor(() => expect(capturedSignal).toBeDefined());
     expect(capturedSignal?.aborted).toBe(false);
 
     unmount();
-
     expect(capturedSignal?.aborted).toBe(true);
+  });
+});
+
+describe("progressLabel", () => {
+  const base = { loaded: 0, total: 0, budgetUsed: 0, budgetMax: 1500 };
+
+  it("nombra el tipo y el avance de la tanda en curso", () => {
+    expect(progressLabel({ ...base, phase: "layer", type: "reunion", loaded: 300, total: 390 })).toBe(
+      "Cargando: reuniones recientes 300/390",
+    );
+  });
+
+  it("al terminar dice cuántos nodos hay de cuántos", () => {
+    expect(progressLabel({ ...base, phase: "done", loaded: 1278, total: 1278 })).toBe("1.278 de 1.278 nodos");
+  });
+
+  it("con el presupuesto agotado lo dice como lo que es", () => {
+    expect(progressLabel({ ...base, phase: "idle", budgetUsed: 1500 })).toBe("Mostrando los 1.500 más recientes");
   });
 });
