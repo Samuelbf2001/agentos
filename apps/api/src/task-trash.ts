@@ -162,6 +162,9 @@ export function createTaskPurgeScheduler(options: TaskPurgeSchedulerOptions): Ta
     },
     start(): void {
       if (timer || disabled || intervalMs <= 0) return;
+      // Una línea al arrancar: sin ella, en producción no hay forma de saber
+      // si la purga está viva hasta que purga algo (90 días).
+      logger.info({ days, intervalMs }, "purga de la papelera activa");
       void tick();
       timer = setInterval(() => void tick(), intervalMs);
       timer.unref?.();

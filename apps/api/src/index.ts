@@ -37,7 +37,13 @@ async function main(): Promise<void> {
   const loopsDisabled =
     process.env.AGENTOS_DISPATCHER_DISABLED === "1" ||
     process.env.AGENTOS_DISPATCHER_DISABLED === "true";
-  const { app, ctx } = await buildApi({ logger: true, autoStartLoops: !loopsDisabled });
+  // La purga de la papelera NO depende del despachador: solo de
+  // AGENTOS_TASK_PURGE_DISABLED, que lee el propio reloj de purga.
+  const { app, ctx } = await buildApi({
+    logger: true,
+    autoStartLoops: !loopsDisabled,
+    autoStartTaskPurge: true,
+  });
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`Señal ${signal}: cerrando apps/api...`);

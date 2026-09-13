@@ -179,6 +179,12 @@ export interface ApiOptions {
   runners?: Partial<Record<AgentRuntime, AgentRunner>>;
   /** Arranca los bucles (despachador + reaper) automáticamente (default true). */
   autoStartLoops?: boolean;
+  /**
+   * Arranca la purga de la papelera (default = `autoStartLoops`). Va aparte
+   * porque producción apaga el despachador (AGENTOS_DISPATCHER_DISABLED) y la
+   * purga a los 90 días tiene que seguir corriendo igual.
+   */
+  autoStartTaskPurge?: boolean;
   /** Conector WhatsAppHub inyectable (tests: SIEMPRE mock; jamás red real en tests). */
   whatsappHub?: WhatsAppHubConnector;
   /** Transcriptor de notas manuscritas (tests: SIEMPRE doble; jamás LLM real en tests). */
@@ -201,7 +207,8 @@ export interface ApiOptions {
   /**
    * Papelera de tareas: el reloj de purga definitiva. Por defecto
    * `AGENTOS_TASK_PURGE_DAYS` (90) y `AGENTOS_TASK_PURGE_DISABLED`; cada 24 h.
-   * Solo arranca con `autoStartLoops` (los tests nunca lo arrancan).
+   * Arranca con `autoStartTaskPurge` (por defecto igual que `autoStartLoops`;
+   * los tests nunca lo arrancan).
    */
   taskPurge?: { days?: number; intervalMs?: number; disabled?: boolean; now?: () => number };
   leaseMs?: number;
@@ -405,6 +412,8 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
   if (options.autoStartLoops !== false) {
     dispatcher.start();
     notificationScheduler.start();
+  }
+  if ((options.autoStartTaskPurge ?? options.autoStartLoops) !== false) {
     taskPurge.start();
   }
 
