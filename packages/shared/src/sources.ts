@@ -122,7 +122,8 @@ export interface WhatsAppHubConnector {
   hubGetJson?: (
     path: string,
     query?: Record<string, string | number | boolean | undefined>,
-    opts?: { timeoutMs?: number },
+    /** `signal`: cancelación de extremo a extremo (p. ej. el cliente cierra la conexión del grafo). */
+    opts?: { timeoutMs?: number; maxResponseBytes?: number; signal?: AbortSignal },
   ) => Promise<unknown>;
   /** POST/PUT JSON genérico; timeout configurable (p. ej. ingesta de notas de voz tarda minutos). */
   hubSendJson?: (method: "POST" | "PUT", path: string, body: unknown, opts?: { timeoutMs?: number }) => Promise<unknown>;

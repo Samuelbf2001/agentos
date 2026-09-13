@@ -12,8 +12,13 @@ import { styleForType } from "./palette";
 export interface NodePanelProps {
   node: GraphNode | null;
   degree: number;
+  /** Hay un foco activo (grafo recargado con `focus=<id>`): enseña "Vista general". */
+  hasFocus: boolean;
   onClose: () => void;
+  /** Recarga el grafo centrado en los vecinos de este nodo (parámetro `focus`). */
   onFocus: () => void;
+  /** Quita el foco y vuelve a la vista general. */
+  onClearFocus: () => void;
 }
 
 function readableDate(value: string | null | undefined): string | null {
@@ -86,7 +91,7 @@ function sectionLink(node: GraphNode): { to: string; label: string } | null {
   }
 }
 
-export function NodePanel({ node, degree, onClose, onFocus }: NodePanelProps) {
+export function NodePanel({ node, degree, hasFocus, onClose, onFocus, onClearFocus }: NodePanelProps) {
   if (!node) {
     return <EmptyState title="Sin nodo seleccionado" hint="Elige un nodo del lienzo para ver su detalle." />;
   }
@@ -116,7 +121,7 @@ export function NodePanel({ node, degree, onClose, onFocus }: NodePanelProps) {
         {style.label}
       </span>
 
-      <p className="text-small text-muted">{degree === 1 ? "1 conexión" : `${degree} conexiones`}</p>
+      <p className="text-small text-muted">{degree === 1 ? "1 conexión en esta vista" : `${degree} conexiones en esta vista`}</p>
 
       {lines.length > 0 ? (
         <ul className="flex flex-col gap-1 text-small text-ink-2">
@@ -140,8 +145,17 @@ export function NodePanel({ node, degree, onClose, onFocus }: NodePanelProps) {
           onClick={onFocus}
           className="press inline-flex min-h-9 items-center justify-center rounded-tight border border-line px-3 text-small font-semibold text-ink-2 hover:bg-surface-2"
         >
-          Enfocar aquí
+          Ver vecinos
         </button>
+        {hasFocus ? (
+          <button
+            type="button"
+            onClick={onClearFocus}
+            className="press inline-flex min-h-9 items-center justify-center rounded-tight border border-line px-3 text-small font-semibold text-ink-2 hover:bg-surface-2"
+          >
+            Vista general
+          </button>
+        ) : null}
       </div>
     </div>
   );

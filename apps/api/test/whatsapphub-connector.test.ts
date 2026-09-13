@@ -55,6 +55,50 @@ function fakeFetch(handler: (req: CapturedRequest) => FakeResponse): {
 }
 
 describe("conector WhatsAppHub — métodos genéricos de 2brain", () => {
+  it("lee JSON pequeño con presupuesto y rechaza stream grande sin Content-Length", async () => {
+    let cancelled = false;
+    const fetchFn = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new TextEncoder().encode("x".repeat(64))); },
+      cancel() { cancelled = true; },
+    }))) as typeof fetch;
+    const connector = createWhatsAppHubConnector({ baseUrl: "https://hub.test", apiKey: "test-only", fetchFn });
+    await expect(connector.hubGetJson!("/api/wiki/graph", {}, { maxResponseBytes: 100 })).rejects.toThrow("excede el tamaño permitido");
+    expect(cancelled).toBe(true);
+    const small = fakeFetch(() => ({ status: 200, body: { nodes: [], edges: [] } }));
+    const healthy = createWhatsAppHubConnector({ baseUrl: "https://hub.test", apiKey: "test-only", fetchFn: small.fetchFn });
+    await expect(healthy.hubGetJson!("/api/wiki/graph", {}, { maxResponseBytes: 100 })).resolves.toEqual({ nodes: [], edges: [] });
+  });
+
+  it("mantiene el timeout activo mientras llegan los bytes del grafo", async () => {
+    const fetchFn = (async (_input, init) => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        init?.signal?.addEventListener("abort", () => controller.error(new DOMException("Aborted", "AbortError")), { once: true });
+      },
+    }))) as typeof fetch;
+    const connector = createWhatsAppHubConnector({ baseUrl: "https://hub.test", apiKey: "test-only", fetchFn });
+    await expect(connector.hubGetJson!("/api/wiki/graph", {}, { maxResponseBytes: 100, timeoutMs: 20 })).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("un AbortSignal externo cancela la llamada aunque no haya vencido el timeout interno", async () => {
+    const externalController = new AbortController();
+    let sawAbort = false;
+    const fetchFn = (async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          sawAbort = true;
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      })) as typeof fetch;
+    const connector = createWhatsAppHubConnector({ baseUrl: "https://hub.test", apiKey: "test-only", fetchFn });
+
+    const promise = connector.hubGetJson!("/api/wiki/graph", {}, { signal: externalController.signal, timeoutMs: 5_000 });
+    externalController.abort();
+
+    await expect(promise).rejects.toBeInstanceOf(SourceConnectorError);
+    await expect(promise).rejects.toMatchObject({ code: "timeout" });
+    expect(sawAbort).toBe(true);
+  });
+
   it("hubGetJson serializa la query (omite undefined) y manda x-wiki-key", async () => {
     const { fetchFn, calls } = fakeFetch(() => ({ status: 200, body: { ok: true } }));
     const connector = createWhatsAppHubConnector({ baseUrl: "https://hub.test", apiKey: "secret-key", fetchFn });

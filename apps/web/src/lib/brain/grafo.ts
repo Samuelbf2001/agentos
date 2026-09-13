@@ -61,6 +61,8 @@ export interface GraphStats {
   edgeCount: number;
   byType: Record<string, number>;
   truncated: boolean;
+  /** Total de nodos disponibles en el servidor, si lo informa (aviso "N de M" en la vista). */
+  total?: number;
 }
 
 export interface Graph {
@@ -70,6 +72,8 @@ export interface Graph {
 }
 
 export interface GetGraphParams {
+  maxNodes?: number;
+  maxEdges?: number;
   limitPerType?: number;
   since?: string;
   includeIsolated?: boolean;
@@ -78,10 +82,10 @@ export interface GetGraphParams {
   depth?: 1 | 2;
 }
 
-const EMPTY_STATS: GraphStats = { nodeCount: 0, edgeCount: 0, byType: {}, truncated: false };
-
-export async function getGraph(params: GetGraphParams = {}): Promise<Graph> {
+export async function getGraph(params: GetGraphParams = {}, signal?: AbortSignal): Promise<Graph> {
   const search = new URLSearchParams();
+  search.set("maxNodes", String(params.maxNodes ?? DEFAULT_MAX_NODES));
+  search.set("maxEdges", String(params.maxEdges ?? (params.maxNodes ?? DEFAULT_MAX_NODES) * 2));
   if (params.limitPerType) search.set("limitPerType", String(params.limitPerType));
   if (params.since) search.set("since", params.since);
   if (params.includeIsolated) search.set("includeIsolated", "true");
@@ -90,10 +94,50 @@ export async function getGraph(params: GetGraphParams = {}): Promise<Graph> {
     search.set("depth", String(params.depth ?? 1));
   }
   const qs = search.toString();
-  const data = await apiRequest<Partial<Graph>>(`/api/brain/grafo${qs ? `?${qs}` : ""}`);
+  const data = await apiRequest<Partial<Graph>>(`/api/brain/grafo${qs ? `?${qs}` : ""}`, { signal });
+  return boundGraph(data, params);
+}
+
+export const DEFAULT_MAX_NODES = 120;
+export const HARD_MAX_NODES = 300;
+export const HARD_MAX_EDGES = 600;
+
+// Acota los datos retenidos incluso contra un servidor viejo; nunca ordena el payload completo.
+export function boundGraph(data: Partial<Graph> | null, { maxNodes = DEFAULT_MAX_NODES, maxEdges = maxNodes * 2, focus }: GetGraphParams = {}): Graph {
+  const nodeLimit = Math.max(1, Math.min(HARD_MAX_NODES, Number(maxNodes) || DEFAULT_MAX_NODES));
+  const edgeLimit = Math.max(0, Math.min(HARD_MAX_EDGES, Number(maxEdges) || 0));
+  const sourceNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+  const sourceEdges = Array.isArray(data?.edges) ? data.edges : [];
+  const nodes: GraphNode[] = [];
+  const ids = new Set<string>();
+  const add = (node: GraphNode | undefined) => {
+    if (!node || typeof node.id !== "string" || ids.has(node.id)) return;
+    ids.add(node.id);
+    nodes.push(node);
+  };
+  if (focus) add(sourceNodes.find((node) => node?.id === focus));
+  for (const node of sourceNodes) {
+    if (nodes.length >= nodeLimit) break;
+    add(node);
+  }
+  const edges: GraphEdge[] = [];
+  for (const edge of sourceEdges) {
+    if (edges.length >= edgeLimit) break;
+    if (edge && ids.has(edge.source) && ids.has(edge.target) && edge.source !== edge.target) edges.push(edge);
+  }
+  const byType: Record<string, number> = {};
+  for (const node of nodes) byType[node.type] = (byType[node.type] || 0) + 1;
   return {
-    nodes: Array.isArray(data.nodes) ? data.nodes : [],
-    edges: Array.isArray(data.edges) ? data.edges : [],
-    stats: data.stats ?? EMPTY_STATS,
+    nodes,
+    edges,
+    stats: {
+      ...data?.stats,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      byType,
+      // El hub informa el total de candidatos como `totalNodes`.
+      total: data?.stats?.total ?? (data?.stats as { totalNodes?: number } | undefined)?.totalNodes,
+      truncated: Boolean(data?.stats?.truncated || nodes.length < sourceNodes.length || edges.length < sourceEdges.length),
+    },
   };
 }

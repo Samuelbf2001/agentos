@@ -143,6 +143,33 @@ function extractMarkdown(raw: string, contentType: string | null): string {
   return raw;
 }
 
+/**
+ * Combina el AbortSignal del timeout interno con uno externo (cancelación de
+ * extremo a extremo: el cliente cierra la conexión antes de que el hub
+ * responda). `AbortSignal.any` (Node 20+) no deja listeners colgados; si el
+ * runtime no lo trae, se cae a un listener manual con cleanup explícito para
+ * no acumularlos en llamadas que sí terminan a tiempo.
+ */
+function combineSignals(signals: AbortSignal[]): { signal: AbortSignal; dispose: () => void } {
+  if (signals.length === 1) return { signal: signals[0]!, dispose: () => {} };
+  if (typeof AbortSignal.any === "function") {
+    return { signal: AbortSignal.any(signals), dispose: () => {} };
+  }
+  const combined = new AbortController();
+  const entries = signals.map((signal) => {
+    const onAbort = () => combined.abort(signal.reason);
+    if (signal.aborted) combined.abort(signal.reason);
+    else signal.addEventListener("abort", onAbort, { once: true });
+    return { signal, onAbort };
+  });
+  return {
+    signal: combined.signal,
+    dispose: () => {
+      for (const { signal, onAbort } of entries) signal.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
 /** Serializa la query de los métodos genéricos; omite claves `undefined`. */
 function serializeQuery(query?: Record<string, string | number | boolean | undefined>): string {
   if (!query) return "";
@@ -176,7 +203,10 @@ export function createWhatsAppHubConnector(
       method?: string;
       body?: unknown;
       timeoutMs?: number;
+      maxResponseBytes?: number;
       headers?: Record<string, string>;
+      /** Cancelación de extremo a extremo (p. ej. el cliente cierra el grafo). */
+      signal?: AbortSignal;
     } = {},
   ): Promise<Response> {
     if (!baseUrl || !apiKey) {
@@ -187,6 +217,7 @@ export function createWhatsAppHubConnector(
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), callOpts.timeoutMs ?? timeoutMs);
+    const combined = combineSignals(callOpts.signal ? [controller.signal, callOpts.signal] : [controller.signal]);
     try {
       const res = await fetchFn(`${baseUrl}${path}`, {
         method: callOpts.method ?? "GET",
@@ -198,7 +229,7 @@ export function createWhatsAppHubConnector(
           ...(callOpts.headers ?? {}),
         },
         ...(callOpts.body !== undefined ? { body: JSON.stringify(callOpts.body) } : {}),
-        signal: controller.signal,
+        signal: combined.signal,
       });
       if (!res.ok) {
         throw new SourceConnectorError(
@@ -207,10 +238,48 @@ export function createWhatsAppHubConnector(
           res.status,
         );
       }
+      // Graph callers bound the decoded stream before JSON allocation. Keep the
+      // request timer alive through body consumption, including chunked bodies.
+      if (callOpts.maxResponseBytes !== undefined) {
+        const limit = Math.max(1, Math.floor(callOpts.maxResponseBytes));
+        const oversized = () => new SourceConnectorError("http_error", "El grafo de WhatsAppHub excede el tamaño permitido");
+        if (Number(res.headers.get("content-length")) > limit) {
+          controller.abort();
+          throw oversized();
+        }
+        const reader = res.body?.getReader();
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        try {
+          if (reader) while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            length += value.byteLength;
+            if (length > limit) {
+              controller.abort();
+              void reader.cancel().catch(() => {});
+              throw oversized();
+            }
+            chunks.push(value);
+          }
+        } finally {
+          reader?.releaseLock();
+        }
+        const body = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+        return new Response(body, { status: res.status, headers: res.headers });
+      }
       return res;
     } catch (err) {
       if (err instanceof SourceConnectorError) throw err;
       if (err instanceof Error && err.name === "AbortError") {
+        if (callOpts.signal?.aborted) {
+          throw new SourceConnectorError(
+            "timeout",
+            `Petición a WhatsAppHub cancelada (${path}): el cliente cerró la conexión.`,
+          );
+        }
         throw new SourceConnectorError(
           "timeout",
           `WhatsAppHub no respondió en ${callOpts.timeoutMs ?? timeoutMs} ms (${path}). El VPS puede estar saturado; reintenta más tarde.`,
@@ -223,6 +292,7 @@ export function createWhatsAppHubConnector(
       );
     } finally {
       clearTimeout(timer);
+      combined.dispose();
     }
   }
 
@@ -272,7 +342,7 @@ export function createWhatsAppHubConnector(
 
   async function requestJson(
     path: string,
-    opts: { method?: string; body?: unknown; timeoutMs?: number } = {},
+    opts: { method?: string; body?: unknown; timeoutMs?: number; maxResponseBytes?: number; signal?: AbortSignal } = {},
   ): Promise<unknown> {
     const res = await request(path, opts);
     try {
@@ -359,7 +429,11 @@ export function createWhatsAppHubConnector(
     // Zod, este conector solo transporta la petición autenticada. ───────────
 
     async hubGetJson(path, query, opts) {
-      return requestJson(`${path}${serializeQuery(query)}`, { timeoutMs: opts?.timeoutMs });
+      return requestJson(`${path}${serializeQuery(query)}`, {
+        timeoutMs: opts?.timeoutMs,
+        maxResponseBytes: opts?.maxResponseBytes,
+        signal: opts?.signal,
+      });
     },
 
     async hubSendJson(method, path, body, opts) {

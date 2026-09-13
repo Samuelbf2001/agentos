@@ -13,7 +13,7 @@ import { GraphCanvas, type GraphCanvasHandle } from "./grafo/GraphCanvas";
 import { Legend } from "./grafo/Legend";
 import { NodePanel } from "./grafo/NodePanel";
 
-const LIMIT_OPTIONS = [50, 150, 300];
+const LIMIT_OPTIONS = [50, 120, 200];
 const DEFAULT_SINCE = "2026-06-01";
 
 const EMPTY_GRAPH: Graph = { nodes: [], edges: [], stats: { nodeCount: 0, edgeCount: 0, byType: {}, truncated: false } };
@@ -28,7 +28,7 @@ export default function GrafoView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [limitPerType, setLimitPerType] = useState(150);
+  const [maxNodes, setMaxNodes] = useState(120);
   const [since, setSince] = useState(DEFAULT_SINCE);
   const [includeIsolated, setIncludeIsolated] = useState(false);
   const [hiddenTypes, setHiddenTypes] = useState<Set<GraphNodeType>>(() => new Set());
@@ -48,28 +48,35 @@ export default function GrafoView() {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
     (async () => {
       setLoading(true);
       setError(null);
       try {
         const data = await getGraph({
-          limitPerType,
+          limitPerType: 150,
+          maxNodes,
+          maxEdges: maxNodes * 2,
           since: since || DEFAULT_SINCE,
           includeIsolated,
           ...(focusParams ? { focus: focusParams.focus, depth: focusParams.depth } : {}),
-        });
-        if (!cancelled) setGraph(data);
+        }, controller.signal);
+        if (!cancelled && !controller.signal.aborted) setGraph(data);
       } catch (err) {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : "No se pudo cargar el grafo.");
+        if (!cancelled) setError(controller.signal.aborted ? "La carga tardó demasiado. Intenta refrescar." : err instanceof ApiError ? err.message : "No se pudo cargar el grafo.");
       } finally {
+        clearTimeout(timeout);
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limitPerType, since, includeIsolated, focusParams, reloadKey]);
+  }, [maxNodes, since, includeIsolated, focusParams, reloadKey]);
 
   // ── Filtrado en cliente por tipo oculto ─────────────────────────────────
   const visibleNodes = useMemo(() => graph.nodes.filter((n) => !hiddenTypes.has(n.type)), [graph.nodes, hiddenTypes]);
@@ -100,11 +107,27 @@ export default function GrafoView() {
     return new Set(visibleNodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
   }, [search, visibleNodes]);
 
+  // Solo centra cuando cambia el TEXTO de búsqueda, no en cada recarga del
+  // grafo (que produce un `searchMatches` nuevo con los mismos ids y volvería
+  // a centrar la vista sin que el usuario haya tocado el buscador).
+  const searchMatchesRef = useRef(searchMatches);
+  searchMatchesRef.current = searchMatches;
   useEffect(() => {
-    if (searchMatches.size === 0) return;
-    const [firstId] = searchMatches;
+    const matches = searchMatchesRef.current;
+    if (matches.size === 0) return;
+    const [firstId] = matches;
     if (firstId) canvasHandleRef.current?.focusOn(firstId);
-  }, [searchMatches]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  // Aviso discreto de recorte: usa `stats.total` si el servidor lo informa
+  // (N de M); si no, cae a solo N cuando `stats.truncated` viene en true.
+  const truncationNotice = useMemo(() => {
+    const { nodeCount, total, truncated } = graph.stats;
+    if (typeof total === "number" && total > nodeCount) return `Mostrando ${nodeCount} de ${total} nodos principales`;
+    if (truncated) return `Mostrando ${nodeCount} nodos principales`;
+    return null;
+  }, [graph.stats]);
 
   const toggleType = useCallback((type: GraphNodeType) => {
     setHiddenTypes((prev) => {
@@ -119,7 +142,8 @@ export default function GrafoView() {
 
   const handleEnfocarAqui = useCallback(() => {
     if (!selectedId) return;
-    setFocusParams({ focus: selectedId, depth: 2 });
+    setHiddenTypes(new Set());
+    setFocusParams({ focus: selectedId, depth: 1 });
   }, [selectedId]);
 
   const clearFocus = useCallback(() => setFocusParams(null), []);
@@ -138,19 +162,19 @@ export default function GrafoView() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nombre…"
-            aria-label="Buscar por nombre"
+            placeholder="Buscar en esta vista…"
+            aria-label="Buscar en esta vista"
             className="min-h-9 w-56 rounded-tight border border-line bg-canvas px-3 text-small text-ink placeholder:text-faint focus:border-link focus:outline-none"
           />
           <select
-            value={limitPerType}
-            onChange={(e) => setLimitPerType(Number(e.target.value))}
-            aria-label="Límite por tipo"
+            value={maxNodes}
+            onChange={(e) => setMaxNodes(Number(e.target.value))}
+            aria-label="Máximo de nodos visibles"
             className="min-h-9 rounded-tight border border-line bg-canvas px-2.5 text-small text-ink focus:border-link focus:outline-none"
           >
             {LIMIT_OPTIONS.map((opt) => (
               <option key={opt} value={opt}>
-                {opt} por tipo
+                Hasta {opt} nodos
               </option>
             ))}
           </select>
@@ -195,7 +219,7 @@ export default function GrafoView() {
             <span>
               {graph.stats.nodeCount} nodos · {graph.stats.edgeCount} aristas
             </span>
-            {graph.stats.truncated ? <span className="font-semibold text-work">grafo truncado (límites alcanzados)</span> : null}
+            {truncationNotice ? <span className="font-semibold text-work">{truncationNotice}</span> : null}
           </div>
         </div>
 
@@ -211,7 +235,7 @@ export default function GrafoView() {
       <SectionHead label="Lienzo" />
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_320px]">
-        <Card className="h-[calc(100vh-22rem)] min-h-[420px] overflow-hidden lg:h-[calc(100vh-20rem)]">
+        <Card className="h-[calc(100vh-22rem)] min-h-[420px] overflow-hidden lg:h-[calc(100vh-23.5rem)]">
           {loading && graph.nodes.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <Spinner label="Cargando el grafo…" />
@@ -234,7 +258,14 @@ export default function GrafoView() {
         </Card>
 
         <Card className="min-h-[200px] p-4">
-          <NodePanel node={selectedNode} degree={selectedId ? degreeById.get(selectedId) ?? 0 : 0} onClose={closePanel} onFocus={handleEnfocarAqui} />
+          <NodePanel
+            node={selectedNode}
+            degree={selectedId ? degreeById.get(selectedId) ?? 0 : 0}
+            hasFocus={Boolean(focusParams)}
+            onClose={closePanel}
+            onFocus={handleEnfocarAqui}
+            onClearFocus={clearFocus}
+          />
         </Card>
       </div>
     </div>

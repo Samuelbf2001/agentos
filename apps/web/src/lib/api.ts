@@ -215,7 +215,7 @@ export function setOnUnauthorized(fn: (() => void) | null): void {
 
 async function request<T>(
   path: string,
-  init: { method?: string; body?: unknown } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (currentToken) headers["authorization"] = `Bearer ${currentToken}`;
@@ -225,15 +225,18 @@ async function request<T>(
     res = await fetch(`${API_BASE}${path}`, {
       method: init.method ?? "GET",
       headers,
+      signal: init.signal,
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     });
-  } catch {
+  } catch (err) {
+    if (init.signal?.aborted) throw err;
     throw new ApiError("network_error", "No se pudo conectar con la API (¿apps/api corriendo en 4300?)", 0);
   }
   let json: unknown = null;
   try {
     json = await res.json();
-  } catch {
+  } catch (err) {
+    if (init.signal?.aborted) throw err;
     /* respuesta sin cuerpo */
   }
   if (!res.ok) {
@@ -256,7 +259,7 @@ async function request<T>(
  * (`lib/brain/<modulo>.ts`) la usa sin tocar este archivo. Mismo token,
  * mismos errores (`ApiError`) que el resto de `api`.
  */
-export function apiRequest<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+export function apiRequest<T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
   return request<T>(path, init);
 }
 
