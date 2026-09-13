@@ -107,7 +107,10 @@ export default function GrafoView() {
         setCounts(store.typeCounts());
         setEdgeCount(store.graph.size);
       },
-      onError: (err) => setError(err instanceof ApiError ? err.message : "No se pudo cargar el grafo."),
+      onError: (err) => {
+        console.error("[grafo] fallo al cargar", err);
+        setError(err instanceof ApiError ? err.message : "No se pudo cargar el grafo.");
+      },
     });
     loaderRef.current = loader;
     void loader.start(controller.signal);

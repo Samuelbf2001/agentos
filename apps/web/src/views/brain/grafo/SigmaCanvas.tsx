@@ -18,6 +18,15 @@ import type { GraphStore } from "../../../lib/brain/graphStore";
 import { createLayout, INITIAL_RUN_MS, REHEAT_MS, type GraphLayout } from "./useGraphLayout";
 import { emptyContext, reduceEdge, reduceNode, type LodContext } from "./lod";
 
+/**
+ * Sigma detecta el nodo bajo el cursor leyendo un píxel del framebuffer de
+ * picking (`readPixels`, lectura síncrona GPU→CPU que espera al render entero)
+ * en CADA mousemove, también arrastrando: con 1.500 nodos eso deja el pan/zoom
+ * por debajo de 15 FPS. Con la cámara en movimiento no se lee nada y, quieta,
+ * como mucho una lectura por este intervalo.
+ */
+const PICK_INTERVAL_MS = 80;
+
 export interface SigmaCanvasHandle {
   /** Repinta tras una tanda; `reheat` recalienta el layout 1,2 s. */
   refresh(opts?: { skipIndexation?: boolean; reheat?: boolean }): void;
@@ -41,7 +50,14 @@ export interface SigmaCanvasProps {
 
 interface SigmaLike {
   refresh(opts?: { skipIndexation?: boolean }): unknown;
-  getCamera(): { ratio: number; animatedReset(): Promise<void>; animate(state: Record<string, number>, opts?: Record<string, unknown>): Promise<void> };
+  getCamera(): {
+    ratio: number;
+    isAnimated(): boolean;
+    animatedReset(): Promise<void>;
+    animate(state: Record<string, number>, opts?: Record<string, unknown>): Promise<void>;
+  };
+  getMouseCaptor(): { isMoving: boolean; currentWheelDirection: number };
+  getNodeAtPosition(position: { x: number; y: number }): string | null;
   getNodeDisplayData(id: string): { x: number; y: number } | undefined;
   on(event: string, handler: (payload: { node: string }) => void): unknown;
   kill(): void;
@@ -64,13 +80,32 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
     let disposed = false;
     let sigma: SigmaLike | null = null;
     let layout: GraphLayout | null = null;
+    let unbindPick: (() => void) | null = null;
     const ctx: LodContext = emptyContext();
 
+    // Un repintado con `skipIndexation` sigue pasando por todos los reducers y
+    // por `process()` (sigma 3.0.3 lo marca igual), ~50 ms con 1.500 nodos: se
+    // coalescen a uno por frame para que barrer el ratón por un racimo denso
+    // (enter/leave en cadena) no encadene repintados síncronos.
+    let paintFrame: number | null = null;
     const paint = (skipIndexation = true): void => {
       if (!sigma) return;
       ctx.graphSize = store.graph.size;
       ctx.cameraRatio = sigma.getCamera().ratio;
-      sigma.refresh({ skipIndexation });
+      if (!skipIndexation) {
+        if (paintFrame !== null) {
+          cancelAnimationFrame(paintFrame);
+          paintFrame = null;
+        }
+        sigma.refresh({ skipIndexation: false });
+        return;
+      }
+      if (paintFrame !== null) return;
+      paintFrame = requestAnimationFrame(() => {
+        paintFrame = null;
+        if (!sigma) return;
+        sigma.refresh({ skipIndexation: true });
+      });
     };
 
     const handle: SigmaCanvasHandle = {
@@ -115,10 +150,15 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
     };
 
     // El motor solo se carga si hay lienzo real: jsdom mide 0×0 y aquí se para.
+    // `booting` cierra la carrera entre el arranque directo y el primer aviso
+    // del ResizeObserver: los dos pasaban el guard antes de que resolviera el
+    // `import` y nacían DOS motores (14 canvases) con dos layouts, uno huérfano.
+    let booting = false;
     const boot = async (): Promise<void> => {
-      if (disposed || sigma) return;
+      if (disposed || sigma || booting) return;
       const { width, height } = container.getBoundingClientRect();
       if (width < 2 || height < 2) return;
+      booting = true;
       try {
         const { default: Sigma } = (await import("sigma")) as unknown as {
           default: new (graph: unknown, container: HTMLElement, settings: Record<string, unknown>) => SigmaLike;
@@ -132,18 +172,60 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
           hideLabelsOnMove: true,
           hideEdgesOnMove: true,
           zIndex: true,
-          nodeReducer: (node: string, data: { type: string; size: number; label: string }) => reduceNode(node, data, ctx),
+          // En sigma v3 lo que devuelve el reducer SUSTITUYE a los atributos del
+          // nodo/arista (x, y incluidos): hay que fusionar sobre `data`, si no
+          // sigma aborta con "could not find a valid position (x, y)". Y el
+          // atributo `type` es para sigma el PROGRAMA de render (circle, line…),
+          // no nuestro tipo de dominio (tema, contacto, tagged…): se retira para
+          // que use el programa por defecto.
+          nodeReducer: (node: string, data: { type: string; size: number; label: string }) => {
+            const { type: _domainType, ...rest } = data;
+            return { ...rest, ...reduceNode(node, data, ctx) };
+          },
           edgeReducer: (edge: string, data: { type: string; weight: number }) => {
             const [source, target] = store.graph.extremities(edge);
-            return reduceEdge(edge, {
-              ...data,
-              source: source!,
-              target: target!,
-              sourceType: store.graph.getNodeAttribute(source!, "type"),
-              targetType: store.graph.getNodeAttribute(target!, "type"),
-            }, ctx);
+            const { type: _domainType, ...rest } = data;
+            return {
+              ...rest,
+              ...reduceEdge(edge, {
+                ...data,
+                source: source!,
+                target: target!,
+                sourceType: store.graph.getNodeAttribute(source!, "type"),
+                targetType: store.graph.getNodeAttribute(target!, "type"),
+              }, ctx),
+            };
           },
         });
+
+        const pickOriginal = sigma.getNodeAtPosition.bind(sigma);
+        let pickAt = 0;
+        let pickX = Number.NaN;
+        let pickY = Number.NaN;
+        let pickResult: string | null = null;
+        sigma.getNodeAtPosition = (position) => {
+          if (!sigma) return null;
+          const captor = sigma.getMouseCaptor();
+          if (captor.isMoving || captor.currentWheelDirection !== 0 || sigma.getCamera().isAnimated()) {
+            return ctx.hoveredId; // sin lecturas de GPU mientras la cámara se mueve
+          }
+          const now = performance.now();
+          const samePoint = Math.abs(position.x - pickX) < 1 && Math.abs(position.y - pickY) < 1;
+          if (samePoint || now - pickAt < PICK_INTERVAL_MS) return pickResult;
+          pickAt = now;
+          pickX = position.x;
+          pickY = position.y;
+          pickResult = pickOriginal(position);
+          return pickResult;
+        };
+        // Un clic siempre resuelve con una lectura fresca, nunca con la caché.
+        const resetPick = (): void => {
+          pickAt = 0;
+          pickX = Number.NaN;
+          pickY = Number.NaN;
+        };
+        container.addEventListener("mousedown", resetPick, true);
+        unbindPick = () => container.removeEventListener("mousedown", resetPick, true);
 
         sigma.on("enterNode", ({ node }) => handle.setHighlight(node));
         sigma.on("leaveNode", () => handle.setHighlight(null));
@@ -162,8 +244,11 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
         layout.start(INITIAL_RUN_MS);
         paint(false);
         onReadyRef.current?.(handle);
-      } catch {
+      } catch (err) {
+        console.error("[grafo] el motor no arrancó", err);
         if (!disposed) onUnavailableRef.current?.();
+      } finally {
+        booting = false;
       }
     };
 
@@ -175,6 +260,12 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
     return () => {
       disposed = true;
       observer?.disconnect();
+      unbindPick?.();
+      unbindPick = null;
+      if (paintFrame !== null) {
+        cancelAnimationFrame(paintFrame);
+        paintFrame = null;
+      }
       layout?.kill();
       layout = null;
       sigma?.kill();
