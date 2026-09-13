@@ -32,6 +32,8 @@ export interface SigmaCanvasHandle {
   refresh(opts?: { skipIndexation?: boolean; reheat?: boolean }): void;
   setHighlight(id: string | null): void;
   setTypeFilter(types: Set<string> | null): void;
+  /** Muestra u oculta los nodos de grado 0 (el anillo exterior). */
+  setShowIsolated(show: boolean): void;
   setSearchHit(id: string | null): void;
   setSelected(id: string | null): void;
   /** Centra la cámara en un nodo (búsqueda) o reencuadra si no se pasa id. */
@@ -123,6 +125,12 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
         store.setTypeFilter(types);
         paint(true);
       },
+      setShowIsolated(show) {
+        ctx.showIsolated = show;
+        // Cambia qué nodos entran en la rejilla de etiquetas y en el encuadre:
+        // toca reindexar, no basta con repintar.
+        paint(false);
+      },
       setSearchHit(id) {
         ctx.searchHitId = id;
         paint(true);
@@ -166,9 +174,15 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
         if (disposed) return;
         sigma = new Sigma(store.graph, container, {
           renderLabels: true,
-          labelRenderedSizeThreshold: 10,
-          labelDensity: 0.6,
-          labelGridCellSize: 80,
+          // Etiquetas: con 1.547 nodos, la vista general solo debe leer los
+          // hubs. Sigma exige `scaleSize(size) >= umbral` (size/ratio), así que
+          // con el techo de tamaño en 11 un umbral de 4 deja pasar grado ≳11
+          // (≈170 candidatos) y la rejilla de 110 px se queda con el MAYOR de
+          // cada celda: ~15-20 etiquetas repartidas. Al acercarse, `ratio` baja,
+          // `scaleSize` sube y aparecen solas las demás.
+          labelRenderedSizeThreshold: 4,
+          labelDensity: 0.7,
+          labelGridCellSize: 110,
           hideLabelsOnMove: true,
           hideEdgesOnMove: true,
           zIndex: true,
@@ -178,7 +192,7 @@ export function SigmaCanvas({ store, onSelect, onReady, onEngineUnavailable, ari
           // atributo `type` es para sigma el PROGRAMA de render (circle, line…),
           // no nuestro tipo de dominio (tema, contacto, tagged…): se retira para
           // que use el programa por defecto.
-          nodeReducer: (node: string, data: { type: string; size: number; label: string }) => {
+          nodeReducer: (node: string, data: { type: string; size: number; label: string; deg: number }) => {
             const { type: _domainType, ...rest } = data;
             return { ...rest, ...reduceNode(node, data, ctx) };
           },

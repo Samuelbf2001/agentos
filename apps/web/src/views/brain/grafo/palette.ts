@@ -20,8 +20,12 @@ export const NODE_TYPE_STYLES: Record<GraphNodeType, NodeTypeStyle> = {
   reunion: { label: "Reunión", color: "#a78bfa" },
   nota: { label: "Nota", color: "#f472b6" },
   nota_voz: { label: "Nota de voz", color: "#14c8b4" },
-  pagina: { label: "Página", color: "#8b90a8" },
-  tema: { label: "Tema", color: "#64748b" },
+  // `pagina` (455 nodos) es la masa de fondo: un gris frío que se retira.
+  pagina: { label: "Página", color: "#9aa3b2" },
+  // `tema` (319) era otro gris casi idéntico al de `pagina` y la capa temática
+  // resultaba ilegible. Pasa al ámbar del token `--color-work`: cálido, oscuro
+  // y por tanto distinto también del naranja claro de `empresa` (#f5a623).
+  tema: { label: "Tema", color: "#b45309" },
 };
 
 export const NODE_TYPE_ORDER = Object.keys(NODE_TYPE_STYLES) as GraphNodeType[];

@@ -1,0 +1,183 @@
+{
+ "v": 1,
+ "index": "default:1789340661648:1547:4009",
+ "refs": [
+  "reunion:501",
+  "reunion:497",
+  "reunion:493",
+  "reunion:479",
+  "reunion:476",
+  "reunion:444",
+  "reunion:404",
+  "reunion:432",
+  "reunion:401",
+  "reunion:398",
+  "reunion:395",
+  "reunion:392",
+  "contacto:11353"
+ ],
+ "nodes": {
+  "count": 12,
+  "type": [
+   3,
+   3,
+   3,
+   3,
+   3,
+   3,
+   3,
+   3,
+   3,
+   3,
+   3,
+   3
+  ],
+  "label": [
+   "Meeting started 2026/08/20 18:21 GMT-05:00",
+   "Meeting started 2026/08/20 15:03 GMT-05:00",
+   "Mizar - STP - 2026/08/19 15:00 GMT-05:00",
+   "Meeting started 2026/08/18 14:11 GMT-05:00",
+   "Meeting started 2026/08/18 10:35 GMT-05:00",
+   "MIZAR - 2026/08/12 14:01 GMT-05:00",
+   "Meeting started 2026/07/29 16:26 GMT-05:00",
+   "Meeting started 2026/08/06 11:00 GMT-05:00",
+   "Proyecto CRM | Sesión 5.1.2: Validación metricas y procesos en CRM - 2026/07/29 14:00 GMT-05:00",
+   "Meeting started 2026/07/28 13:58 GMT-05:00",
+   "Meeting started 2026/07/28 10:34 GMT-05:00",
+   "Meeting started 2026/07/28 09:01 GMT-05:00"
+  ],
+  "ts": [
+   1787270892742,
+   1787263059513,
+   1787177094226,
+   1787086911883,
+   1787072804505,
+   1786986006658,
+   1786478889940,
+   1786033837386,
+   1785359211238,
+   1785273391550,
+   1785261972540,
+   1785253216774
+  ],
+  "deg": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ]
+ },
+ "stubs": {
+  "count": 1,
+  "type": [
+   0
+  ],
+  "label": [
+   "Samuel Burgos"
+  ],
+  "ts": [
+   1777245906000
+  ]
+ },
+ "edges": {
+  "count": 12,
+  "s": [
+   11,
+   10,
+   7,
+   5,
+   4,
+   2,
+   9,
+   1,
+   0,
+   8,
+   6,
+   3
+  ],
+  "t": [
+   12,
+   12,
+   12,
+   12,
+   12,
+   12,
+   12,
+   12,
+   12,
+   12,
+   12,
+   12
+  ],
+  "type": [
+   6,
+   6,
+   6,
+   6,
+   6,
+   6,
+   6,
+   6,
+   6,
+   6,
+   6,
+   6
+  ],
+  "w": [
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6,
+   0.6
+  ]
+ },
+ "meta": {
+  "types": [
+   "contacto",
+   "empresa",
+   "equipo",
+   "reunion",
+   "nota",
+   "nota_voz",
+   "pagina",
+   "tema"
+  ],
+  "edgeTypes": [
+   "pertenece-a",
+   "asignado-a",
+   "reunion-contacto",
+   "reunion-empresa",
+   "nota-contacto",
+   "nota-empresa",
+   "participo-en",
+   "tagged",
+   "relacionada-con",
+   "creada-por"
+  ]
+ },
+ "cursor": {
+  "next": {
+   "ts": 1785253215856,
+   "id": "pagina:meeting-392"
+  },
+  "remainingByType": {
+   "reunion": 1
+  },
+  "done": false
+ }
+}

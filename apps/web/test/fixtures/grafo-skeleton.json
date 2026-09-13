@@ -1,0 +1,186 @@
+{
+ "v": 1,
+ "index": "default:1789340661648:1547:4009",
+ "refs": [
+  "tema:tareas",
+  "tema:hub",
+  "tema:reuniones",
+  "tema:stakeholder",
+  "equipo:6",
+  "equipo:5",
+  "equipo:4",
+  "equipo:3",
+  "empresa:1",
+  "contacto:1",
+  "contacto:7",
+  "contacto:1323",
+  "contacto:2123",
+  "contacto:6375",
+  "contacto:11353",
+  "contacto:1639"
+ ],
+ "nodes": {
+  "count": 15,
+  "type": [
+   7,
+   7,
+   7,
+   7,
+   2,
+   2,
+   2,
+   2,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "label": [
+   "tareas",
+   "hub",
+   "reuniones",
+   "stakeholder",
+   "Soporte Sixteam",
+   "Sebastian burgos",
+   "Samuel Burgos",
+   "samuel Burgos",
+   "Student Travel Center",
+   "(662) 803-0736",
+   "Juliana",
+   "Sixteam.pro",
+   "Jorge - Sixteam",
+   "Ernesto Hernández",
+   "Samuel Burgos"
+  ],
+  "ts": [
+   1789336674231,
+   1789336674231,
+   1789336668785,
+   1789163011054,
+   1782693339873,
+   1782693339872,
+   1782693339871,
+   1782693339870,
+   1782692155722,
+   1782519956572,
+   1782513958635,
+   1782499019941,
+   1782493710000,
+   1780694954000,
+   1777245906000
+  ],
+  "deg": [
+   1,
+   3,
+   1,
+   121,
+   0,
+   13,
+   50,
+   0,
+   2,
+   0,
+   0,
+   0,
+   0,
+   100,
+   229
+  ]
+ },
+ "stubs": {
+  "count": 1,
+  "type": [
+   0
+  ],
+  "label": [
+   "Student Travel Center - Lider Administrativo"
+  ],
+  "ts": [
+   1782488765525
+  ]
+ },
+ "edges": {
+  "count": 1,
+  "s": [
+   15
+  ],
+  "t": [
+   8
+  ],
+  "type": [
+   0
+  ],
+  "w": [
+   1
+  ]
+ },
+ "meta": {
+  "types": [
+   "contacto",
+   "empresa",
+   "equipo",
+   "reunion",
+   "nota",
+   "nota_voz",
+   "pagina",
+   "tema"
+  ],
+  "edgeTypes": [
+   "pertenece-a",
+   "asignado-a",
+   "reunion-contacto",
+   "reunion-empresa",
+   "nota-contacto",
+   "nota-empresa",
+   "participo-en",
+   "tagged",
+   "relacionada-con",
+   "creada-por"
+  ],
+  "counts": {
+   "contacto": 363,
+   "empresa": 1,
+   "equipo": 6,
+   "reunion": 390,
+   "nota": 7,
+   "nota_voz": 6,
+   "pagina": 455,
+   "tema": 319
+  },
+  "loaded": {
+   "contacto": 363,
+   "empresa": 1,
+   "equipo": 6,
+   "tema": 319,
+   "reunion": 0,
+   "nota": 0,
+   "nota_voz": 0,
+   "pagina": 0
+  },
+  "range": {
+   "reunion": {
+    "min": 1756495698309,
+    "max": 1789157884212
+   },
+   "nota": {
+    "min": 1782692984392,
+    "max": 1783642302977
+   },
+   "nota_voz": {
+    "min": 1782701487597,
+    "max": 1783642301277
+   },
+   "pagina": {
+    "min": 1780876800000,
+    "max": 1789336674231
+   }
+  },
+  "totals": {
+   "nodes": 1547,
+   "edges": 4009
+  }
+ }
+}

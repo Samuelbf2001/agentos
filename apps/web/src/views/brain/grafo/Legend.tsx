@@ -10,9 +10,13 @@ export interface LegendProps {
   counts: Record<string, number>;
   hidden: Set<GraphNodeType>;
   onToggle: (type: GraphNodeType) => void;
+  /** Nodos de grado 0: fuera por defecto, con su propia casilla. */
+  isolated: number;
+  showIsolated: boolean;
+  onToggleIsolated: () => void;
 }
 
-export function Legend({ counts, hidden, onToggle }: LegendProps) {
+export function Legend({ counts, hidden, onToggle, isolated, showIsolated, onToggleIsolated }: LegendProps) {
   return (
     <div className="flex flex-wrap items-center gap-3" role="group" aria-label="Filtrar por tipo de nodo">
       {NODE_TYPE_ORDER.map((type) => {
@@ -34,6 +38,18 @@ export function Legend({ counts, hidden, onToggle }: LegendProps) {
           </label>
         );
       })}
+
+      <label className="flex cursor-pointer items-center gap-1.5 border-l border-line pl-3 text-small select-none">
+        <input
+          type="checkbox"
+          checked={showIsolated}
+          onChange={onToggleIsolated}
+          aria-label="Mostrar nodos sin conexiones"
+          data-testid="grafo-aislados"
+        />
+        <span className={showIsolated ? "text-ink-2" : "text-faint"}>Aislados</span>
+        <span className="text-faint">({isolated})</span>
+      </label>
     </div>
   );
 }

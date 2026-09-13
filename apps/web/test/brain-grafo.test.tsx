@@ -15,6 +15,7 @@ const canvasHandle = {
   refresh: vi.fn(),
   setHighlight: vi.fn(),
   setTypeFilter: vi.fn(),
+  setShowIsolated: vi.fn(),
   setSearchHit: vi.fn(),
   setSelected: vi.fn(),
   fit: vi.fn(),

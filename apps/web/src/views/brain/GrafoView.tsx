@@ -33,6 +33,9 @@ import { NodePanel } from "./grafo/NodePanel";
 
 const numberFormat = new Intl.NumberFormat("es-CO");
 
+/** Fichas de búsqueda visibles antes del desplegable "+N más". */
+export const MAX_HITS_VISIBLE = 8;
+
 /** Rango global (epoch ms) de los tipos secundarios, para el selector de fecha. */
 function globalRange(meta: GraphMeta | null): { min: number | null; max: number | null } {
   let min: number | null = null;
@@ -91,6 +94,9 @@ export default function GrafoView() {
   const [dateFloor, setDateFloorState] = useState<string>("");
   const [engineDown, setEngineDown] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [showIsolated, setShowIsolated] = useState(false);
+  const [isolated, setIsolated] = useState(0);
+  const [allHits, setAllHits] = useState(false);
 
   const meta = loaderRef.current?.meta ?? null;
 
@@ -106,6 +112,7 @@ export default function GrafoView() {
         canvasRef.current?.refresh({ skipIndexation: false, reheat: true });
         setCounts(store.typeCounts());
         setEdgeCount(store.graph.size);
+        setIsolated(store.isolatedCount());
       },
       onError: (err) => {
         console.error("[grafo] fallo al cargar", err);
@@ -125,10 +132,14 @@ export default function GrafoView() {
     };
   }, [store, reloadKey]);
 
-  const onCanvasReady = useCallback((handle: SigmaCanvasHandle) => {
-    canvasRef.current = handle;
-    handle.refresh({ skipIndexation: false });
-  }, []);
+  const onCanvasReady = useCallback(
+    (handle: SigmaCanvasHandle) => {
+      canvasRef.current = handle;
+      handle.setShowIsolated(showIsolated);
+      handle.refresh({ skipIndexation: false });
+    },
+    [showIsolated],
+  );
 
   // Los filtros por tipo bajan al lienzo como reducers, no como re-render.
   useEffect(() => {
@@ -139,6 +150,10 @@ export default function GrafoView() {
   useEffect(() => {
     canvasRef.current?.setSelected(selectedId);
   }, [selectedId]);
+
+  useEffect(() => {
+    canvasRef.current?.setShowIsolated(showIsolated);
+  }, [showIsolated]);
 
   const toggleType = useCallback((type: GraphNodeType) => {
     setHiddenTypes((prev) => {
@@ -174,6 +189,7 @@ export default function GrafoView() {
     }
     const results = (await loaderRef.current?.search(q)) ?? [];
     setHits(results);
+    setAllHits(false);
   }, [search]);
 
   /** Al elegir un resultado: si el nodo no está, se trae su ego-red primero. */
@@ -201,9 +217,13 @@ export default function GrafoView() {
       type: attrs.type,
       label: attrs.label,
       refId: selectedId.split(":").slice(1).join(":"),
+      // El envoltorio columnar solo transporta id/tipo/etiqueta/fecha/grado: no
+      // hay teléfono ni email que enseñar y no se inventa ninguno.
       meta: {},
     };
   }, [selectedId, store, counts]);
+
+  const selectedTs = selectedId && store.graph.hasNode(selectedId) ? store.graph.getNodeAttribute(selectedId, "ts") : null;
 
   const selectedDegree = selectedId && store.graph.hasNode(selectedId) ? store.graph.degree(selectedId) : 0;
   const nodeCount = Object.values(counts).reduce((sum, n) => sum + n, 0);
@@ -297,7 +317,14 @@ export default function GrafoView() {
           </div>
         </div>
 
-        <Legend counts={counts} hidden={hiddenTypes} onToggle={toggleType} />
+        <Legend
+          counts={counts}
+          hidden={hiddenTypes}
+          onToggle={toggleType}
+          isolated={isolated}
+          showIsolated={showIsolated}
+          onToggleIsolated={() => setShowIsolated((v) => !v)}
+        />
       </Card>
 
       {error ? (
@@ -311,8 +338,10 @@ export default function GrafoView() {
           {hits.length === 0 ? (
             <p className="text-small text-muted">Sin resultados para «{search}».</p>
           ) : (
-            <ul className="flex flex-wrap gap-2" aria-label="Resultados de búsqueda">
-              {hits.map((hit) => (
+            /* Máximo 8 fichas: con 50 resultados la lista empujaba el lienzo
+               por debajo del pliegue y había que bajar para ver el grafo. */
+            <ul className="flex flex-wrap items-center gap-2" aria-label="Resultados de búsqueda">
+              {(allHits ? hits : hits.slice(0, MAX_HITS_VISIBLE)).map((hit) => (
                 <li key={hit.id}>
                   <button
                     type="button"
@@ -323,6 +352,17 @@ export default function GrafoView() {
                   </button>
                 </li>
               ))}
+              {hits.length > MAX_HITS_VISIBLE ? (
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setAllHits((v) => !v)}
+                    className="press rounded-tight px-2.5 py-1 text-small font-semibold text-link hover:bg-link-bg"
+                  >
+                    {allHits ? "Ver menos" : `+${hits.length - MAX_HITS_VISIBLE} más`}
+                  </button>
+                </li>
+              ) : null}
             </ul>
           )}
         </Card>
@@ -355,7 +395,13 @@ export default function GrafoView() {
         </Card>
 
         <Card className="min-h-[200px] p-4">
-          <NodePanel node={selectedNode} degree={selectedDegree} onClose={() => setSelectedId(null)} onFocus={showNeighbors} />
+          <NodePanel
+            node={selectedNode}
+            degree={selectedDegree}
+            ts={selectedTs}
+            onClose={() => setSelectedId(null)}
+            onFocus={showNeighbors}
+          />
         </Card>
       </div>
     </div>

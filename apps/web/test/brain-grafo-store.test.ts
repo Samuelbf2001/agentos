@@ -134,7 +134,7 @@ describe("graphStore", () => {
     const store = createGraphStore();
     const result = store.applyPayload(skeleton());
 
-    expect(result).toEqual({ nodesAdded: 2, edgesAdded: 1, unparked: 0 });
+    expect(result).toEqual({ nodesAdded: 2, edgesAdded: 1, unparked: 0, conflictsIgnored: 0 });
     expect(store.graph.order).toBe(2);
     expect(store.graph.size).toBe(1);
     expect(store.indexVersion).toBe("default:1757700000000:1278:4210");
@@ -172,7 +172,7 @@ describe("graphStore", () => {
     expect(store.graph.hasEdge("nota:5|reunion:88|relacionada-con")).toBe(true);
   });
 
-  it("un nodo nuevo aterriza en el centroide de sus vecinos ya colocados (± jitter)", () => {
+  it("un nodo nuevo aterriza EN TORNO al centroide de sus vecinos ya colocados", () => {
     const store = createGraphStore();
     store.applyPayload(skeleton());
     const ana = { x: store.graph.getNodeAttribute("contacto:12", "x"), y: store.graph.getNodeAttribute("contacto:12", "y") };
@@ -189,10 +189,72 @@ describe("graphStore", () => {
     );
 
     const pos = { x: store.graph.getNodeAttribute("reunion:88", "x"), y: store.graph.getNodeAttribute("reunion:88", "y") };
-    expect(Math.abs(pos.x - ana.x)).toBeLessThanOrEqual(12);
-    expect(Math.abs(pos.y - ana.y)).toBeLessThanOrEqual(12);
-    // Y no coincide exactamente: el jitter evita que se apilen unos sobre otros.
-    expect(pos.x).not.toBe(ana.x);
+    // Cerca de Ana, pero NO encima: el primer hermano sale a ~10 unidades.
+    const distancia = Math.hypot(pos.x - ana.x, pos.y - ana.y);
+    expect(distancia).toBeGreaterThan(3);
+    expect(distancia).toBeLessThanOrEqual(30);
+  });
+
+  it("los hermanos de un mismo hub se reparten en corona, no se apilan encima", () => {
+    const store = createGraphStore();
+    store.applyPayload(skeleton());
+    const ana = { x: store.graph.getNodeAttribute("contacto:12", "x"), y: store.graph.getNodeAttribute("contacto:12", "y") };
+
+    // 200 reuniones colgando SOLO de Ana: el caso real del hub de grado 229.
+    const hojas = Array.from({ length: 200 }, (_, i) => ({
+      id: `reunion:${100 + i}`,
+      type: "reunion",
+      label: `Reunión ${i}`,
+      ts: 1757000000000 - i,
+    }));
+    store.applyPayload(
+      decodePayload(
+        payload(
+          hojas,
+          [{ id: "contacto:12", type: "contacto", label: "Ana" }],
+          hojas.map((h) => ({ s: h.id, t: "contacto:12", type: "reunion-contacto" })),
+        ),
+      ),
+    );
+
+    let dentro = 0;
+    let maxima = 0;
+    for (const hoja of hojas) {
+      const d = Math.hypot(
+        store.graph.getNodeAttribute(hoja.id, "x") - ana.x,
+        store.graph.getNodeAttribute(hoja.id, "y") - ana.y,
+      );
+      if (d < 25) dentro++;
+      maxima = Math.max(maxima, d);
+    }
+    // Antes: las 200 caían dentro de ±12 y sepultaban al hub. Ahora la corona
+    // llega a ~200 unidades y solo un puñado queda en el radio del propio hub.
+    expect(dentro).toBeLessThan(10);
+    expect(maxima).toBeGreaterThan(150);
+  });
+
+  it("un nodo ya cargado no cambia de tipo ni de etiqueta por una tanda ajena", () => {
+    const store = createGraphStore();
+    store.applyPayload(skeleton());
+
+    // Una respuesta posterior insiste en que el contacto es una reunión.
+    const intruso = store.applyPayload(
+      decodePayload(payload([{ id: "contacto:12", type: "reunion", label: "Kickoff", deg: 50 }], [], [])),
+    );
+
+    expect(intruso.conflictsIgnored).toBe(1);
+    expect(store.graph.getNodeAttribute("contacto:12", "type")).toBe("contacto");
+    expect(store.graph.getNodeAttribute("contacto:12", "label")).toBe("Ana");
+    // El grado sí se acepta: nunca pinta de menos.
+    expect(store.graph.getNodeAttribute("contacto:12", "deg")).toBe(50);
+
+    // Solo su PROPIA ego-red puede corregirlo.
+    const propio = store.applyPayload(
+      decodePayload(payload([{ id: "contacto:12", type: "contacto", label: "Ana Gómez", deg: 50 }], [], [])),
+      { egoOf: "contacto:12" },
+    );
+    expect(propio.conflictsIgnored).toBe(0);
+    expect(store.graph.getNodeAttribute("contacto:12", "label")).toBe("Ana Gómez");
   });
 
   it("sin vecinos conocidos, aterriza en el anillo de su tipo (no en el origen)", () => {
@@ -229,7 +291,7 @@ describe("graphStore", () => {
     const store = createGraphStore();
     store.applyPayload(skeleton());
     const again = store.applyPayload(skeleton());
-    expect(again).toEqual({ nodesAdded: 0, edgesAdded: 0, unparked: 0 });
+    expect(again).toEqual({ nodesAdded: 0, edgesAdded: 0, unparked: 0, conflictsIgnored: 0 });
     expect(store.graph.order).toBe(2);
     expect(store.graph.size).toBe(1);
   });
@@ -244,10 +306,12 @@ describe("graphStore", () => {
     expect(store.indexVersion).toBeNull();
   });
 
-  it("el tamaño por grado crece con la raíz y queda acotado en [3, 18]", () => {
-    expect(sizeForDegree(0)).toBe(3);
-    expect(sizeForDegree(9)).toBeCloseTo(8.4, 5);
-    expect(sizeForDegree(100_000)).toBe(18);
+  it("el tamaño por grado crece con la raíz y queda acotado en [2, 11]", () => {
+    expect(sizeForDegree(0)).toBe(2);
+    expect(sizeForDegree(9)).toBeCloseTo(3.8, 5);
+    // El hub real del grafo (grado 229) toca el techo; nada lo supera.
+    expect(sizeForDegree(229)).toBe(11);
+    expect(sizeForDegree(100_000)).toBe(11);
   });
 });
 
@@ -272,9 +336,25 @@ describe("LOD (reducers puros)", () => {
   it("la selección y el resultado de búsqueda fuerzan etiqueta y suben de plano", () => {
     const seleccionado = reduceNode("contacto:1", node, { ...emptyContext(), selectedId: "contacto:1" });
     expect(seleccionado.forceLabel).toBe(true);
-    expect(seleccionado.zIndex).toBe(3);
+    expect(seleccionado.zIndex).toBe(4);
     expect(seleccionado.size).toBeGreaterThan(node.size);
     expect(reduceNode("contacto:1", node, { ...emptyContext(), searchHitId: "contacto:1" }).forceLabel).toBe(true);
+  });
+
+  it("un hub se dibuja por encima de sus hojas", () => {
+    const hoja = reduceNode("reunion:1", { ...node, type: "reunion", deg: 2 }, emptyContext());
+    const hub = reduceNode("contacto:1", { ...node, deg: 229 }, emptyContext());
+    expect(hub.zIndex).toBeGreaterThan(hoja.zIndex);
+  });
+
+  it("los aislados (grado 0) se ocultan salvo que se pidan o se seleccionen", () => {
+    const aislado = { ...node, deg: 0 };
+    expect(reduceNode("contacto:9", aislado, emptyContext()).hidden).toBe(true);
+    expect(reduceNode("contacto:9", aislado, { ...emptyContext(), showIsolated: true }).hidden).toBe(false);
+    expect(reduceNode("contacto:9", aislado, { ...emptyContext(), searchHitId: "contacto:9" }).hidden).toBe(false);
+    expect(reduceNode("contacto:9", aislado, { ...emptyContext(), selectedId: "contacto:9" }).hidden).toBe(false);
+    // Con grado ≥ 1 nunca se esconde por este motivo.
+    expect(reduceNode("contacto:1", { ...node, deg: 1 }, emptyContext()).hidden).toBe(false);
   });
 
   it("las aristas desaparecen solo con grafo grande Y cámara lejos", () => {

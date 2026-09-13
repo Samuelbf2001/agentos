@@ -1,9 +1,16 @@
 /**
- * Panel lateral del nodo seleccionado: tipo, grado, los mismos metadatos que
- * enseñaba `grafo.jsx` (por tipo) y el enlace a la sección real de AgentOS
- * cuando existe una.
+ * Panel lateral del nodo seleccionado.
+ *
+ * El transporte columnar del grafo dinámico solo lleva id, tipo, etiqueta,
+ * fecha y grado: NO hay teléfono, email ni participantes que enseñar, y aquí
+ * no se inventa ninguno. El único tipo con detalle propio ya proxyado en
+ * `apps/api/src/routes/brain/*` es `nota_voz` (`GET /api/brain/notas-voz/:id`),
+ * y se pide en diferido solo al seleccionarla. Para los demás tipos el panel
+ * enseña lo que realmente sabe y el enlace a su sección de AgentOS.
  */
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { apiRequest } from "../../../lib/api";
 import { paths } from "../../../lib/paths";
 import { EmptyState } from "../../../components/ui";
 import type { GraphNode } from "../../../lib/brain/grafo";
@@ -12,6 +19,8 @@ import { styleForType } from "./palette";
 export interface NodePanelProps {
   node: GraphNode | null;
   degree: number;
+  /** Fecha del nodo en epoch ms (la que viaja en el envoltorio columnar). */
+  ts?: number | null;
   /** Hay una vista enfocada activa: enseña "Vista general". Opcional. */
   hasFocus?: boolean;
   onClose: () => void;
@@ -19,6 +28,47 @@ export interface NodePanelProps {
   onFocus: () => void;
   /** Quita el foco y vuelve a la vista general; solo tiene sentido con `hasFocus`. */
   onClearFocus?: () => void;
+}
+
+interface VoiceNoteDetail {
+  summary?: string | null;
+  category?: string | null;
+  source?: string | null;
+  duration_sec?: number | null;
+}
+
+/**
+ * Detalle perezoso de una nota de voz. Devuelve `null` mientras no haya nada
+ * que enseñar: ni spinner ni hueco, el panel ya es útil sin él.
+ */
+function useVoiceNoteDetail(node: GraphNode | null): VoiceNoteDetail | null {
+  const [detail, setDetail] = useState<VoiceNoteDetail | null>(null);
+  const id = node?.type === "nota_voz" ? node.refId : null;
+
+  useEffect(() => {
+    setDetail(null);
+    if (!id) return;
+    const controller = new AbortController();
+    void apiRequest<{ note?: VoiceNoteDetail }>(`/api/brain/notas-voz/${encodeURIComponent(String(id))}`, {
+      signal: controller.signal,
+    })
+      .then((raw) => {
+        if (!controller.signal.aborted && raw?.note) setDetail(raw.note);
+      })
+      .catch(() => {
+        // Sin detalle no pasa nada: el panel sigue enseñando lo que sabe.
+      });
+    return () => controller.abort();
+  }, [id]);
+
+  return detail;
+}
+
+function readableEpoch(ts: number | null | undefined): string | null {
+  if (ts == null) return null;
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("es-CO", { dateStyle: "medium" }).format(date);
 }
 
 function readableDate(value: string | null | undefined): string | null {
@@ -91,14 +141,21 @@ function sectionLink(node: GraphNode): { to: string; label: string } | null {
   }
 }
 
-export function NodePanel({ node, degree, hasFocus, onClose, onFocus, onClearFocus }: NodePanelProps) {
+export function NodePanel({ node, degree, ts, hasFocus, onClose, onFocus, onClearFocus }: NodePanelProps) {
+  const voiceNote = useVoiceNoteDetail(node);
+
   if (!node) {
     return <EmptyState title="Sin nodo seleccionado" hint="Elige un nodo del lienzo para ver su detalle." />;
   }
 
   const style = styleForType(node.type);
   const link = sectionLink(node);
-  const lines = metaLines(node);
+  const fecha = readableEpoch(ts);
+  const lines = [
+    ...metaLines(node),
+    ...(voiceNote?.category ? [`Categoría: ${voiceNote.category}`] : []),
+    ...(voiceNote?.duration_sec != null ? [`Duración: ${voiceNote.duration_sec} s`] : []),
+  ];
 
   return (
     <div className="flex flex-col gap-3" data-testid="grafo-panel-nodo">
@@ -122,6 +179,21 @@ export function NodePanel({ node, degree, hasFocus, onClose, onFocus, onClearFoc
       </span>
 
       <p className="text-small text-muted">{degree === 1 ? "1 conexión en esta vista" : `${degree} conexiones en esta vista`}</p>
+
+      <dl className="flex flex-col gap-1 text-small">
+        <div className="flex gap-2">
+          <dt className="text-muted">Id</dt>
+          <dd className="min-w-0 break-all font-mono text-ink-2">{node.id}</dd>
+        </div>
+        {fecha ? (
+          <div className="flex gap-2">
+            <dt className="text-muted">Fecha</dt>
+            <dd className="text-ink-2">{fecha}</dd>
+          </div>
+        ) : null}
+      </dl>
+
+      {voiceNote?.summary ? <p className="text-small text-ink-2">{voiceNote.summary}</p> : null}
 
       {lines.length > 0 ? (
         <ul className="flex flex-col gap-1 text-small text-ink-2">

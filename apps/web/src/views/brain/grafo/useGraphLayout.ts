@@ -34,6 +34,33 @@ const SAMPLE_NODES = 64;
 const QUIET_DISPLACEMENT = 0.4;
 const SYNC_ITERATIONS_PER_CHUNK = 100;
 
+/**
+ * Ajustes de ForceAtlas2 sobre los que infiere la librería (`inferSettings`).
+ * Los de serie daban una bola: `strongGravityMode` con `gravity 0.05` aplasta
+ * todo contra el centro y, sin `adjustSizes`, las hojas se meten DENTRO de su
+ * hub. Aquí:
+ *  - `barnesHutOptimize`: obligatorio con 1.500 nodos para acabar en segundos.
+ *  - `adjustSizes`: anticolisión real — las hojas rodean al hub, no lo tapan.
+ *  - `scalingRatio` alto + `gravity` floja y NO fuerte: los racimos se separan
+ *    en vez de comprimirse contra el centro.
+ *  - `linLogMode` apagado a propósito: su atracción logarítmica es tan floja a
+ *    larga distancia que un nodo que nace lejos no vuelve nunca — los temas se
+ *    quedaban de aro en el borde. La atracción lineal recoge desde cualquier
+ *    sitio dentro del presupuesto de 8 s.
+ *  - `outboundAttractionDistribution: false`: con «disuadir hubs» activo los
+ *    hubs se van al perímetro; apagado, cada uno queda en su propio racimo.
+ * `slowDown` se hereda de `inferSettings` (1 + ln(orden)) para no oscilar.
+ */
+export const LAYOUT_SETTINGS = {
+  barnesHutOptimize: true,
+  adjustSizes: true,
+  linLogMode: false,
+  strongGravityMode: false,
+  gravity: 0.1,
+  scalingRatio: 24,
+  outboundAttractionDistribution: false,
+} as const;
+
 interface Supervisor {
   start(): void;
   stop(): void;
@@ -118,7 +145,7 @@ export function createLayout(graph: GraphologyGraph): GraphLayout {
   };
 
   /** Camino B: FA2 síncrono en tandas cortas dentro de `requestIdleCallback`. */
-  function makeSyncSupervisor(assign: (g: GraphologyGraph, iterations: number) => void): Supervisor {
+  function makeSyncSupervisor(assign: (g: GraphologyGraph, params: unknown) => void, settings: Record<string, unknown>): Supervisor {
     let active = false;
     let handle: number | null = null;
     const schedule = (cb: () => void): number => {
@@ -129,7 +156,7 @@ export function createLayout(graph: GraphologyGraph): GraphLayout {
     const tick = (): void => {
       handle = null;
       if (!active || killed) return;
-      assign(graph, SYNC_ITERATIONS_PER_CHUNK);
+      assign(graph, { iterations: SYNC_ITERATIONS_PER_CHUNK, settings });
       handle = schedule(tick);
     };
     return {
@@ -156,23 +183,25 @@ export function createLayout(graph: GraphologyGraph): GraphLayout {
 
   void (async () => {
     let inferSettings: ((g: GraphologyGraph) => Record<string, unknown>) | undefined;
-    let assign: ((g: GraphologyGraph, iterations: number) => void) | undefined;
+    let assign: ((g: GraphologyGraph, params: unknown) => void) | undefined;
+    let settings: Record<string, unknown> = { ...LAYOUT_SETTINGS };
     try {
       const fa2 = (await import("graphology-layout-forceatlas2")) as unknown as {
         default: {
           inferSettings(g: GraphologyGraph): Record<string, unknown>;
-          assign(g: GraphologyGraph, iterations: number): void;
+          assign(g: GraphologyGraph, params: unknown): void;
         };
       };
       inferSettings = fa2.default.inferSettings;
       assign = fa2.default.assign;
+      settings = { ...inferSettings(graph), ...LAYOUT_SETTINGS };
       const mod = (await import("graphology-layout-forceatlas2/worker")) as unknown as {
         default: new (g: GraphologyGraph, params?: Record<string, unknown>) => Supervisor;
       };
-      supervisor = new mod.default(graph, { settings: inferSettings(graph) });
+      supervisor = new mod.default(graph, { settings });
     } catch {
       // CSP sin `worker-src blob:`, entorno sin Worker (jsdom) o FA2 no cargable.
-      supervisor = assign ? makeSyncSupervisor(assign) : null;
+      supervisor = assign ? makeSyncSupervisor(assign, settings) : null;
       synchronous = true;
     }
     if (killed) {

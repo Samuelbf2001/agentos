@@ -291,7 +291,9 @@ export function createGraphLoader(opts: GraphLoaderOptions): GraphLoader {
       try {
         const payload = await api.getNeighbors(id, { depth, limit: 300 }, controller.signal);
         if (cancelled) return;
-        const result = store.applyPayload(payload);
+        // `egoOf`: esta es la única respuesta autorizada a refrescar el tipo y
+        // la etiqueta de `id` (regla 4 de `graphStore`).
+        const result = store.applyPayload(payload, { egoOf: id });
         budgetUsed += result.nodesAdded;
         opts.onPatch?.({ nodesAdded: result.nodesAdded, edgesAdded: result.edgesAdded });
       } catch (err) {
