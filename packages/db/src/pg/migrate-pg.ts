@@ -4,6 +4,7 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { closePgDb, openPgDb, type AgentosPgDb } from "./client-pg.js";
 import {
@@ -29,7 +30,20 @@ export async function runPgMigrations(
   opts: EnsurePgSearchOptions = {},
 ): Promise<PgSearchCapabilities> {
   await migrate(db, { migrationsFolder: PG_MIGRATIONS_FOLDER });
+  await ensurePgTaskTrashColumns(db);
   return ensurePgSearch(db, opts);
+}
+
+/**
+ * Red de seguridad de `0010_tareas_papelera` (idempotente): espejo de
+ * `ensureTaskTrashColumns` en src/migrate.ts. El migrador de drizzle salta en
+ * silencio una migración con `when` anterior a la última aplicada; esto
+ * garantiza columnas e índice sea cual sea el orden de merge de las ramas.
+ */
+export async function ensurePgTaskTrashColumns(db: AgentosPgDb): Promise<void> {
+  await db.execute(sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at bigint`);
+  await db.execute(sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_by text`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks USING btree (deleted_at)`);
 }
 
 // Ejecutable: `pnpm --filter @agentos/db migrate:pg`

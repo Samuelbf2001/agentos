@@ -31,7 +31,7 @@ export {
 } from "./open.js";
 // Embeddings: agnósticos del motor (el mock no toca red; sin key, `null` limpio).
 export * from "./embeddings.js";
-export { runMigrations } from "./migrate.js";
+export { runMigrations, ensureTaskTrashColumns } from "./migrate.js";
 export * from "./types.js";
 export { ensureFts, type MessageSearchHit, type KnowledgeSearchHit } from "./search.js";
 export * from "./seed-sources.js";

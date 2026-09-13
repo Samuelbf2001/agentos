@@ -85,6 +85,13 @@
       "when": 1788300000000,
       "tag": "0011_notas_propuestas",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788330000000,
+      "tag": "0014_tareas_papelera",
+      "breakpoints": true
     }
   ]
 }

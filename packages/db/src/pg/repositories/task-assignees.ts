@@ -1,6 +1,7 @@
-import { and, asc, eq, exists, sql } from "drizzle-orm";
+import { and, asc, eq, exists, isNull, sql } from "drizzle-orm";
 import { errors, nowMs, type TaskStatus } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
+import { taskDeletedConflict } from "../../task-trash-common.js";
 import { people, projects, taskAssignees, tasks } from "../schema-pg.js";
 import type {
   NewTaskAssignee,
@@ -73,9 +74,12 @@ export async function listTasksWithAssignees(
     assigneeAgentId?: string;
     personId?: string;
     assigneePersonId?: string;
+    /** Papelera: por defecto las desactivadas NO salen. */
+    includeDeleted?: boolean;
   } = {},
 ): Promise<TaskWithAssignees[]> {
   const conds = [];
+  if (!filter.includeDeleted) conds.push(isNull(tasks.deletedAt));
   if (filter.projectId) conds.push(eq(tasks.projectId, filter.projectId));
   if (filter.status) conds.push(eq(tasks.status, filter.status));
   if (filter.assigneeAgentId) conds.push(eq(tasks.assigneeAgentId, filter.assigneeAgentId));
@@ -265,6 +269,7 @@ export async function replaceTaskAssignees(
   await db.transaction(async (tx) => {
     const [current] = await tx.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
     if (!current) throw errors.notFound("task", taskId);
+    if (current.deletedAt !== null) throw taskDeletedConflict(taskId);
     await validateTaskAssigneeOrganization(tx as unknown as AgentosPgDb, current.projectId, normalized.personIds);
 
     // El UPDATE condicional es la primera mutación: una versión vieja no

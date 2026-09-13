@@ -47,6 +47,7 @@ import {
   renewLease as repoRenewLease,
   setConfig,
   setGateState,
+  taskDeletedConflict,
   transitionTaskStatus,
   updateTask,
   type AgentosDb,
@@ -184,7 +185,11 @@ export interface ReconcileResult {
 export interface DependencyState {
   taskId: string;
   dependsOn: string[];
-  /** Deps que NO están en DONE. Una dep borrada/inexistente cuenta como insatisfecha (fail-closed). */
+  /**
+   * Deps que NO están en DONE. Una dep inexistente cuenta como insatisfecha
+   * (fail-closed). Una dep en la PAPELERA (`deleted_at`) no bloquea: quien la
+   * desactivó decidió que ya no hace falta, y es invisible en el tablero.
+   */
   unsatisfied: string[];
   satisfied: boolean;
 }
@@ -195,7 +200,9 @@ export async function dependencyState(db: AgentosDb, taskId: string): Promise<De
   const dependsOn = task.dependsOn ?? [];
   const unsatisfied: string[] = [];
   for (const id of dependsOn) {
-    if ((await getTask(db, id))?.status !== "DONE") unsatisfied.push(id);
+    const dep = await getTask(db, id);
+    if (dep?.deletedAt != null) continue;
+    if (dep?.status !== "DONE") unsatisfied.push(id);
   }
   return { taskId: task.id, dependsOn, unsatisfied, satisfied: unsatisfied.length === 0 };
 }
@@ -278,6 +285,13 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
   async function mustGetTask(taskId: string): Promise<Task> {
     const task = await getTask(db, taskId);
     if (!task) throw errors.notFound("task", taskId);
+    return task;
+  }
+
+  /** Papelera: una tarea desactivada no se mueve, no se reclama ni recibe delegaciones. */
+  async function mustGetActiveTask(taskId: string): Promise<Task> {
+    const task = await mustGetTask(taskId);
+    if (task.deletedAt != null) throw taskDeletedConflict(taskId);
     return task;
   }
 
@@ -430,7 +444,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
   // ── Transición ────────────────────────────────────────────────────────────
 
   async function moveTask(input: MoveTaskInput, internal?: { viaClaim?: boolean }): Promise<Task> {
-    const task = await mustGetTask(input.taskId);
+    const task = await mustGetActiveTask(input.taskId);
     const from = task.status;
     const to = input.to;
     const kind: ActorKind = actorKind(input.actor);
@@ -603,7 +617,9 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       if (deps.length === 0) continue;
       let allDone = true;
       for (const id of deps) {
-        if ((await getTask(db, id))?.status !== "DONE") {
+        const dep = await getTask(db, id);
+        if (dep?.deletedAt != null) continue; // en la papelera: no bloquea (ver dependencyState)
+        if (dep?.status !== "DONE") {
           allDone = false;
           break;
         }
@@ -898,7 +914,7 @@ export function createBoardEngine(opts: BoardEngineOptions): BoardEngine {
       );
     }
     const payload = parsed.data;
-    const parent = await mustGetTask(input.parentTaskId);
+    const parent = await mustGetActiveTask(input.parentTaskId);
 
     // Depth máx 3: la hija quedaría a depth(parent)+1. Se rechaza, no se trunca.
     const childDepth = (await delegationDepth(parent.id)) + 1;

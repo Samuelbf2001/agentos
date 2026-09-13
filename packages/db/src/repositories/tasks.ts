@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type BlockedReason, type TaskStatus } from "@agentos/shared";
 import type { AgentosSqliteDb } from "../client.js";
+import { taskDeletedConflict } from "../task-trash-common.js";
 import { artifacts, taskEvents, tasks } from "../schema.js";
 import {
   insertTaskAssigneeRows,
@@ -55,9 +56,12 @@ export function listTasks(
     personId?: string;
     /** Alias de compatibilidad para el contrato HTTP. */
     assigneePersonId?: string;
+    /** Papelera: por defecto las desactivadas NO salen en ningún listado. */
+    includeDeleted?: boolean;
   } = {},
 ): Task[] {
   const conds = [];
+  if (!filter.includeDeleted) conds.push(isNull(tasks.deletedAt));
   if (filter.projectId) conds.push(eq(tasks.projectId, filter.projectId));
   if (filter.status) conds.push(eq(tasks.status, filter.status));
   if (filter.assigneeAgentId) conds.push(eq(tasks.assigneeAgentId, filter.assigneeAgentId));
@@ -77,14 +81,15 @@ export function boardTasks(db: AgentosSqliteDb, projectId: string): Task[] {
   return db
     .select()
     .from(tasks)
-    .where(eq(tasks.projectId, projectId))
+    .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
     .orderBy(asc(tasks.status), asc(tasks.orderKey))
     .all();
 }
 
 /**
  * Actualización con optimistic locking (`expected_version` de ARCHITECTURE §6):
- * conflicto obliga a releer, no last-write-wins.
+ * conflicto obliga a releer, no last-write-wins. Una tarea desactivada no se
+ * modifica (conflicto `task_deleted`).
  */
 export function updateTask(
   db: AgentosSqliteDb,
@@ -114,10 +119,12 @@ export function updateTask(
         updatedAt: nowMs(),
         version: sql`${tasks.version} + 1`,
       })
-      .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
+      .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion} AND ${tasks.deletedAt} IS NULL`)
       .run();
     if (res.changes === 0) {
-      if (!getTask(db, id)) throw errors.notFound("task", id);
+      const current = getTask(db, id);
+      if (!current) throw errors.notFound("task", id);
+      if (current.deletedAt !== null) throw taskDeletedConflict(id);
       throw errors.versionConflict("task", id, expectedVersion);
     }
     if (hasLegacyAssignee) synchronizeTaskAssignees(db, id, legacyAssignee);
@@ -156,6 +163,7 @@ export function claimTask(
            updated_at = @now
        WHERE id = @taskId
          AND status = 'READY'
+         AND deleted_at IS NULL
          AND (lease_until IS NULL OR lease_until < @now)`,
     )
     .run({ taskId: input.taskId, leaseUntil, now });
@@ -198,7 +206,8 @@ export function reapExpiredLeases(
   const expired = db.$client
     .prepare(
       `SELECT id, attempts FROM tasks
-       WHERE status = 'IN_PROGRESS' AND lease_until IS NOT NULL AND lease_until < @now`,
+       WHERE status = 'IN_PROGRESS' AND lease_until IS NOT NULL AND lease_until < @now
+         AND deleted_at IS NULL`,
     )
     .all({ now }) as { id: string; attempts: number }[];
 
@@ -251,6 +260,7 @@ export function listDispatchableTasks(db: AgentosSqliteDb, at = nowMs(), limit =
     .prepare(
       `SELECT id FROM tasks
        WHERE status = 'READY'
+         AND deleted_at IS NULL
          AND assignee_agent_id IS NOT NULL
          AND (lease_until IS NULL OR lease_until < @at)
        ORDER BY CASE priority
@@ -275,7 +285,7 @@ export function countOpenTasksByAgent(db: AgentosSqliteDb): Map<string, number> 
   const rows = db.$client
     .prepare(
       `SELECT assignee_agent_id AS agentId, count(*) AS n FROM tasks
-       WHERE assignee_agent_id IS NOT NULL AND status NOT IN ('DONE', 'CANCELLED')
+       WHERE assignee_agent_id IS NOT NULL AND status NOT IN ('DONE', 'CANCELLED') AND deleted_at IS NULL
        GROUP BY assignee_agent_id`,
     )
     .all() as { agentId: string; n: number }[];
@@ -386,6 +396,7 @@ export function transitionTaskStatus(db: AgentosSqliteDb, input: TransitionTaskI
         eq(tasks.id, input.taskId),
         eq(tasks.version, input.expectedVersion),
         eq(tasks.status, input.from),
+        isNull(tasks.deletedAt),
       ),
     )
     .run();
@@ -435,6 +446,7 @@ export function countOpenTasksByTemplateKey(
       and(
         eq(tasks.projectId, projectId),
         notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        isNull(tasks.deletedAt),
         sql`json_extract(${taskEvents.payload}, '$.template_key') = ${templateKey}`,
       ),
     )
@@ -452,7 +464,7 @@ export function countProjectArtifactsByKind(
     .select({ n: sql<number>`count(*)` })
     .from(artifacts)
     .innerJoin(tasks, eq(tasks.id, artifacts.taskId))
-    .where(and(eq(tasks.projectId, projectId), eq(artifacts.kind, kind)))
+    .where(and(eq(tasks.projectId, projectId), eq(artifacts.kind, kind), isNull(tasks.deletedAt)))
     .get();
   return row?.n ?? 0;
 }
@@ -467,7 +479,7 @@ export function findLatestProjectArtifact(
   kind: string,
   filter: { taskStatus?: TaskStatus } = {},
 ): Artifact | undefined {
-  const conds = [eq(tasks.projectId, projectId), eq(artifacts.kind, kind)];
+  const conds = [eq(tasks.projectId, projectId), eq(artifacts.kind, kind), isNull(tasks.deletedAt)];
   if (filter.taskStatus) conds.push(eq(tasks.status, filter.taskStatus));
   const row = db
     .select()

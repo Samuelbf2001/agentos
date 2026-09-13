@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte, notInArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, notInArray, or } from "drizzle-orm";
 import { errors, newId, nowMs } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
 import { people, projects, taskNotificationLog, tasks } from "../schema-pg.js";
@@ -122,6 +122,7 @@ export async function listPendingTaskNotifications(
         inArray(taskNotificationLog.status, ["pending", "failed"]),
         lte(taskNotificationLog.scheduledAt, at),
         notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        isNull(tasks.deletedAt),
       ),
     )
     .orderBy(asc(taskNotificationLog.scheduledAt), asc(taskNotificationLog.createdAt));

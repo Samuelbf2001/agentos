@@ -1,6 +1,7 @@
-import { and, asc, eq, exists, sql } from "drizzle-orm";
+import { and, asc, eq, exists, isNull, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type TaskStatus } from "@agentos/shared";
 import type { AgentosSqliteDb } from "../client.js";
+import { taskDeletedConflict } from "../task-trash-common.js";
 import { people, projects, taskAssignees, tasks } from "../schema.js";
 import type {
   NewTaskAssignee,
@@ -80,9 +81,12 @@ export function listTasksWithAssignees(
     assigneeAgentId?: string;
     personId?: string;
     assigneePersonId?: string;
+    /** Papelera: por defecto las desactivadas NO salen. */
+    includeDeleted?: boolean;
   } = {},
 ): TaskWithAssignees[] {
   const conds = [];
+  if (!filter.includeDeleted) conds.push(isNull(tasks.deletedAt));
   if (filter.projectId) conds.push(eq(tasks.projectId, filter.projectId));
   if (filter.status) conds.push(eq(tasks.status, filter.status));
   if (filter.assigneeAgentId) conds.push(eq(tasks.assigneeAgentId, filter.assigneeAgentId));
@@ -268,6 +272,7 @@ export function replaceTaskAssignees(
   const work = (): void => {
     const current = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
     if (!current) throw errors.notFound("task", taskId);
+    if (current.deletedAt !== null) throw taskDeletedConflict(taskId);
     validateTaskAssigneeOrganization(db, current.projectId, normalized.personIds);
 
     // Guard the version before touching task_assignees. This also serializes

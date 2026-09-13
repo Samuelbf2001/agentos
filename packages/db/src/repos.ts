@@ -45,6 +45,7 @@ import * as liteLabels from "./repositories/task-labels.js";
 import * as liteNotion from "./repositories/notion-migration.js";
 import * as liteNotifications from "./repositories/task-notifications.js";
 import * as liteTasks from "./repositories/tasks.js";
+import * as liteTaskTrash from "./repositories/task-trash.js";
 import * as liteThreads from "./repositories/threads.js";
 import * as liteSearch from "./search.js";
 
@@ -71,6 +72,7 @@ export type * from "./repositories/task-labels.js";
 export type * from "./repositories/notion-migration.js";
 export type * from "./repositories/task-notifications.js";
 export type * from "./repositories/tasks.js";
+export type * from "./task-trash-common.js";
 export type * from "./repositories/threads.js";
 
 // ── Funciones PURAS (no tocan la DB): mismas en los dos motores ─────────────
@@ -86,6 +88,7 @@ export {
   MAX_LABELS_PER_TASK,
 } from "./repositories/task-labels.js";
 export { buildSessionKey } from "./repositories/threads.js";
+export { taskDeletedConflict, deletedByFromActor, uploadIdsIn } from "./task-trash-common.js";
 
 // ── Agentes y prompts ───────────────────────────────────────────────────────
 
@@ -504,6 +507,13 @@ export const findLatestProjectArtifact = dual(
   liteTasks.findLatestProjectArtifact,
   "findLatestProjectArtifact",
 );
+
+// ── Papelera de tareas (borrado suave + purga definitiva) ───────────────────
+
+export const softDeleteTask = dual(liteTaskTrash.softDeleteTask, "softDeleteTask");
+export const restoreTask = dual(liteTaskTrash.restoreTask, "restoreTask");
+export const listDeletedTasks = dual(liteTaskTrash.listDeletedTasks, "listDeletedTasks");
+export const purgeDeletedTasks = dual(liteTaskTrash.purgeDeletedTasks, "purgeDeletedTasks");
 
 // ── Hilos y mensajes ────────────────────────────────────────────────────────
 

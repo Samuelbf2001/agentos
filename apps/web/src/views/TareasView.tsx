@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronsUpDown, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   DndContext,
   KeyboardSensor,
@@ -83,6 +83,7 @@ import {
   projectOf,
   responsablePrincipal,
   responsables,
+  sinDesactivadas,
   type Agrupacion,
   type Columna,
   type Contexto,
@@ -90,6 +91,7 @@ import {
   type Vista,
 } from "../lib/tareas";
 import { CreateTaskDialog } from "./CreateTaskDialog";
+import { TareasDesactivadas } from "./TareasDesactivadas";
 
 const selectClass =
   "min-h-8 rounded-tight border border-line bg-surface px-2 py-1 text-small text-ink-2 focus:border-link focus:outline-none focus:ring-2 focus:ring-link";
@@ -622,6 +624,7 @@ export default function TareasView() {
   const openTask = useStore((s) => s.openTask);
   const detailTask = useStore((s) => s.taskDetail?.task ?? null);
   const taskDetailId = useStore((s) => s.taskDetailId);
+  const taskChange = useStore((s) => s.taskChange);
 
   const [params, setParams] = useSearchParams();
   const [tasks, setTasks] = useState<Task[] | null>(null);
@@ -683,6 +686,29 @@ export default function TareasView() {
     );
   }, [detailTask]);
 
+  /**
+   * Papelera: eliminar desde la ficha (optimista), revertir un 409 o restaurar
+   * con «Deshacer» publican la tarea en el store; aquí se inserta o sustituye.
+   * Una restaurada que ya no estaba en la base vuelve a entrar.
+   */
+  useEffect(() => {
+    if (!taskChange) return;
+    const changed = taskChange.task;
+    setTasks((prev) => {
+      if (!prev) return prev;
+      return prev.some((task) => task.id === changed.id)
+        ? prev.map((task) => (task.id === changed.id ? changed : task))
+        : [...prev, changed];
+    });
+  }, [taskChange]);
+
+  /**
+   * La base activa: las desactivadas (y sus subtareas) no se ven ni se cuentan
+   * en ningún contador; tienen su propia vista, «Desactivadas».
+   */
+  const activas = useMemo(() => (tasks ? sinDesactivadas(tasks) : null), [tasks]);
+  const enPapelera = vista === "desactivadas";
+
   // El nombre del cliente ya no cuesta una petición por proyecto: `orgName`
   // viene en `GET /api/projects` y `clienteLabel` lo lee de ahí. Los proyectos
   // importados de Notion no tienen recibo de launch, así que pedirlo dejaba a
@@ -708,9 +734,9 @@ export default function TareasView() {
   }
 
   const visibles = useMemo(() => {
-    if (!tasks) return [];
-    return ordenar(filtrar(tasks, filtros, ctx), orden.columna, orden.direccion, ctx);
-  }, [tasks, filtros, ctx, orden]);
+    if (!activas) return [];
+    return ordenar(filtrar(activas, filtros, ctx), orden.columna, orden.direccion, ctx);
+  }, [activas, filtros, ctx, orden]);
 
   /**
    * Cuántas tareas terminadas está escondiendo el filtro por defecto AQUÍ, con
@@ -724,9 +750,9 @@ export default function TareasView() {
    * puede desactivar de un clic.
    */
   const conCerradas = useMemo(() => {
-    if (!tasks || filtros.cerradas) return visibles;
-    return filtrar(tasks, { ...filtros, cerradas: true }, ctx);
-  }, [tasks, filtros, ctx, visibles]);
+    if (!activas || filtros.cerradas) return visibles;
+    return filtrar(activas, { ...filtros, cerradas: true }, ctx);
+  }, [activas, filtros, ctx, visibles]);
   const cerradasOcultas = filtros.cerradas ? 0 : conCerradas.length - visibles.length;
   const cerradasIncluidas = useMemo(
     () =>
@@ -818,6 +844,8 @@ export default function TareasView() {
       // Con la ficha abierta, el teclado es suyo: nada de mover el cursor de
       // la lista ni de reinterpretar "m" por debajo (M8).
       if (taskDetailId) return;
+      // En Desactivadas no hay lista activa que recorrer ni que filtrar por "m".
+      if (enPapelera && event.key !== "/") return;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
@@ -871,7 +899,7 @@ export default function TareasView() {
     setDialogOpen(true);
   }
 
-  const total = tasks?.length ?? 0;
+  const total = activas?.length ?? 0;
   const sinFiltros = chips.length === 0;
 
   return (
@@ -925,6 +953,10 @@ export default function TareasView() {
           </kbd>
         </div>
 
+        {/* En Desactivadas sólo mandan la búsqueda y el cliente: responsable,
+            vencimiento, agrupación y el panel son cortes de la base activa. */}
+        {!enPapelera ? (
+        <>
         <button
           type="button"
           data-testid="tareas-mias"
@@ -955,6 +987,8 @@ export default function TareasView() {
             </option>
           ))}
         </FiltroRapido>
+        </>
+        ) : null}
 
         <FiltroRapido
           id="tareas-barra-cliente"
@@ -971,6 +1005,7 @@ export default function TareasView() {
           ))}
         </FiltroRapido>
 
+        {!enPapelera ? (
         <FiltroRapido
           id="tareas-barra-vencimiento"
           testid="tareas-filtro-vencimiento"
@@ -985,6 +1020,7 @@ export default function TareasView() {
             </option>
           ))}
         </FiltroRapido>
+        ) : null}
 
         {/* La misma base, en dos formas. El modo viaja en la URL (`vista`). */}
         <div
@@ -999,15 +1035,19 @@ export default function TareasView() {
               data-testid={`tareas-vista-${value}`}
               aria-pressed={vista === value}
               onClick={() => aplicar(filtros, { vista: value })}
-              className={`press inline-flex min-h-10 items-center rounded-full px-3 text-small font-semibold focus:outline-none focus:ring-2 focus:ring-link ${
+              title={value === "desactivadas" ? "Tareas eliminadas: se restauran durante 90 días" : undefined}
+              className={`press inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 text-small font-semibold focus:outline-none focus:ring-2 focus:ring-link ${
                 vista === value ? "bg-link text-surface" : "text-muted hover:text-ink-2"
               }`}
             >
+              {value === "desactivadas" ? <Trash2 size={14} strokeWidth={1.75} aria-hidden="true" /> : null}
               {VISTA_LABELS[value]}
             </button>
           ))}
         </div>
 
+        {!enPapelera ? (
+        <>
         <div className="relative">
           <label className="sr-only" htmlFor="tareas-agrupar">
             Agrupar por
@@ -1067,12 +1107,14 @@ export default function TareasView() {
             </span>
           ) : null}
         </button>
+        </>
+        ) : null}
       </div>
 
       {/* ── Panel plegable: lo que NO está en la barra (proyecto, estado,
           etiqueta y cerradas). Responsable, cliente y vencimiento subieron a la
           barra y por eso ya no están aquí: un mismo filtro, un solo control. ─ */}
-      {filtersOpen ? (
+      {filtersOpen && !enPapelera ? (
         <Card className="mt-2 p-4" data-testid="tareas-filtros-panel">
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
@@ -1150,7 +1192,7 @@ export default function TareasView() {
       ) : null}
 
       {/* ── Lo filtrado se ve y se puede quitar ───────────────────────────── */}
-      {chips.length > 0 ? (
+      {chips.length > 0 && !enPapelera ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5" data-testid="tareas-chips">
           {chips.map((chip) => (
             <button
@@ -1177,6 +1219,11 @@ export default function TareasView() {
       ) : null}
 
       {/* ── Cuerpo ───────────────────────────────────────────────────────── */}
+      {enPapelera ? (
+        <div className="mt-4">
+          <TareasDesactivadas filtros={filtros} ctx={ctx} />
+        </div>
+      ) : (
       <div className="mt-4">
         {loading && !tasks ? <Spinner label="Leyendo la base de tareas…" /> : null}
         {error ? <ErrorBox message={error} onRetry={() => void cargar()} /> : null}
@@ -1361,7 +1408,9 @@ export default function TareasView() {
         ) : null}
 
       </div>
+      )}
 
+      {!enPapelera ? (
       <p className="mt-5 flex flex-wrap items-center gap-2 text-small text-muted">
         <span data-testid="tareas-resumen">
           {visibles.length} de {total} tareas
@@ -1378,6 +1427,7 @@ export default function TareasView() {
           Ver los proyectos
         </Link>
       </p>
+      ) : null}
 
       <CreateTaskDialog
         open={dialogOpen}

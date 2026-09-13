@@ -19,7 +19,7 @@ export {
 } from "./client-pg.js";
 export { PG_TABLE_ORDER, type PgTableName } from "./schema-pg.js";
 export * from "./types-pg.js";
-export { runPgMigrations, PG_MIGRATIONS_FOLDER } from "./migrate-pg.js";
+export { runPgMigrations, ensurePgTaskTrashColumns, PG_MIGRATIONS_FOLDER } from "./migrate-pg.js";
 export * from "./search-pg.js";
 export {
   migrateSqliteToPostgres,
@@ -37,6 +37,7 @@ export * from "./repositories/projects.js";
 export * from "./repositories/providers.js";
 export * from "./repositories/agents.js";
 export * from "./repositories/tasks.js";
+export * from "./repositories/task-trash.js";
 export * from "./repositories/task-assignees.js";
 export * from "./repositories/task-labels.js";
 export * from "./repositories/task-notifications.js";

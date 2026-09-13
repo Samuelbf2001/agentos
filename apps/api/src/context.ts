@@ -39,6 +39,7 @@ import {
   type NotificationProcessor,
   type NotificationScheduler,
 } from "./notifications.js";
+import { createTaskPurgeScheduler, type TaskPurgeScheduler } from "./task-trash.js";
 
 export const API_VERSION = "0.1.0";
 export const DEFAULT_PORT = 4300;
@@ -197,6 +198,12 @@ export interface ApiOptions {
    */
   notificationIntervalMs?: number;
   reaperIntervalMs?: number;
+  /**
+   * Papelera de tareas: el reloj de purga definitiva. Por defecto
+   * `AGENTOS_TASK_PURGE_DAYS` (90) y `AGENTOS_TASK_PURGE_DISABLED`; cada 24 h.
+   * Solo arranca con `autoStartLoops` (los tests nunca lo arrancan).
+   */
+  taskPurge?: { days?: number; intervalMs?: number; disabled?: boolean; now?: () => number };
   leaseMs?: number;
   defaultRunTimeoutMs?: number;
   corsOrigin?: string | string[];
@@ -221,6 +228,8 @@ export interface ApiContext {
   notifications: NotificationProcessor;
   /** Reloj que dispara `processDue`; apagado si el intervalo es 0. */
   notificationScheduler: NotificationScheduler;
+  /** Reloj de purga definitiva de la papelera de tareas (ver task-trash.ts). */
+  taskPurge: TaskPurgeScheduler;
   pool: RunnerPool;
   dispatcher: Dispatcher;
   auth: AuthService;
@@ -391,9 +400,12 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
       console.warn("[agentos-api] ciclo de recordatorios falló:", err);
     },
   });
+  // 6c. Papelera: purga definitiva al arrancar y cada 24 h.
+  const taskPurge = createTaskPurgeScheduler({ db, ...(options.taskPurge ?? {}) });
   if (options.autoStartLoops !== false) {
     dispatcher.start();
     notificationScheduler.start();
+    taskPurge.start();
   }
 
   const auth = createAuthService({
@@ -415,6 +427,7 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
     taskAssistant,
     notifications,
     notificationScheduler,
+    taskPurge,
     pool,
     dispatcher,
     auth,
@@ -429,6 +442,7 @@ export async function createApiContext(options: ApiOptions = {}): Promise<ApiCon
       closed = true;
       dispatcher.stop();
       notificationScheduler.stop();
+      taskPurge.stop();
       await closeAnyDb(db);
     },
   };

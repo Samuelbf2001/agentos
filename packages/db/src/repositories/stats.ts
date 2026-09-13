@@ -4,7 +4,7 @@
  * `repositories/` (ARCHITECTURE §5). El espejo Postgres está en
  * `src/pg/repositories/stats.ts`.
  */
-import { eq, sql } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
 import type { AgentosSqliteDb } from "../client.js";
 import {
   agents,
@@ -60,7 +60,7 @@ export function domainCounts(db: AgentosSqliteDb): DomainCounts {
     methodologies: one(db.select({ n: N }).from(methodologies)),
     phaseModules: one(db.select({ n: N }).from(phaseModules)),
     projects: one(db.select({ n: N }).from(projects)),
-    tasks: one(db.select({ n: N }).from(tasks)),
+    tasks: one(db.select({ n: N }).from(tasks).where(isNull(tasks.deletedAt))),
     threads: one(db.select({ n: N }).from(threads)),
     messages: one(db.select({ n: N }).from(messages)),
     runsTotal: one(db.select({ n: N }).from(runs)),

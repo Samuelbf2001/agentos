@@ -48,6 +48,9 @@ El proyecto demo ACME nace como un **launch real del módulo Consultoría** (no 
   `AGENTOS_ARTIFACT_MAX_BYTES` ajusta el límite de subida (25 MB por defecto).
 - `AGENTOS_NOTIFICATIONS_INTERVAL_MS`: cadencia del reloj de recordatorios de vencimiento (15 min por
   defecto); `0` u `off` lo desactiva.
+- `AGENTOS_TASK_PURGE_DAYS`: días que una tarea eliminada pasa en la papelera antes de la purga
+  definitiva (90 por defecto). La API purga al arrancar y cada 24 h; `AGENTOS_TASK_PURGE_DISABLED=1`
+  apaga la purga (eliminar y restaurar siguen funcionando).
 - `AGENTOS_WEB_ORIGIN`: origen(es) permitidos por CORS, separados por comas (por defecto `http://localhost:4301`).
 - `OPENAI_API_KEY`: habilita embeddings reales para búsqueda semántica en Postgres (sin ella, cae a un `EmbeddingProvider` mock).
 

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte, notInArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, notInArray, or } from "drizzle-orm";
 import { errors, newId, nowMs } from "@agentos/shared";
 import type { AgentosSqliteDb } from "../client.js";
 import { people, projects, taskNotificationLog, tasks } from "../schema.js";
@@ -120,6 +120,7 @@ export function listPendingTaskNotifications(db: AgentosSqliteDb, at = nowMs()):
         inArray(taskNotificationLog.status, ["pending", "failed"]),
         lte(taskNotificationLog.scheduledAt, at),
         notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        isNull(tasks.deletedAt),
       ),
     )
     .orderBy(asc(taskNotificationLog.scheduledAt), asc(taskNotificationLog.createdAt))

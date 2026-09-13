@@ -20,7 +20,9 @@ import {
   listTaskLabels,
   listTasks,
   openDb,
+  purgeDeletedTasks,
   runMigrations,
+  softDeleteTask,
   getNotionOrigin,
   type AgentosSqliteDb,
 } from "@agentos/db";
@@ -754,5 +756,49 @@ describe("no duplicar el archivo entre corridas (I2)", () => {
       .find((t) => t.id !== firstTask.id)!;
     const newLink = (await findNotionImportLinkByObject(db, "task", newTask.id));
     expect(newLink?.archiveId).toBe(firstArchiveId);
+  });
+});
+
+describe("papelera de AgentOS: el importador no resucita ni reescribe", () => {
+  it("una tarea desactivada no se reescribe (ni con force) y queda en cuarentena desactivada_en_agentos", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(baseFixture()) });
+    const task = (await listTasks(db)).find((t) => t.title === "Primera")!;
+    const { task: deleted } = await softDeleteTask(db, task.id, {
+      actor: "person:ernesto",
+      expectedVersion: task.version,
+    });
+
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(baseFixture("2026-02-03T00:00:00.000Z")),
+      force: true,
+    });
+
+    expect(report.quarantine.by_reason.desactivada_en_agentos).toBe(1);
+    const after = (await getTask(db, task.id))!;
+    expect(after.deletedAt).toBe(deleted.deletedAt);
+    expect(after.version).toBe(deleted.version);
+    expect(after.title).toBe("Primera");
+    // No se creó un duplicado activo.
+    expect((await listTasks(db)).find((t) => t.title === "Primera")).toBeUndefined();
+    expect((await listTasks(db, { includeDeleted: true })).filter((t) => t.title === "Primera")).toHaveLength(1);
+  });
+
+  it("una tarea purgada NO se vuelve a crear al reimportar (enlace deleted_in_agentos)", async () => {
+    await importNotionSnapshot({ db, reader: await fixtureReader(baseFixture()) });
+    const task = (await listTasks(db)).find((t) => t.title === "Primera")!;
+    await softDeleteTask(db, task.id, { actor: "person:ernesto", expectedVersion: task.version, now: 1_000 });
+    const purge = await purgeDeletedTasks(db, { olderThanMs: 90 * 86_400_000, now: 1_000 + 91 * 86_400_000 });
+    expect(purge.purged).toBe(1);
+
+    const report = await importNotionSnapshot({
+      db,
+      reader: await fixtureReader(baseFixture("2026-02-03T00:00:00.000Z")),
+      force: true,
+    });
+
+    expect(report.imported.tasks_created).toBe(0);
+    expect(report.quarantine.by_reason.eliminada_en_agentos).toBe(1);
+    expect((await listTasks(db, { includeDeleted: true })).find((t) => t.title === "Primera")).toBeUndefined();
   });
 });

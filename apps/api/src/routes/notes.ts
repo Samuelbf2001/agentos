@@ -39,6 +39,7 @@ import {
   getCanvasNote,
   getProject,
   getTask,
+  taskDeletedConflict,
   listCanvasNotes,
   listOrganizations,
   listPeople,
@@ -264,6 +265,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: ApiContext): void 
     if (body.task_id) {
       const task = await getTask(db, body.task_id);
       if (!task) throw errors.notFound("task", body.task_id);
+      if (task.deletedAt !== null) throw taskDeletedConflict(task.id);
       const artifact = await attachArtifact(db, {
         id: newId(),
         taskId: task.id,

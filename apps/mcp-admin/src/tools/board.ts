@@ -10,6 +10,7 @@ import {
   appendTaskEvent,
   boardTasks,
   getTask,
+  taskDeletedConflict,
   listArtifacts,
   listLabelsForTasks,
   listTaskEvents,
@@ -50,9 +51,13 @@ const DueAt = z.preprocess(
   z.number().int().nonnegative().nullable().optional(),
 );
 
+/**
+ * Papelera: para el MCP (ro y rw) una tarea desactivada NO existe — ni se lee
+ * ni se modifica. Solo la API REST humana la muestra y la restaura.
+ */
 async function mustGetTask(db: AgentosDb, taskId: string): Promise<Task> {
   const task = await getTask(db, taskId);
-  if (!task) throw errors.notFound("task", taskId);
+  if (!task || task.deletedAt !== null) throw errors.notFound("task", taskId);
   return task;
 }
 
@@ -155,6 +160,9 @@ export const boardTools: AdminToolDefinition[] = [
       const previous = await findIdempotentMutation(ctx, "tasks.create", args.idempotency_key);
       if (previous?.entityId) {
         const existing = await getTask(ctx.db, previous.entityId);
+        // Reintento de una creación cuya tarea ya se mandó a la papelera: ni se
+        // devuelve (es invisible para el MCP) ni se crea un duplicado.
+        if (existing?.deletedAt != null) throw taskDeletedConflict(existing.id);
         if (existing)
           return { task: existing, labels: await listTaskLabels(ctx.db, existing.id), idempotent: true };
       }

@@ -224,8 +224,26 @@ export function Toasts() {
             t.kind === "error" ? "bg-broken text-surface" : "bg-ink text-surface"
           }`}
         >
-          <span className="break-words">{t.text}</span>
-          <button onClick={() => dismiss(t.id)} className="press text-label opacity-60 hover:opacity-100">
+          <span className="min-w-0 flex-1 break-words">{t.text}</span>
+          {t.action ? (
+            <button
+              type="button"
+              data-testid="toast-accion"
+              onClick={() => {
+                t.action?.run();
+                dismiss(t.id);
+              }}
+              className="press shrink-0 rounded-tight px-1.5 text-small font-semibold text-surface underline underline-offset-2 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-surface"
+            >
+              {t.action.label}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label="Cerrar aviso"
+            onClick={() => dismiss(t.id)}
+            className="press text-label opacity-60 hover:opacity-100"
+          >
             ✕
           </button>
         </div>

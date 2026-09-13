@@ -92,7 +92,9 @@ export interface ImportOptions {
    * escribir cada tarea/proyecto ya enlazado (rellena descripción y etiquetas
    * de una importación anterior que no las traía). NO relaja la cuarentena
    * `editado_en_agentos_tras_importar`: una edición humana posterior sigue
-   * mandando. Nunca toca `created_at` de una tarea existente.
+   * mandando. Nunca toca `created_at` de una tarea existente. Tampoco
+   * resucita ni reescribe una tarea que está en la papelera de AgentOS
+   * (`desactivada_en_agentos`) o que ya se purgó (`eliminada_en_agentos`).
    */
   force?: boolean;
   pilot?: PilotLimits;
@@ -576,6 +578,37 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
     mappedTasks.set(normalizeNotionId(notionPageId), mapped);
     quarantine.addFieldExceptions("task", notionPageId, mapped.exceptions);
 
+    // Papelera de AgentOS (ni con `force`): una tarea desactivada no se
+    // reescribe y una purgada no se vuelve a crear. Se decide ANTES de tocar
+    // proyecto, responsables o cualquier otra cosa, y queda en cuarentena.
+    {
+      const trashLink = await findNotionImportLink(db, "task", notionPageId);
+      if (trashLink?.importStatus === "deleted_in_agentos") {
+        quarantine.add({
+          sourceKind: "task",
+          notionPageId,
+          fieldName: "*",
+          reason: "eliminada_en_agentos",
+          rawReference: trashLink.agentosObjectId,
+        });
+        continue;
+      }
+      const trashed = trashLink ? await getTask(db, trashLink.agentosObjectId) : undefined;
+      if (trashed && trashed.deletedAt !== null) {
+        quarantine.add({
+          sourceKind: "task",
+          notionPageId,
+          fieldName: "*",
+          reason: "desactivada_en_agentos",
+          rawReference: trashed.id,
+        });
+        // Se conoce su id para que las relaciones de OTRAS tareas la resuelvan
+        // (una dependencia en la papelera no bloquea), pero ella no se toca.
+        taskIdByPage.set(normalizeNotionId(notionPageId), trashed.id);
+        continue;
+      }
+    }
+
     // Proyecto destino: primera relación resuelta; si no hay, la Bandeja.
     let projectId: string | null = null;
     for (const projectPageId of mapped.projectPageIds) {
@@ -849,7 +882,8 @@ export async function importNotionSnapshot(options: ImportOptions): Promise<Impo
 
       if (dependsOn.length === 0 && !parentTaskId) continue;
       const current = await getTask(db, taskId);
-      if (!current) continue;
+      // Una tarea en la papelera no se reescribe (ver pasada 1).
+      if (!current || current.deletedAt !== null) continue;
       const patch: { dependsOn?: string[]; parentTaskId?: string } = {};
       // Idempotencia: solo se escribe si el valor cambia realmente.
       const sameDeps =

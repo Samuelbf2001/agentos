@@ -7,11 +7,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useStore } from "../../state/store";
-import { actorLabel, ErrorBox, fmtDate, Spinner } from "../../components/ui";
+import { RotateCcw, Trash2 } from "lucide-react";
+import { actorLabel, ErrorBox, fmtDate, fmtDay, Spinner } from "../../components/ui";
 import { paths } from "../../lib/paths";
 import {
   getTaskAssignees,
   getTaskLabels,
+  isTaskDeleted,
+  taskPurgeAt,
   taskAssigneePersonId,
   taskDueTimestamp,
   type Artifact,
@@ -106,6 +109,8 @@ export function TaskBody() {
   const [rejectNote, setRejectNote] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [retryingMove, setRetryingMove] = useState(false);
+  const restoreTask = useStore((state) => state.restoreTask);
+  const [restoring, setRestoring] = useState(false);
 
   if (loading) return <Spinner label="Cargando tarjeta…" />;
   if (detailError) return <ErrorBox message={detailError} onRetry={() => void retryTaskDetail()} />;
@@ -144,8 +149,48 @@ export function TaskBody() {
       .filter((id): id is string => Boolean(id)),
   });
 
+  // Papelera: una tarea desactivada (abierta por enlace directo) se lee, no se
+  // edita. `inert` deja todo el cuerpo fuera del foco y del clic; el banner es
+  // lo único operable y ofrece restaurarla.
+  const desactivada = isTaskDeleted(task);
+  const purgeAt = taskPurgeAt(task);
+
   return (
     <>
+      {desactivada ? (
+        <section
+          role="status"
+          data-testid="task-desactivada-banner"
+          className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-panel border border-broken-line bg-broken-bg px-3 py-2.5"
+        >
+          <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-broken" />
+          <p className="min-w-0 flex-1 text-small text-broken">
+            <span className="font-semibold">Desactivada</span>
+            {purgeAt ? <> · se borra el {fmtDay(purgeAt)}</> : null}
+            <span className="block text-label text-muted">Restáurala para volver a editarla.</span>
+          </p>
+          <button
+            type="button"
+            data-testid="task-restaurar"
+            disabled={restoring}
+            onClick={() => {
+              setRestoring(true);
+              void restoreTask(task.id).finally(() => setRestoring(false));
+            }}
+            className="press inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-tight border border-line bg-surface px-3 py-2 text-small font-semibold text-ink-2 hover:text-link focus:outline-none focus:ring-2 focus:ring-link disabled:opacity-50"
+          >
+            <RotateCcw size={15} strokeWidth={1.75} aria-hidden="true" />
+            Restaurar
+          </button>
+        </section>
+      ) : null}
+
+      <div
+        data-testid="task-body-contenido"
+        inert={desactivada}
+        aria-disabled={desactivada || undefined}
+        className={desactivada ? "opacity-70" : undefined}
+      >
       {blockedMove && blockedMove.taskId === task.id ? (
         <BlockedMoveNotice
           blocked={blockedMove}
@@ -162,6 +207,7 @@ export function TaskBody() {
         value={task.title}
         onSave={(title) => updateTask(task.id, { title })}
         assist={{ draft: draftParaIA, taskId: task.id }}
+        readOnly={desactivada}
       />
 
       <TaskProperties task={task} project={project} agent={agent} onNavigate={closeTask} />
@@ -250,6 +296,7 @@ export function TaskBody() {
       </section>
 
       <section className="mt-5 border-t border-line-soft pt-3 text-label text-faint"><p className="break-words">id {task.id} · v{task.version} · intentos {task.attempts}{task.leaseUntil ? ` · lease hasta ${fmtDate(task.leaseUntil)}` : ""}</p>{detail.runs.length > 0 ? <p className="mt-1 text-small text-muted">La trabajaron {detail.runs.map((run, index) => <span key={run.id}>{index > 0 ? ", " : ""}<Link to={paths.run(run.id)} onClick={closeTask} className="text-link underline">una ejecución {run.status}</Link></span>)}. <Link to={`${paths.sistema("actividad")}?de_tarea=${task.id}`} onClick={closeTask} className="text-link underline">Ver todas</Link></p> : null}</section>
+      </div>
     </>
   );
 }

@@ -2,6 +2,7 @@
 import { and, asc, desc, eq, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { errors, newId, nowMs, type BlockedReason, type TaskStatus } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
+import { taskDeletedConflict } from "../../task-trash-common.js";
 import { artifacts, taskEvents, tasks } from "../schema-pg.js";
 import {
   insertTaskAssigneeRows,
@@ -48,9 +49,12 @@ export async function listTasks(
     assigneeAgentId?: string;
     personId?: string;
     assigneePersonId?: string;
+    /** Papelera: por defecto las desactivadas NO salen en ningún listado. */
+    includeDeleted?: boolean;
   } = {},
 ): Promise<Task[]> {
   const conds = [];
+  if (!filter.includeDeleted) conds.push(isNull(tasks.deletedAt));
   if (filter.projectId) conds.push(eq(tasks.projectId, filter.projectId));
   if (filter.status) conds.push(eq(tasks.status, filter.status));
   if (filter.assigneeAgentId) conds.push(eq(tasks.assigneeAgentId, filter.assigneeAgentId));
@@ -70,7 +74,7 @@ export async function boardTasks(db: AgentosPgDb, projectId: string): Promise<Ta
   return await db
     .select()
     .from(tasks)
-    .where(eq(tasks.projectId, projectId))
+    .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
     .orderBy(asc(tasks.status), asc(tasks.orderKey));
 }
 
@@ -97,6 +101,7 @@ export async function updateTask(
     await db.transaction(async (tx) => {
       const [current] = await tx.select().from(tasks).where(eq(tasks.id, id)).limit(1);
       if (!current) throw errors.notFound("task", id);
+      if (current.deletedAt !== null) throw taskDeletedConflict(id);
       // Validate before the conditional UPDATE so a rejected person cannot
       // alter either the projection or the bridge. The helper validates again
       // after the update using the resulting project, covering a simultaneous
@@ -114,11 +119,12 @@ export async function updateTask(
           updatedAt: nowMs(),
           version: sql`${tasks.version} + 1`,
         })
-        .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
+        .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion} AND ${tasks.deletedAt} IS NULL`)
         .returning({ id: tasks.id });
       if (updated.length === 0) {
         const [stillThere] = await tx.select().from(tasks).where(eq(tasks.id, id)).limit(1);
         if (!stillThere) throw errors.notFound("task", id);
+        if (stillThere.deletedAt !== null) throw taskDeletedConflict(id);
         throw errors.versionConflict("task", id, expectedVersion);
       }
       await synchronizeTaskAssignees(tx as unknown as AgentosPgDb, id, legacyAssignee);
@@ -127,10 +133,12 @@ export async function updateTask(
     const updated = await db
       .update(tasks)
       .set({ ...taskPatch, updatedAt: nowMs(), version: sql`${tasks.version} + 1` })
-      .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion}`)
+      .where(sql`${tasks.id} = ${id} AND ${tasks.version} = ${expectedVersion} AND ${tasks.deletedAt} IS NULL`)
       .returning({ id: tasks.id });
     if (updated.length === 0) {
-      if (!(await getTask(db, id))) throw errors.notFound("task", id);
+      const current = await getTask(db, id);
+      if (!current) throw errors.notFound("task", id);
+      if (current.deletedAt !== null) throw taskDeletedConflict(id);
       throw errors.versionConflict("task", id, expectedVersion);
     }
   }
@@ -176,6 +184,7 @@ export async function claimTask(
       and(
         eq(tasks.id, input.taskId),
         eq(tasks.status, "READY"),
+        isNull(tasks.deletedAt),
         or(isNull(tasks.leaseUntil), lt(tasks.leaseUntil, now)),
       ),
     )
@@ -218,7 +227,14 @@ export async function reapExpiredLeases(
   const expired = await db
     .select({ id: tasks.id, attempts: tasks.attempts })
     .from(tasks)
-    .where(and(eq(tasks.status, "IN_PROGRESS"), isNotNull(tasks.leaseUntil), lt(tasks.leaseUntil, now)));
+    .where(
+      and(
+        eq(tasks.status, "IN_PROGRESS"),
+        isNotNull(tasks.leaseUntil),
+        lt(tasks.leaseUntil, now),
+        isNull(tasks.deletedAt),
+      ),
+    );
 
   const requeued: string[] = [];
   const blocked: string[] = [];
@@ -280,6 +296,7 @@ export async function listDispatchableTasks(db: AgentosPgDb, at = nowMs(), limit
     .where(
       and(
         eq(tasks.status, "READY"),
+        isNull(tasks.deletedAt),
         isNotNull(tasks.assigneeAgentId),
         or(isNull(tasks.leaseUntil), lt(tasks.leaseUntil, at)),
       ),
@@ -307,7 +324,13 @@ export async function countOpenTasksByAgent(db: AgentosPgDb): Promise<Map<string
   const rows = await db
     .select({ agentId: tasks.assigneeAgentId, n: sql<number>`count(*)::int` })
     .from(tasks)
-    .where(and(isNotNull(tasks.assigneeAgentId), notInArray(tasks.status, ["DONE", "CANCELLED"])))
+    .where(
+      and(
+        isNotNull(tasks.assigneeAgentId),
+        notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        isNull(tasks.deletedAt),
+      ),
+    )
     .groupBy(tasks.assigneeAgentId);
   return new Map(rows.map((r) => [r.agentId as string, Number(r.n)]));
 }
@@ -420,6 +443,7 @@ export async function transitionTaskStatus(
         eq(tasks.id, input.taskId),
         eq(tasks.version, input.expectedVersion),
         eq(tasks.status, input.from),
+        isNull(tasks.deletedAt),
       ),
     )
     .returning({ id: tasks.id });
@@ -465,6 +489,7 @@ export async function countOpenTasksByTemplateKey(
       and(
         eq(tasks.projectId, projectId),
         notInArray(tasks.status, ["DONE", "CANCELLED"]),
+        isNull(tasks.deletedAt),
         sql`${taskEvents.payload}->>'template_key' = ${templateKey}`,
       ),
     );
@@ -481,7 +506,7 @@ export async function countProjectArtifactsByKind(
     .select({ n: sql<number>`count(*)::int` })
     .from(artifacts)
     .innerJoin(tasks, eq(tasks.id, artifacts.taskId))
-    .where(and(eq(tasks.projectId, projectId), eq(artifacts.kind, kind)));
+    .where(and(eq(tasks.projectId, projectId), eq(artifacts.kind, kind), isNull(tasks.deletedAt)));
   return Number(row?.n ?? 0);
 }
 
@@ -495,7 +520,7 @@ export async function findLatestProjectArtifact(
   kind: string,
   filter: { taskStatus?: TaskStatus } = {},
 ): Promise<Artifact | undefined> {
-  const conds = [eq(tasks.projectId, projectId), eq(artifacts.kind, kind)];
+  const conds = [eq(tasks.projectId, projectId), eq(artifacts.kind, kind), isNull(tasks.deletedAt)];
   if (filter.taskStatus) conds.push(eq(tasks.status, filter.taskStatus));
   const [row] = await db
     .select()

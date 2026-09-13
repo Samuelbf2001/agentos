@@ -8,7 +8,7 @@
  * `label` se persiste normalizada (minúsculas, espacios colapsados) para que
  * "Cliente" y "cliente " sean la misma etiqueta y el filtro sea determinista.
  */
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { errors, nowMs } from "@agentos/shared";
 import type { AgentosSqliteDb } from "../client.js";
 import { taskLabels, tasks } from "../schema.js";
@@ -137,13 +137,15 @@ export function listLabelCatalog(
         .select({ label: taskLabels.label, count: sql<number>`count(*)` })
         .from(taskLabels)
         .innerJoin(tasks, eq(tasks.id, taskLabels.taskId))
-        .where(eq(tasks.projectId, filter.projectId))
+        .where(and(eq(tasks.projectId, filter.projectId), isNull(tasks.deletedAt)))
         .groupBy(taskLabels.label)
         .orderBy(asc(taskLabels.label))
         .all()
     : db
         .select({ label: taskLabels.label, count: sql<number>`count(*)` })
         .from(taskLabels)
+        .innerJoin(tasks, eq(tasks.id, taskLabels.taskId))
+        .where(isNull(tasks.deletedAt))
         .groupBy(taskLabels.label)
         .orderBy(asc(taskLabels.label))
         .all();

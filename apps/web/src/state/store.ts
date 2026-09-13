@@ -43,6 +43,7 @@ import type {
   Thread,
   TopicEvent,
 } from "../lib/types";
+import { isTaskDeleted, PAPELERA_DIAS } from "../lib/types";
 import {
   emptyEventState,
   reduceEvent,
@@ -54,6 +55,13 @@ export interface Toast {
   id: number;
   kind: "error" | "ok" | "info";
   text: string;
+  /** Acción de un clic dentro del aviso (p. ej. «Deshacer»). */
+  action?: ToastAction;
+}
+
+export interface ToastAction {
+  label: string;
+  run(): void;
 }
 
 export interface TaskDetail {
@@ -155,6 +163,12 @@ export interface AppStore extends EventState {
    * que falló reabre su popover con el valor nuevo y un aviso de una línea.
    */
   taskConflict: { taskId: string; at: number } | null;
+  /**
+   * Último cambio de una tarea que las listas locales (p. ej. `/tareas`, que
+   * no vive en `board`) deben reflejar: desactivar, revertir y restaurar lo
+   * publican aquí y la vista lo inserta o sustituye en su base.
+   */
+  taskChange: { task: Task; seq: number } | null;
   taskSaving: boolean;
   /**
    * Panel copiloto del tablero. Vive en el store porque el side peek de la
@@ -214,7 +228,7 @@ export interface AppStore extends EventState {
   logout(): void;
   /** "Ver como cliente": reduce el shell a las capacidades de un sponsor. */
   setPreviewRole(role: PreviewRole): void;
-  pushToast(kind: Toast["kind"], text: string): void;
+  pushToast(kind: Toast["kind"], text: string, action?: ToastAction): void;
   dismissToast(id: number): void;
 
   loadProjects(): Promise<void>;
@@ -257,6 +271,13 @@ export interface AppStore extends EventState {
   commentOnTask(taskId: string, body: string): Promise<void>;
   approveTaskReview(taskId: string, note?: string): Promise<void>;
   rejectTaskReview(taskId: string, note: string): Promise<void>;
+  /**
+   * Papelera: pasa la tarea (y sus subtareas) a Desactivadas. Optimista: sale
+   * de las vistas y se cierra la ficha; si la API dice 409 se revierte.
+   */
+  deactivateTask(taskId: string): Promise<boolean>;
+  /** Devuelve una tarea desactivada a su sitio. */
+  restoreTask(taskId: string): Promise<Task | null>;
 
   loadNotes(projectId?: string): Promise<void>;
   createNote(input?: { title?: string; projectId?: string }): Promise<CanvasNote | null>;
@@ -346,7 +367,10 @@ export const useStore = create<AppStore>()((set, get) => {
     try {
       const detail = await api.task(taskId);
       const state = get();
-      if (detail.task.projectId === state.board.projectId) {
+      if (isTaskDeleted(detail.task)) {
+        // Desactivada: fuera del tablero (la ficha abierta sí la muestra).
+        removeFromBoard(detail.task.id);
+      } else if (detail.task.projectId === state.board.projectId) {
         set({
           board: {
             ...get().board,
@@ -368,10 +392,29 @@ export const useStore = create<AppStore>()((set, get) => {
     return get().board.tasks[taskId] ?? null;
   }
 
+  /** Saca la tarea y sus subtareas del tablero montado (papelera). */
+  function removeFromBoard(taskId: string): void {
+    const board = get().board;
+    if (!board.tasks[taskId] && !Object.values(board.tasks).some((t) => t.parentTaskId === taskId)) return;
+    const tasks = { ...board.tasks };
+    delete tasks[taskId];
+    for (const [id, task] of Object.entries(tasks)) if (task.parentTaskId === taskId) delete tasks[id];
+    set({ board: { ...board, tasks } });
+  }
+
+  let taskChangeSeq = 0;
+  /** Avisa a las listas locales (`/tareas`) de que una tarea cambió. */
+  function publishTaskChange(task: Task): void {
+    taskChangeSeq += 1;
+    set({ taskChange: { task, seq: taskChangeSeq } });
+  }
+
   function mergeTask(updated: Task): void {
     const state = get();
     const inBoard = state.board.tasks[updated.id];
-    if (inBoard || updated.projectId === state.board.projectId) {
+    if (isTaskDeleted(updated)) {
+      removeFromBoard(updated.id);
+    } else if (inBoard || updated.projectId === state.board.projectId) {
       set({ board: { ...state.board, tasks: { ...state.board.tasks, [updated.id]: updated } } });
     }
     if (state.taskDetail?.task.id === updated.id) {
@@ -428,6 +471,19 @@ export const useStore = create<AppStore>()((set, get) => {
       if ("due_at" in next) next.due_at = patch.due_at;
     }
     return next;
+  }
+
+  /**
+   * 409 al eliminar: la API explica por qué (en ejecución, versión vieja). Si
+   * no trae mensaje propio, se dice lo más probable en lenguaje de la vista.
+   */
+  function deactivateErrorMessage(err: unknown): string {
+    if (err instanceof ApiError) {
+      const own = err.message && !/^Error HTTP/.test(err.message) ? err.message : "";
+      if (own) return own;
+      if (err.status === 409) return "Está en ejecución: detenla antes de eliminarla";
+    }
+    return err instanceof Error && err.message ? err.message : "No se pudo eliminar la tarea";
   }
 
   function normalizeMutationError(err: unknown, fallback: string): string {
@@ -522,6 +578,7 @@ export const useStore = create<AppStore>()((set, get) => {
     taskDetailError: null,
     taskMutationError: null,
     taskConflict: null,
+    taskChange: null,
     taskSaving: false,
     copilotOpen: false,
     boardFilter: "all",
@@ -657,10 +714,11 @@ export const useStore = create<AppStore>()((set, get) => {
       set({ previewRole: role });
     },
 
-    pushToast(kind, text) {
+    pushToast(kind, text, action) {
       const id = toastSeq++;
-      set({ toasts: [...get().toasts, { id, kind, text }] });
-      setTimeout(() => get().dismissToast(id), 6000);
+      set({ toasts: [...get().toasts, { id, kind, text, ...(action ? { action } : {}) }] });
+      // Con acción (Deshacer) se deja más tiempo: hay que leerlo y decidir.
+      setTimeout(() => get().dismissToast(id), action ? 10_000 : 6000);
     },
 
     dismissToast(id) {
@@ -1010,6 +1068,10 @@ export const useStore = create<AppStore>()((set, get) => {
     async updateTask(taskId, patch) {
       const current = currentTask(taskId);
       if (!current) return false;
+      if (isTaskDeleted(current)) {
+        get().pushToast("info", "La tarea está desactivada: restáurala para editarla");
+        return false;
+      }
       set({ taskSaving: true, taskMutationError: null, taskConflict: null });
       // Optimista: se pinta al cerrar el popover; si la API rechaza, se revierte.
       mergeTask(optimisticPatch(current, patch));
@@ -1137,6 +1199,48 @@ export const useStore = create<AppStore>()((set, get) => {
         void get().loadApprovals();
       } catch (err) {
         toastError(err, "No se pudo rechazar");
+      }
+    },
+
+    // ── Papelera ──────────────────────────────────────────────────────────
+
+    async deactivateTask(taskId) {
+      const current = currentTask(taskId);
+      if (!current || isTaskDeleted(current)) return false;
+      const wasOpen = get().taskDetail?.task.id === taskId;
+      const now = Date.now();
+      // Optimista: sale del tablero y de `/tareas`, y la ficha se cierra ya.
+      publishTaskChange({ ...current, deleted_at: now, purge_at: now + PAPELERA_DIAS * 86_400_000 });
+      removeFromBoard(taskId);
+      if (wasOpen) get().closeTask();
+      try {
+        const { task } = await api.deleteTask(taskId, current.version);
+        publishTaskChange(task);
+        get().pushToast("ok", `«${current.title}» pasó a Desactivadas`, {
+          label: "Deshacer",
+          run: () => void get().restoreTask(taskId),
+        });
+        return true;
+      } catch (err) {
+        // Revertir: vuelve a las listas y, si estaba abierta, también la ficha.
+        publishTaskChange(current);
+        mergeTask(current);
+        get().pushToast("error", deactivateErrorMessage(err));
+        if (wasOpen) void get().openTask(taskId);
+        return false;
+      }
+    },
+
+    async restoreTask(taskId) {
+      try {
+        const { task } = await api.restoreTask(taskId);
+        publishTaskChange(task);
+        mergeTask(task);
+        get().pushToast("ok", `«${task.title}» restaurada`);
+        return task;
+      } catch (err) {
+        toastError(err, "No se pudo restaurar la tarea");
+        return null;
       }
     },
 

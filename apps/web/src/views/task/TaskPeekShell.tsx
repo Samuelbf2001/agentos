@@ -27,6 +27,7 @@ import {
   type PeekMode,
 } from "../../lib/tareas";
 import { getTaskAssignees, getTaskLabels, taskAssigneePersonId, taskDueTimestamp } from "../../lib/types";
+import { DeleteTaskButton } from "./DeleteTaskButton";
 import { ExecutionPromptButton } from "./FieldAssist";
 import { TaskBody } from "./TaskBody";
 
@@ -272,6 +273,9 @@ export function TaskPeekShell() {
               />
             ) : null}
             <span className="ml-2 min-w-0 flex-1 truncate text-label font-bold text-faint">Ficha de tarea</span>
+            {/* Papelera: eliminar pasa la tarea a Desactivadas (90 días). Junto
+                al cierre y en gris: está a mano, pero no invita. */}
+            {detail ? <DeleteTaskButton task={detail.task} /> : null}
             <Dialog.Close
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-soft text-title text-faint hover:bg-line-soft hover:text-ink-2 focus:outline-none focus:ring-2 focus:ring-link"
               aria-label="Cerrar ficha"

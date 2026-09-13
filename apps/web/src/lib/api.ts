@@ -131,6 +131,9 @@ type WireTask = Task & {
   assignees?: TaskAssignee[] | null;
   assignee_person_id?: string | null;
   due_at?: number | null;
+  deletedAt?: number | null;
+  deletedBy?: string | null;
+  purgeAt?: number | null;
 };
 
 function normalizeAssignee(assignee: TaskAssignee): TaskAssignee {
@@ -156,6 +159,10 @@ export function normalizeTask(task: WireTask): Task {
     next.assignees = task.assignees;
   }
   if (next.dueAt === undefined && task.due_at !== undefined) next.dueAt = task.due_at;
+  // Papelera: el contrato es snake_case; se tolera camelCase por simetría.
+  if (next.deleted_at === undefined && task.deletedAt !== undefined) next.deleted_at = task.deletedAt;
+  if (next.deleted_by === undefined && task.deletedBy !== undefined) next.deleted_by = task.deletedBy;
+  if (next.purge_at === undefined && task.purgeAt !== undefined) next.purge_at = task.purgeAt;
   if (next.assigneePersonId === undefined && task.assignee_person_id !== undefined) {
     next.assigneePersonId = task.assignee_person_id;
   }
@@ -428,6 +435,32 @@ export const api = {
       body: { labels },
     });
     return { ...result, task: normalizeTask(result.task as WireTask) };
+  },
+  /**
+   * Papelera: eliminar NO borra. La tarea (y sus subtareas) pasa a
+   * Desactivadas con `deleted_at`/`purge_at`; la API la purga a los 90 días.
+   * 409 si está en ejecución o la versión es vieja.
+   */
+  deleteTask: async (id: string, expectedVersion: number) => {
+    const result = await request<{ task: Task }>(`/api/tasks/${id}`, {
+      method: "DELETE",
+      body: { expected_version: expectedVersion },
+    });
+    return { ...result, task: normalizeTask(result.task as WireTask) };
+  },
+  restoreTask: async (id: string) => {
+    const result = await request<{ task: Task }>(`/api/tasks/${id}/restore`, { method: "POST" });
+    return { ...result, task: normalizeTask(result.task as WireTask) };
+  },
+  /** Desactivadas, de la más reciente a la más antigua. */
+  listDeletedTasks: async (q: { project_id?: string; org_id?: string; q?: string } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(q)) {
+      if (value !== undefined && value !== "") params.set(key, String(value));
+    }
+    const query = params.toString();
+    const result = await request<{ tasks: Task[] }>(`/api/tasks/deleted${query ? `?${query}` : ""}`);
+    return { ...result, tasks: result.tasks.map((task) => normalizeTask(task as WireTask)) };
   },
   labels: (projectId?: string) =>
     request<{ labels: LabelUsage[] }>(

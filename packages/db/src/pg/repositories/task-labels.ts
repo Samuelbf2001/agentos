@@ -1,5 +1,5 @@
 /** Espejo Postgres de src/repositories/task-labels.ts — misma superficie, asíncrona (§NFR-9). */
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { errors, nowMs } from "@agentos/shared";
 import type { AgentosPgDb } from "../client-pg.js";
 import { taskLabels, tasks } from "../schema-pg.js";
@@ -118,12 +118,14 @@ export async function listLabelCatalog(
         .select({ label: taskLabels.label, count: sql<number>`count(*)` })
         .from(taskLabels)
         .innerJoin(tasks, eq(tasks.id, taskLabels.taskId))
-        .where(eq(tasks.projectId, filter.projectId))
+        .where(and(eq(tasks.projectId, filter.projectId), isNull(tasks.deletedAt)))
         .groupBy(taskLabels.label)
         .orderBy(asc(taskLabels.label))
     : await db
         .select({ label: taskLabels.label, count: sql<number>`count(*)` })
         .from(taskLabels)
+        .innerJoin(tasks, eq(tasks.id, taskLabels.taskId))
+        .where(isNull(tasks.deletedAt))
         .groupBy(taskLabels.label)
         .orderBy(asc(taskLabels.label));
   return rows.map((row) => ({ label: row.label, count: Number(row.count) }));

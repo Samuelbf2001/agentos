@@ -23,12 +23,13 @@ import {
   type TaskAssignee,
 } from "@agentos/db";
 import { errors } from "@agentos/shared";
+import { withTrashFields, type TaskTrashFields } from "./task-trash.js";
 
 export interface TaskAssigneeView extends TaskAssignee {
   person?: Pick<Person, "id" | "fullName" | "email" | "role">;
 }
 
-export interface TaskWithAssignees extends Task {
+export interface TaskWithAssignees extends Task, TaskTrashFields {
   assignees: TaskAssigneeView[];
   /** Etiquetas normalizadas de la tarjeta (tabla puente `task_labels`). */
   labels: string[];
@@ -170,7 +171,11 @@ export async function taskWithAssignees(db: AgentosDb, task: Task): Promise<Task
       ? source.assignees
       : await dbListTaskAssignees(db, task.id);
   const assignees = await Promise.all(rawAssignees.map((row) => withPerson(db, row)));
-  return { ...source, assignees, labels: await listTaskLabels(db, task.id) } as TaskWithAssignees;
+  return withTrashFields({
+    ...source,
+    assignees,
+    labels: await listTaskLabels(db, task.id),
+  }) as TaskWithAssignees;
 }
 
 export async function listTasksWithAssignees(
@@ -195,11 +200,13 @@ export async function listTasksWithAssignees(
     rows.map((row) => row.id),
   );
   const withLabels = await Promise.all(
-    rows.map(async (row) => ({
-      ...row,
-      assignees: await Promise.all(row.assignees.map((assignee) => withPerson(db, assignee))),
-      labels: labels.get(row.id) ?? [],
-    })),
+    rows.map(async (row) =>
+      withTrashFields({
+        ...row,
+        assignees: await Promise.all(row.assignees.map((assignee) => withPerson(db, assignee))),
+        labels: labels.get(row.id) ?? [],
+      }),
+    ),
   );
   // Una sola consulta de etiquetas sirve para pintar la tarjeta y para filtrar.
   return filter.label ? withLabels.filter((row) => row.labels.includes(filter.label!)) : withLabels;

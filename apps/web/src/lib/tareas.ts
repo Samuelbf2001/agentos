@@ -101,13 +101,57 @@ export type Direccion = "asc" | "desc";
  * línea) y el tablero por estado (arrastrable). El modo viaja en la URL como
  * un filtro más: un enlace compartido llega en el modo en que se compartió.
  */
-export const VISTAS = ["tabla", "tablero"] as const;
+export const VISTAS = ["tabla", "tablero", "desactivadas"] as const;
 export type Vista = (typeof VISTAS)[number];
 
 export const VISTA_LABELS: Record<Vista, string> = {
   tabla: "Tabla",
   tablero: "Tablero",
+  // Papelera: lo eliminado se queda aquí 90 días antes de borrarse.
+  desactivadas: "Desactivadas",
 };
+
+/**
+ * Papelera: saca de la base las desactivadas y, por si una respuesta vieja o
+ * el paso optimista aún las trae, también sus subtareas (a cualquier nivel).
+ * Los listados de la API ya no las devuelven; esto cubre el hueco entre
+ * eliminar y recargar.
+ */
+export function sinDesactivadas(tasks: Task[]): Task[] {
+  const fuera = new Set(tasks.filter((t) => t.deleted_at !== undefined && t.deleted_at !== null).map((t) => t.id));
+  if (fuera.size === 0) return tasks;
+  let crecio = true;
+  while (crecio) {
+    crecio = false;
+    for (const task of tasks) {
+      if (!fuera.has(task.id) && task.parentTaskId && fuera.has(task.parentTaskId)) {
+        fuera.add(task.id);
+        crecio = true;
+      }
+    }
+  }
+  return tasks.filter((task) => !fuera.has(task.id));
+}
+
+/** «Se borra en N días»: la cuenta atrás de la papelera, en una frase. */
+export function textoBorrado(dias: number): string {
+  if (dias <= 0) return "Se borra hoy";
+  return dias === 1 ? "Se borra en 1 día" : `Se borra en ${dias} días`;
+}
+
+/** Quien desactivó: `person:<id>` o un id de persona se traduce a nombre. */
+export function quienDesactivo(actor: string | null | undefined, people: Person[]): string {
+  if (!actor) return "—";
+  const [kind, ...rest] = actor.split(":");
+  const ref = rest.join(":");
+  if (kind === "person" && ref) return personName(ref, people);
+  if (kind === "agent" && ref) return `Agente ${ref}`;
+  if (!ref) {
+    const found = people.find((person) => person.id === actor);
+    if (found) return found.full_name || found.fullName || actor;
+  }
+  return actor;
+}
 
 /** El valor reservado de `responsable` que significa "la persona de la sesión". */
 export const YO = "yo";

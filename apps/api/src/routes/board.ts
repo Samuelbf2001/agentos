@@ -21,6 +21,7 @@ import {
   getOrganization,
   getProject,
   getTask,
+  listDeletedTasks,
   listDocs,
   listArtifacts,
   listLabelCatalog,
@@ -36,8 +37,12 @@ import {
   maxOrderKey,
   normalizeLabel,
   replaceTaskLabels,
+  restoreTask,
   searchTasks,
   setGateState,
+  softDeleteTask,
+  taskDeletedConflict,
+  listPeople,
   updateProject,
   updateTask,
   validateTaskAssigneeOrganization,
@@ -45,7 +50,7 @@ import {
   type Task,
 } from "@agentos/db";
 import fs from "node:fs";
-import { ErrorCodes, isAgentosError, newId } from "@agentos/shared";
+import { AgentosError, ErrorCodes, isAgentosError, newId } from "@agentos/shared";
 import {
   artifactsRoot,
   guessContentType,
@@ -58,6 +63,7 @@ import { GATE_G1_PLAN } from "@agentos/core";
 import type { ApiContext } from "../context.js";
 import { parse } from "../http-errors.js";
 import { CreateTaskBody, DueAt, createTaskFromBody } from "../task-create.js";
+import { withTrashFields } from "../task-trash.js";
 import {
   listTaskAssignees,
   listTasksWithAssignees,
@@ -115,6 +121,13 @@ const MoveTaskProjectBody = z.object({
 });
 
 const CommentBody = z.object({ body: z.string().min(1) });
+
+const DeleteTaskBody = z.object({ expected_version: z.number().int().positive() });
+
+/** Papelera: una tarea desactivada es de solo lectura hasta que se restaura (409). */
+function assertActiveTask(task: Task): void {
+  if (task.deletedAt !== null) throw taskDeletedConflict(task.id);
+}
 
 /**
  * Clave de orden al FINAL de una columna: mismo algoritmo que `nextOrderKey`
@@ -381,6 +394,76 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     };
   });
 
+  /**
+   * Papelera: tareas desactivadas (las más recientes primero). Filtros opcionales
+   * por proyecto, cliente (organización) y texto del título. Ruta estática: el
+   * router la resuelve antes que `/api/tasks/:id`.
+   */
+  app.get("/api/tasks/deleted", async (req) => {
+    const q = parse(
+      z.object({
+        project_id: z.string().min(1).optional(),
+        org_id: z.string().min(1).optional(),
+        q: z.string().optional(),
+      }),
+      req.query,
+    );
+    const rows = await listDeletedTasks(db, {
+      ...(q.project_id ? { projectId: q.project_id } : {}),
+      ...(q.org_id ? { orgId: q.org_id } : {}),
+      ...(q.q?.trim() ? { q: q.q.trim() } : {}),
+    });
+    const projects = new Map((await listProjects(db)).map((p) => [p.id, p]));
+    const people = new Map((await listPeople(db)).map((p) => [p.id, p.fullName]));
+    return {
+      tasks: rows.map((task) => ({
+        ...withTrashFields(task),
+        project_name: projects.get(task.projectId)?.name ?? null,
+        org_id: projects.get(task.projectId)?.orgId ?? null,
+        deleted_by_name: task.deletedBy ? (people.get(task.deletedBy) ?? null) : null,
+      })),
+    };
+  });
+
+  /**
+   * "Eliminar" una tarea = mandarla a la papelera (borrado suave). Conserva el
+   * estado para restaurarla tal cual; se purga definitivamente a los N días.
+   * 409 si está en ejecución o la versión es vieja. Solo humanos con sesión.
+   */
+  app.delete("/api/tasks/:id", async (req) => {
+    const { id } = req.params as { id: string };
+    if (!req.session?.personId) throw new AgentosError(ErrorCodes.POLICY_DENIED, "Solo una persona autenticada puede eliminar tareas");
+    const body = parse(DeleteTaskBody, req.body ?? {});
+    const { task, subtaskIds } = await softDeleteTask(db, id, {
+      actor: personActor(req),
+      expectedVersion: body.expected_version,
+      source: "ui",
+    });
+    const presented = await taskWithAssignees(db, task);
+    // Mismo evento que cualquier cambio de ficha (las vistas abiertas reemplazan
+    // la tarjeta y ven `deleted_at`) + uno explícito para quitarla.
+    await sink.publish(`board:${task.projectId}`, { type: "task.updated", payload: { task: presented } });
+    await sink.publish(`board:${task.projectId}`, {
+      type: "task.deleted",
+      payload: { taskId: id, task: presented, subtask_ids: subtaskIds, actor: personActor(req) },
+    });
+    return { task: presented };
+  });
+
+  /** Saca una tarea (y las subtareas desactivadas con ella) de la papelera. */
+  app.post("/api/tasks/:id/restore", async (req) => {
+    const { id } = req.params as { id: string };
+    if (!req.session?.personId) throw new AgentosError(ErrorCodes.POLICY_DENIED, "Solo una persona autenticada puede restaurar tareas");
+    const { task, subtaskIds } = await restoreTask(db, id, { actor: personActor(req), source: "ui" });
+    const presented = await taskWithAssignees(db, task);
+    await sink.publish(`board:${task.projectId}`, { type: "task.updated", payload: { task: presented } });
+    await sink.publish(`board:${task.projectId}`, {
+      type: "task.restored",
+      payload: { taskId: id, task: presented, subtask_ids: subtaskIds, actor: personActor(req) },
+    });
+    return { task: presented };
+  });
+
   /** Catálogo de etiquetas en uso (para el filtro del tablero y el autocompletar). */
   app.get("/api/labels", async (req) => {
     const q = parse(z.object({ project_id: z.string().min(1).optional() }), req.query);
@@ -431,6 +514,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(LabelsBody, req.body);
     const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
+    assertActiveTask(task);
     const before = await listTaskLabels(db, id);
     const labels = await replaceTaskLabels(db, id, body.labels, personActor(req));
     await appendAudit(db, {
@@ -496,6 +580,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(MoveTaskProjectBody, req.body);
     const before = await getTask(db, id);
     if (!before) throw errors.notFound("task", id);
+    assertActiveTask(before);
     const target = await getProject(db, body.project_id);
     if (!target) throw errors.notFound("project", body.project_id);
     if (before.version !== body.expected_version) {
@@ -583,7 +668,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       ...(body.note !== undefined ? { note: body.note } : {}),
       ...(body.blocked_reason !== undefined ? { blockedReason: body.blocked_reason } : {}),
     });
-    return { task };
+    return { task: withTrashFields(task) };
   });
 
   app.post("/api/tasks/:id/comment", async (req, reply) => {
@@ -591,6 +676,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(CommentBody, req.body);
     const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
+    assertActiveTask(task);
     const event = await appendTaskEvent(db, {
       taskId: id,
       kind: "comment",
@@ -610,6 +696,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(AssignBody, req.body);
     const before = await getTask(db, id);
     if (!before) throw errors.notFound("task", id);
+    assertActiveTask(before);
     const beforeAssignees = await listTaskAssignees(db, id);
     let assigneeAgentId: string | null | undefined;
     if (body.agent_slug !== undefined) {
@@ -741,6 +828,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const body = parse(ArtifactBody, req.body);
     const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
+    assertActiveTask(task);
     const artifact = await attachArtifact(db, {
       taskId: id,
       kind: body.kind,
@@ -767,6 +855,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
     const { id } = req.params as { id: string };
     const task = await getTask(db, id);
     if (!task) throw errors.notFound("task", id);
+    assertActiveTask(task);
     const project = await getProject(db, task.projectId);
     if (!project) throw errors.notFound("project", task.projectId);
 
@@ -886,7 +975,7 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       after: { status: task.status },
       reason: body.note ?? null,
     });
-    return { task };
+    return { task: withTrashFields(task) };
   });
 
   /**
@@ -924,6 +1013,6 @@ export function registerBoardRoutes(app: FastifyInstance, ctx: ApiContext): void
       actor: "system:dispatcher",
       note: "reencolada tras rechazo de revisión",
     });
-    return { task };
+    return { task: withTrashFields(task) };
   });
 }

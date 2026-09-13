@@ -277,7 +277,10 @@ export async function searchTasksPg(
 
 function taskScope(options: TaskSearchOptions) {
   return {
-    project: options.projectId ? sql` AND t.project_id = ${options.projectId}` : sql``,
+    // Papelera: una tarea desactivada nunca aparece en la búsqueda.
+    project: options.projectId
+      ? sql` AND t.deleted_at IS NULL AND t.project_id = ${options.projectId}`
+      : sql` AND t.deleted_at IS NULL`,
     person: options.personId
       ? sql` AND EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.person_id = ${options.personId})`
       : sql``,

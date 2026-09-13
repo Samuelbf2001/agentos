@@ -1,5 +1,5 @@
 /** Espejo Postgres de src/repositories/stats.ts — misma superficie, asíncrona (§NFR-9). */
-import { eq, sql } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
 import type { AgentosPgDb } from "../client-pg.js";
 import {
   agents,
@@ -37,7 +37,7 @@ export async function domainCounts(db: AgentosPgDb): Promise<DomainCounts> {
     methodologies: one(await db.select({ n: N }).from(methodologies)),
     phaseModules: one(await db.select({ n: N }).from(phaseModules)),
     projects: one(await db.select({ n: N }).from(projects)),
-    tasks: one(await db.select({ n: N }).from(tasks)),
+    tasks: one(await db.select({ n: N }).from(tasks).where(isNull(tasks.deletedAt))),
     threads: one(await db.select({ n: N }).from(threads)),
     messages: one(await db.select({ n: N }).from(messages)),
     runsTotal: one(await db.select({ n: N }).from(runs)),

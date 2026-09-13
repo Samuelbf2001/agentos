@@ -219,7 +219,8 @@ export function searchTasks(
   // Se pide de más en cada índice porque el filtro por proyecto/persona y la
   // fusión por tarea reducen el conjunto antes de recortar al límite final.
   const perIndex = limit * 4;
-  const scopeSql = `${options.projectId ? " AND t.project_id = @projectId" : ""}${
+  // Papelera: una tarea desactivada nunca aparece en la búsqueda.
+  const scopeSql = ` AND t.deleted_at IS NULL${options.projectId ? " AND t.project_id = @projectId" : ""}${
     options.personId
       ? " AND EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.person_id = @personId)"
       : ""

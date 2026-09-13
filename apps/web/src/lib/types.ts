@@ -143,6 +143,38 @@ export interface Task {
   version: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Papelera: epoch-ms en que la tarea pasó a Desactivadas; null si está
+   * activa. Eliminar no borra: la API la purga en `purge_at` (90 días).
+   */
+  deleted_at?: number | null;
+  /** Actor que la desactivó (`person:<id>`, id de persona o agente). */
+  deleted_by?: string | null;
+  /** Epoch-ms del borrado definitivo; null si está activa. */
+  purge_at?: number | null;
+}
+
+/** Días que una tarea desactivada se puede restaurar antes de borrarse. */
+export const PAPELERA_DIAS = 90;
+const DIA_MS = 86_400_000;
+
+/** true si la tarea está en Desactivadas (tolera servidores sin el campo). */
+export function isTaskDeleted(task: Pick<Task, "deleted_at">): boolean {
+  return task.deleted_at !== undefined && task.deleted_at !== null;
+}
+
+/** Fecha del borrado definitivo; si la API no la mandó, deleted_at + 90 días. */
+export function taskPurgeAt(task: Pick<Task, "deleted_at" | "purge_at">): number | null {
+  if (task.purge_at !== undefined && task.purge_at !== null) return task.purge_at;
+  if (task.deleted_at !== undefined && task.deleted_at !== null) {
+    return task.deleted_at + PAPELERA_DIAS * DIA_MS;
+  }
+  return null;
+}
+
+/** Días enteros que faltan para el borrado definitivo (0 = hoy o ya vencido). */
+export function diasParaBorrado(purgeAt: number, now = Date.now()): number {
+  return Math.max(0, Math.ceil((purgeAt - now) / DIA_MS));
 }
 
 export type BoardFilter = "all" | "mine" | "unassigned" | "due";

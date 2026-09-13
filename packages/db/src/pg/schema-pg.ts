@@ -211,10 +211,14 @@ export const tasks = pgTable(
     version: integer("version").notNull().default(1),
     createdAt: epochMs("created_at").notNull(),
     updatedAt: epochMs("updated_at").notNull(),
+    /** Papelera (borrado suave): ver src/schema.ts. */
+    deletedAt: epochMs("deleted_at"),
+    deletedBy: text("deleted_by"),
   },
   (t) => [
     index("idx_tasks_board").on(t.projectId, t.status, t.orderKey),
     index("idx_tasks_lease").on(t.status, t.leaseUntil),
+    index("idx_tasks_deleted_at").on(t.deletedAt),
   ],
 );
 
@@ -789,7 +793,7 @@ export const notionImportLinks = pgTable(
     agentosObjectId: text("agentos_object_id").notNull(),
     archiveId: text("archive_id").references(() => notionPageArchives.id),
     importStatus: text("import_status")
-      .$type<"imported" | "updated" | "inbox_container" | "skipped">()
+      .$type<"imported" | "updated" | "inbox_container" | "skipped" | "deleted_in_agentos">()
       .notNull(),
     sourceLastEditedAt: epochMs("source_last_edited_at"),
     importedAt: epochMs("imported_at").notNull(),

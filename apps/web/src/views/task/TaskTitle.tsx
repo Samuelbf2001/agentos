@@ -14,10 +14,13 @@ export function TaskTitle({
   value,
   onSave,
   assist,
+  readOnly = false,
 }: {
   value: string;
   onSave: (title: string) => Promise<boolean>;
   assist?: { draft: () => TaskAssistDraft; taskId?: string };
+  /** Tarea desactivada: el título se lee, no se edita. */
+  readOnly?: boolean;
 }) {
   const ref = useRef<HTMLHeadingElement>(null);
   const lastValue = useRef(value);
@@ -63,9 +66,10 @@ export function TaskTitle({
     <div className="flex items-start gap-1">
     <h1
       ref={ref}
-      contentEditable
+      contentEditable={!readOnly}
       suppressContentEditableWarning
       role="textbox"
+      aria-readonly={readOnly || undefined}
       aria-label="Título de la tarea"
       aria-multiline={false}
       data-testid="task-title"
@@ -84,7 +88,7 @@ export function TaskTitle({
       }}
       className="min-h-10 min-w-0 flex-1 break-words rounded-tight px-1 text-[1.5rem] font-semibold leading-tight tracking-tight text-ink outline-none empty:before:text-faint empty:before:content-['Sin_título'] hover:bg-surface-2 focus:bg-surface focus:ring-2 focus:ring-link"
     />
-      {assist ? (
+      {assist && !readOnly ? (
         <span className="mt-2 shrink-0">
           <FieldAssist
             field="title"

@@ -242,7 +242,15 @@ export function reduceEvent(
         const updated = p.task && typeof p.task === "object" ? (p.task as Task) : null;
         const updatedId = updated?.id ?? taskId;
         if (!updatedId) break;
-        if (updated && next.board.tasks[updatedId]) {
+        const deleted = updated ? updated.deleted_at !== undefined && updated.deleted_at !== null : false;
+        if (deleted && next.board.tasks[updatedId]) {
+          // Papelera: desactivar publica el mismo evento; la tarjeta sale del
+          // tablero junto con sus subtareas. Restaurar la relee (refetch).
+          const rest = { ...next.board.tasks };
+          delete rest[updatedId];
+          for (const [id, task] of Object.entries(rest)) if (task.parentTaskId === updatedId) delete rest[id];
+          next = { ...next, board: { ...next.board, tasks: rest } };
+        } else if (updated && next.board.tasks[updatedId]) {
           next = {
             ...next,
             board: { ...next.board, tasks: { ...next.board.tasks, [updatedId]: updated } },
