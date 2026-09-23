@@ -314,6 +314,23 @@ export default function NotasView() {
     [procesarFoto],
   );
 
+  // El menú «Foto» se cierra al tocar fuera de él o con Esc.
+  useEffect(() => {
+    if (!menuFotoAbierto) return;
+    const cerrarFuera = (e: PointerEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest("[data-menu-foto]")) setMenuFotoAbierto(false);
+    };
+    const cerrarEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuFotoAbierto(false);
+    };
+    document.addEventListener("pointerdown", cerrarFuera);
+    document.addEventListener("keydown", cerrarEsc);
+    return () => {
+      document.removeEventListener("pointerdown", cerrarFuera);
+      document.removeEventListener("keydown", cerrarEsc);
+    };
+  }, [menuFotoAbierto]);
+
   /** El texto corregido a mano se guarda al salir del campo, no en cada tecla. */
   const guardarTranscripcion = useCallback(async () => {
     if (!activeNote) return;
@@ -367,7 +384,7 @@ export default function NotasView() {
    * tal cual en la cabecera normal y en la barra mínima.
    */
   const botonFoto = (
-    <div className="relative">
+    <div className="relative" data-menu-foto>
       <button
         type="button"
         onClick={() => setMenuFotoAbierto((abierto) => !abierto)}
