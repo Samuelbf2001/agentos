@@ -38,6 +38,8 @@ export interface BloqueSegmentado {
   bloque: number;
   caja: Caja;
   renglones: RenglonSegmentado[];
+  /** Foto pegada en el lienzo (pizarra, cuaderno): región propia, sin renglones de trazos. */
+  esFoto?: boolean;
 }
 
 export interface TextoExistente {
@@ -279,11 +281,32 @@ export function segmentarEscena(
   const trazos: Trazo[] = elements
     .filter((el) => el.type === "freedraw")
     .map((el) => ({ box: bbox(el) }));
+  const fotos = elements.filter((el) => el.type === "image");
   const textos = elements.filter((el) => el.type === "text");
-  const figuras = elements.filter((el) => el.type !== "freedraw" && el.type !== "text");
+  const figuras = elements.filter(
+    (el) => el.type !== "freedraw" && el.type !== "text" && el.type !== "image",
+  );
 
   const { renglones, alturaTipica } = enRenglones(trazos);
-  const bloques = enBloques(renglones, alturaTipica, gapFactor);
+  const bloquesTrazos = enBloques(renglones, alturaTipica, gapFactor).map((b) => ({
+    caja: redondear(b.caja),
+    renglones: b.renglones.map((r) => ({
+      renglon: renglones.indexOf(r),
+      caja: redondear(r),
+      trazos: r.trazos.length,
+    })),
+  }));
+  // Cada foto pegada (pizarra, cuaderno) es una región propia, sin renglones
+  // de trazos. Se mezcla con las de trazos y se ordena de arriba abajo, como
+  // el resto: el orden que ve el modelo es geométrico, no por tipo de elemento.
+  const bloquesFotos = fotos.map((f) => ({
+    caja: redondear(bbox(f)),
+    renglones: [] as RenglonSegmentado[],
+    esFoto: true as const,
+  }));
+  const bloques = [...bloquesTrazos, ...bloquesFotos].sort(
+    (a, b) => a.caja.y - b.caja.y || a.caja.x - b.caja.x,
+  );
 
   return {
     resumen: {
@@ -292,17 +315,10 @@ export function segmentarEscena(
       bloques: bloques.length,
       textoYaEscrito: textos.length,
       figuras: figuras.length,
+      // Con solo fotos (sin trazos) `enRenglones` ya cae al fallback: nunca 0/NaN.
       alturaTipica: Math.round(alturaTipica),
     },
-    bloques: bloques.map((b, bi) => ({
-      bloque: bi,
-      caja: redondear(b.caja),
-      renglones: b.renglones.map((r) => ({
-        renglon: renglones.indexOf(r),
-        caja: redondear(r),
-        trazos: r.trazos.length,
-      })),
-    })),
+    bloques: bloques.map((b, bi) => ({ ...b, bloque: bi })),
     textoExistente: textos.map((t) => ({
       id: str(t.id),
       texto: typeof t.text === "string" ? t.text : "",

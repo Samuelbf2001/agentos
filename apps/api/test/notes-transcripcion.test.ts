@@ -81,3 +81,32 @@ describe("guía de flujogramas y organigramas en el prompt", () => {
     expect(prompt).not.toMatch(/x0 y0/);
   });
 });
+
+describe("fotos pegadas en el lienzo, en el prompt", () => {
+  it("el SYSTEM_PROMPT trae la guía de fotos: pizarra, reflejos, dudas", () => {
+    expect(SYSTEM_PROMPT).toMatch(/Fotos:/);
+    expect(SYSTEM_PROMPT).toMatch(/pizarra/i);
+    expect(SYSTEM_PROMPT).toMatch(/reflejos/i);
+    expect(SYSTEM_PROMPT).toMatch(/NUNCA completes lo ilegible/);
+  });
+
+  it("el prompt de usuario avisa de qué región es una foto", () => {
+    const segmentacion = segmentarEscena({
+      elements: [
+        { id: "a", type: "freedraw", x: 0, y: 0, points: [[0, 0], [100, 20]] },
+        { id: "foto-1", type: "image", x: 0, y: 200, width: 300, height: 200, fileId: "f1" },
+      ],
+    });
+    const prompt = construirPrompt({ segmentacion, titulo: "Reunión" });
+    expect(prompt).toMatch(/región 1 es una FOTO/);
+    expect(prompt).toMatch(/guía de «Fotos»/);
+  });
+
+  it("sin fotos en la escena, el prompt no menciona regiones de foto", () => {
+    const segmentacion = segmentarEscena({
+      elements: [{ id: "a", type: "freedraw", x: 0, y: 0, points: [[0, 0], [100, 20]] }],
+    });
+    const prompt = construirPrompt({ segmentacion, titulo: "Reunión" });
+    expect(prompt).not.toMatch(/es una FOTO/);
+  });
+});

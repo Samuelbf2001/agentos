@@ -30,7 +30,7 @@ import {
   normalizeUsage,
   type TokenUsage,
 } from "@agentos/providers";
-import type { SegmentacionNota } from "./segmentacion.js";
+import type { BloqueSegmentado, SegmentacionNota } from "./segmentacion.js";
 
 export const DEFAULT_NOTES_PROVIDER_SLUG = "openai";
 export const DEFAULT_NOTES_MODEL = "gpt-5.6-luna";
@@ -129,6 +129,18 @@ export const SYSTEM_PROMPT = [
   "  sus hijos sangrados bajo él, con `→` para el flujo.",
   "- En `bloques[].texto` (texto plano para el lienzo) va SOLO esa lista anidada",
   "  con `→` e indentación. Nunca el mermaid.",
+  "",
+  "Fotos:",
+  "- Alguna región puede ser una FOTO de una pizarra, un tablero o un cuaderno,",
+  "  tomada con el celular: perspectiva inclinada, reflejos de luz, marco del",
+  "  objeto o cosas del fondo, colores de marcador en vez de trazo negro.",
+  "- Transcribe SOLO lo escrito. Ignora reflejos, manchas, restos de un borrado",
+  "  a medias y cualquier objeto que salga en la foto sin ser texto.",
+  "- Respeta la estructura de lo escrito (listas, flechas, cajas, jerarquía) con",
+  "  las mismas reglas que en el lienzo: es una fuente más, no un caso aparte.",
+  "- Si una palabra o un trazo no se lee con seguridad por el ángulo, el brillo",
+  "  o la letra, es una duda: márcala con `[?]` igual que en cualquier otra",
+  "  región. NUNCA completes lo ilegible por contexto.",
 ].join("\n");
 
 /**
@@ -236,7 +248,7 @@ export function construirPrompt(input: Pick<TranscribeNoteInput, "segmentacion" 
     "",
     describirSegmentacion(input.segmentacion),
     "",
-    describirBloques(input.segmentacion.resumen.bloques),
+    describirBloques(input.segmentacion.bloques),
     "",
     "Devuelve `markdown` con la transcripción completa en Markdown, `bloques` con",
     "el texto plano de cada región en orden y `dudas` con las palabras marcadas `[?]`.",
@@ -247,16 +259,27 @@ export function construirPrompt(input: Pick<TranscribeNoteInput, "segmentacion" 
 /**
  * Pide el texto por región para poder ponerlo en el lienzo junto a cada
  * trazo. Sólo el NÚMERO de regiones y su orden: sin cajas ni renglones (ver
- * la nota de medición de arriba).
+ * la nota de medición de arriba); salvo aviso de cuáles son fotos, que el
+ * modelo no puede deducir sin que se lo digan.
  */
-export function describirBloques(n: number): string {
-  const total = Math.max(1, n);
-  return [
+export function describirBloques(bloques: readonly Pick<BloqueSegmentado, "bloque" | "esFoto">[]): string {
+  const total = Math.max(1, bloques.length);
+  const lineas = [
     `La nota tiene ${total} ${total === 1 ? "región" : "regiones separadas verticalmente"}`,
     `(bloque 0${total > 1 ? `..${total - 1}` : ""}, de arriba abajo). Devuelve en \`bloques\` el texto`,
     "plano de cada región, en ese orden. Si dos regiones son en realidad una sola,",
     "une su texto en la primera y deja la otra con texto vacío.",
-  ].join("\n");
+  ];
+  const fotos = bloques.filter((b) => b.esFoto).map((b) => b.bloque);
+  if (fotos.length > 0) {
+    lineas.push("");
+    lineas.push(
+      fotos.length === 1
+        ? `La región ${fotos[0]} es una FOTO (pizarra, cuaderno o papel): transcribe lo escrito en ella con la guía de «Fotos».`
+        : `Las regiones ${fotos.join(", ")} son FOTOS (pizarra, cuaderno o papel): transcribe lo escrito en ellas con la guía de «Fotos».`,
+    );
+  }
+  return lineas.join("\n");
 }
 
 export interface ModelTranscriberOptions {

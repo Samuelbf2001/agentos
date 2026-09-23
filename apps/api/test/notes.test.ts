@@ -174,6 +174,29 @@ describe("Notas manuscritas (REST)", () => {
     expect(vacío.statusCode).toBe(400);
   });
 
+  it("el autoguardado acepta una escena de más de 1 MiB (una foto en `files`): sin 413", async () => {
+    const fixture = await fx();
+    const note = await createNote(fixture, { project_id: fixture.project.id });
+
+    // ~2 MB de dataURL: el límite POR DEFECTO de Fastify (1 MiB) daba 413
+    // antes de que la ruta tuviera su propio `bodyLimit`.
+    const dataUrlPesado = `data:image/jpeg;base64,${"A".repeat(2 * 1024 * 1024)}`;
+    const scene = {
+      elements: [{ id: "foto-1", type: "image", x: 0, y: 0, width: 300, height: 200, fileId: "f1" }],
+      files: { f1: { id: "f1", dataURL: dataUrlPesado, mimeType: "image/jpeg", created: 1 } },
+    };
+
+    const saved = await fixture.api.app.inject({
+      method: "PATCH",
+      url: `/api/notes/${note.id}`,
+      headers: fixture.authHeaders,
+      payload: { scene, expected_version: note.version },
+    });
+    expect(saved.statusCode).toBe(200);
+    const updated = (saved.json() as { note: NoteWire }).note;
+    expect(updated.scene.elements).toHaveLength(1);
+  });
+
   it("terminar notas guarda el PNG fuera de la base y deja la nota en captured", async () => {
     const fixture = await fx();
     const note = await createNote(fixture, { project_id: fixture.project.id });

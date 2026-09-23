@@ -91,3 +91,51 @@ describe("Segmentación de notas manuscritas", () => {
     expect(seg.bloques).toEqual([]);
   });
 });
+
+describe("Fotos pegadas en el lienzo (pizarra, cuaderno)", () => {
+  /** Una imagen tal como la guarda Excalidraw: type "image", con su bbox propia. */
+  function imagen(id: string, x: number, y: number, ancho: number, alto: number) {
+    return { id, type: "image", x, y, width: ancho, height: alto, fileId: `file-${id}` };
+  }
+
+  it("una sola foto: un bloque marcado esFoto, caja = su bbox, alturaTipica no da 0/NaN", () => {
+    const seg = segmentarEscena({ elements: [imagen("foto-1", 10, 20, 300, 200)] });
+
+    expect(seg.resumen.bloques).toBe(1);
+    expect(seg.bloques).toEqual([
+      { bloque: 0, caja: { x: 10, y: 20, w: 300, h: 200 }, renglones: [], esFoto: true },
+    ]);
+    // Sin ningún trazo, `enRenglones` cae al fallback: nunca 0 ni NaN.
+    expect(seg.resumen.alturaTipica).toBeGreaterThan(0);
+    expect(Number.isNaN(seg.resumen.alturaTipica)).toBe(false);
+  });
+
+  it("trazos + foto se ordenan de arriba abajo, sin importar el tipo de elemento", () => {
+    const seg = segmentarEscena({
+      elements: [
+        // La foto queda ABAJO de todo, aunque en la escena venga primero.
+        imagen("foto-abajo", 0, 300, 200, 150),
+        trazo("linea-arriba", 0, 0, 120, 20),
+      ],
+    });
+
+    expect(seg.resumen.bloques).toBe(2);
+    expect(seg.bloques[0]!.esFoto).toBeUndefined();
+    expect(seg.bloques[0]).toMatchObject({ bloque: 0 });
+    expect(seg.bloques[0]!.caja.y).toBe(0);
+    expect(seg.bloques[1]).toMatchObject({ bloque: 1, esFoto: true });
+    expect(seg.bloques[1]!.caja.y).toBe(300);
+  });
+
+  it("una foto borrada (isDeleted) no cuenta para nada", () => {
+    const seg = segmentarEscena({
+      elements: [
+        trazo("linea", 0, 0, 100, 20),
+        { ...imagen("foto-borrada", 0, 200, 300, 200), isDeleted: true },
+      ],
+    });
+
+    expect(seg.resumen.bloques).toBe(1);
+    expect(seg.bloques.some((b) => b.esFoto)).toBe(false);
+  });
+});
