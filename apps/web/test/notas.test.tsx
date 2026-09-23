@@ -27,7 +27,14 @@ import {
   tamanoTexto,
 } from "../src/views/notas/transcripcion-elementos";
 import { mockFetch, person } from "./helpers";
+import { reducirFoto } from "../src/views/notas/foto";
 import type { CanvasNote, TranscripcionBloque } from "../src/lib/types";
+
+/**
+ * `reducirFoto` usa `createImageBitmap`/canvas, que jsdom no implementa: se
+ * dobla igual que Excalidraw, y cada test configura lo que "lee".
+ */
+vi.mock("../src/views/notas/foto", () => ({ reducirFoto: vi.fn() }));
 
 /** Trazo que el usuario "dibujó". Nunca debe desaparecer ni cambiar. */
 const TRAZO = { id: "trazo-1", type: "freedraw", x: 0, y: 0, points: [[0, 0], [100, 20]] };
@@ -37,6 +44,14 @@ const escenaConTrazo = { elements: [TRAZO] };
 /** Escena viva del doble: lo que `getScene` devuelve y lo que se autoguarda. */
 let escena: { elements: unknown[] } = { elements: [TRAZO] };
 const insertarTranscripcion = vi.fn();
+const insertarFoto = vi.fn();
+
+interface FotoInsertada {
+  dataURL: string;
+  mimeType: string;
+  width: number;
+  height: number;
+}
 
 vi.mock("../src/views/notas/Lienzo", async () => {
   const reglas = await import("../src/views/notas/transcripcion-elementos");
@@ -51,6 +66,7 @@ vi.mock("../src/views/notas/Lienzo", async () => {
         estaVacio: () => boolean;
         exportarPng: () => Promise<Blob>;
         insertarTranscripcion: (bloques: TranscripcionBloque[], alturaTipica: number) => number;
+        insertarFoto: (foto: FotoInsertada) => string;
       }) => void;
     }) => {
       onReady({
@@ -69,6 +85,18 @@ vi.mock("../src/views/notas/Lienzo", async () => {
           escena = { elements: [...reglas.sinTranscripcionPrevia(escena.elements), ...nuevos] };
           onSceneChange(escena);
           return nuevos.length;
+        },
+        insertarFoto: (foto) => {
+          insertarFoto(foto);
+          const id = "foto-1";
+          escena = {
+            elements: [
+              ...escena.elements,
+              { id, type: "image", ...foto, customData: { agentos: { foto: true } } },
+            ],
+          };
+          onSceneChange(escena);
+          return id;
         },
       });
       return (
@@ -168,6 +196,8 @@ describe("Notas manuscritas (vista)", () => {
   beforeEach(() => {
     escena = { elements: [TRAZO] };
     insertarTranscripcion.mockClear();
+    insertarFoto.mockClear();
+    vi.mocked(reducirFoto).mockReset();
     useStore.setState({
       notes: [],
       activeNoteId: null,
@@ -559,6 +589,83 @@ describe("Notas manuscritas (vista)", () => {
     expect(screen.queryByLabelText("Transcripción de la nota")).toBeNull();
     expect(insertarTranscripcion).not.toHaveBeenCalled();
     expect(escena.elements).toEqual([TRAZO]);
+  });
+
+  // ── Foto (pizarra, tablero) ────────────────────────────────────────────
+
+  it("el botón «Foto» abre un menú con «Tomar foto» y «Subir imagen», en la cabecera", async () => {
+    mockFetch([{ method: "GET", path: "/api/notes", body: { notes: [makeNote()] } }]);
+    renderNotas();
+    await screen.findByTestId("lienzo");
+
+    const boton = screen.getByRole("button", { name: /Añadir foto/i });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(boton);
+    expect(screen.getByRole("menuitem", { name: "Tomar foto" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Subir imagen" })).toBeTruthy();
+  });
+
+  it("«Foto»: reduce el archivo, lo pega en el lienzo y encadena el mismo camino que «Transcribir» (interim)", async () => {
+    vi.mocked(reducirFoto).mockResolvedValue({
+      dataURL: "data:image/jpeg;base64,xxx",
+      mimeType: "image/jpeg",
+      width: 300,
+      height: 200,
+    });
+    const { rutas } = rutasConEstado(makeNote(), {});
+    const { calls } = mockFetch(rutas);
+    renderNotas();
+    await screen.findByTestId("lienzo");
+
+    const archivo = new File([new Uint8Array([1, 2, 3])], "pizarra.jpg", { type: "image/jpeg" });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: /Añadir foto/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Subir imagen" }));
+    // El menú se cierra al elegir, sin esperar a que termine de procesarse.
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.change(screen.getByTestId("foto-input-galeria"), { target: { files: [archivo] } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    vi.useRealTimers();
+
+    expect(reducirFoto).toHaveBeenCalledWith(archivo);
+    expect(insertarFoto).toHaveBeenCalledWith({
+      dataURL: "data:image/jpeg;base64,xxx",
+      mimeType: "image/jpeg",
+      width: 300,
+      height: 200,
+    });
+
+    // Después de pegar la foto: captura intermedia (keep_status) y
+    // transcripción `interim`, el MISMO camino que el botón «Transcribir».
+    const capture = calls.find((c) => c.url.includes("/capture"));
+    expect(capture).toBeTruthy();
+    expect(capture!.body).toMatchObject({ keep_status: true });
+    const transcribe = calls.find((c) => c.url.includes("/transcribe"));
+    expect(transcribe).toBeTruthy();
+    expect(transcribe!.body).toEqual({ mode: "interim" });
+    expect(insertarTranscripcion).toHaveBeenCalledTimes(1);
+
+    // El input se limpia: elegir la misma foto otra vez debe volver a disparar el cambio.
+    expect((screen.getByTestId("foto-input-galeria") as HTMLInputElement).value).toBe("");
+  });
+
+  it("si la foto no se puede leer, se enseña el error en español y no se llama a capturar ni transcribir", async () => {
+    vi.mocked(reducirFoto).mockRejectedValue(new Error("No se pudo leer la imagen. Usa JPG o PNG."));
+    const { calls } = mockFetch([{ method: "GET", path: "/api/notes", body: { notes: [makeNote()] } }]);
+    renderNotas();
+    await screen.findByTestId("lienzo");
+
+    const archivo = new File([new Uint8Array([1])], "pizarra.heic", { type: "image/heic" });
+    fireEvent.click(screen.getByRole("button", { name: /Añadir foto/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Subir imagen" }));
+    fireEvent.change(screen.getByTestId("foto-input-galeria"), { target: { files: [archivo] } });
+
+    expect(await screen.findByText("No se pudo leer la imagen. Usa JPG o PNG.")).toBeTruthy();
+    expect(insertarFoto).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.url.includes("/capture") || c.url.includes("/transcribe"))).toBe(false);
   });
 });
 

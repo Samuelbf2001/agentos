@@ -125,6 +125,8 @@ describe("Notas: lienzo a pantalla completa", () => {
     expect(screen.getByRole("navigation", NAV)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Abrir menú" })).toBeTruthy();
     expect(screen.getByTestId("panel-lateral-notas")).toBeTruthy();
+    // «Foto» está junto a Transcribir en la cabecera normal.
+    expect(screen.getByRole("button", { name: /Añadir foto/i })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Pantalla completa" }));
 
@@ -135,6 +137,7 @@ describe("Notas: lienzo a pantalla completa", () => {
     expect(screen.getByTestId("notas-vista").getAttribute("data-pantalla-completa")).toBe("true");
     // El lienzo sigue montado (no se pierde el trabajo) y la barra mínima trae lo imprescindible.
     expect(screen.getByTestId("lienzo")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Añadir foto/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /^Transcribir$/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /^Terminar nota$/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Salir de pantalla completa" })).toBeTruthy();

@@ -18,6 +18,7 @@ import "@excalidraw/excalidraw/index.css";
 import type { CanvasScene, TranscripcionBloque } from "../../lib/types";
 import { sinTranscripcionPrevia, skeletonsTranscripcion } from "./transcripcion-elementos";
 import { cajaDeEscena, escalaDeExportacion, type CajaEscena } from "./export-scale";
+import { posicionFoto, type FotoReducida } from "./foto";
 
 /** Escala del PNG exportado: 3× para que la letra manuscrita se lea al transcribir. */
 export const EXPORT_SCALE = 3;
@@ -38,6 +39,12 @@ export interface LienzoHandle {
    * avisa por `onSceneChange` para que la vista autoguarde.
    */
   insertarTranscripcion(bloques: readonly TranscripcionBloque[], alturaTipica: number): number;
+  /**
+   * Pone una foto (ya reducida a JPEG) en el lienzo: a la derecha de lo que
+   * ya hay, o en el origen si está vacío. Devuelve el id del elemento nuevo,
+   * para que la vista pueda encadenar la transcripción sobre esa región.
+   */
+  insertarFoto(foto: FotoReducida): string;
 }
 
 export interface LienzoProps {
@@ -91,6 +98,40 @@ export default function Lienzo({ initialScene, onSceneChange, onReady, theme = "
           // autoguardado no dependa de cuándo repinte.
           onSceneChange(getScene());
           return nuevos.length;
+        },
+        insertarFoto: (foto) => {
+          const fileId = crypto.randomUUID();
+          // `addFiles` guarda el binario (dataURL) aparte de la lista de
+          // elementos, igual que un trazo con imagen pegada a mano.
+          api.addFiles([
+            { id: fileId, dataURL: foto.dataURL, mimeType: foto.mimeType, created: Date.now() } as never,
+          ]);
+          const existentes = api.getSceneElements();
+          const { x, y } = posicionFoto(existentes, foto.width, foto.height);
+          const nuevos = convertToExcalidrawElements(
+            [
+              {
+                type: "image",
+                fileId,
+                x,
+                y,
+                width: foto.width,
+                height: foto.height,
+                status: "saved",
+                customData: { agentos: { foto: true } },
+              } as never,
+            ],
+            { regenerateIds: true },
+          );
+          api.updateScene({
+            elements: [...existentes, ...nuevos],
+            // Deshacible: Ctrl+Z quita la foto sin tocar el resto del lienzo.
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+          });
+          onSceneChange(getScene());
+          const nuevo = nuevos[0];
+          if (nuevo) api.scrollToContent(nuevo, { fitToViewport: true });
+          return nuevo?.id ?? fileId;
         },
         exportarPng: async () =>
           await exportToBlob({

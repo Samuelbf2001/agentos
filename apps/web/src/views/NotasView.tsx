@@ -29,16 +29,21 @@
  *   esconde el panel derecho. Queda el lienzo y una barra mínima con
  *   Transcribir / Terminar nota / Salir. El lienzo NO se remonta al entrar o
  *   salir: mantiene la misma posición en el árbol.
+ * - «Foto» (pizarra, tablero, cuaderno fotografiado con el celular): abre un
+ *   menú con «Tomar foto» (cámara trasera) y «Subir imagen» (galería), reduce
+ *   el archivo, lo pega en el lienzo a la derecha de lo que ya hay y encadena
+ *   el MISMO camino que «Transcribir» — sin duplicar esa lógica.
  */
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Check, ChevronRight, FileImage, Maximize2, Minimize2, Plus, Wand2 } from "lucide-react";
+import { Camera, Check, ChevronRight, FileImage, Maximize2, Minimize2, Plus, Wand2 } from "lucide-react";
 import { useStore } from "../state/store";
 import { useShell } from "../state/shell";
 import { EmptyState, ErrorBox, Spinner, fmtDate, timeAgo } from "../components/ui";
 import { api } from "../lib/api";
 import type { CanvasNote, CanvasScene, NoteTranscribeMode } from "../lib/types";
 import type { LienzoHandle } from "./notas/Lienzo";
+import { reducirFoto } from "./notas/foto";
 import { PropuestasPanel } from "./notas/PropuestasPanel";
 
 const Lienzo = lazy(() => import("./notas/Lienzo"));
@@ -100,8 +105,18 @@ export default function NotasView() {
   const pendingScene = useRef<CanvasScene | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  /** Qué botón está en vuelo: los dos comparten el camino, pero cada uno enseña su propio «…ndo». */
-  const [accion, setAccion] = useState<"transcribir" | "terminar" | null>(null);
+  /** Qué botón está en vuelo: los tres comparten camino, pero cada uno enseña su propio «…ndo». */
+  const [accion, setAccion] = useState<"transcribir" | "terminar" | "foto" | null>(null);
+  /**
+   * Guarda de reentrada real (una ref, no el estado `accion`): la foto
+   * encadena «Transcribir» internamente, y si esa comprobación leyera
+   * `accion` desde un cierre viejo, un `setAccion` en medio no la vería a
+   * tiempo. Con una ref no hay cierre que se quede atrás.
+   */
+  const enVuelo = useRef(false);
+  const fotoCameraRef = useRef<HTMLInputElement | null>(null);
+  const fotoGaleriaRef = useRef<HTMLInputElement | null>(null);
+  const [menuFotoAbierto, setMenuFotoAbierto] = useState(false);
 
   // Lienzo a pantalla completa: el shell deja de pintar menú y cabecera
   // mientras dure, y se apaga sin falta al salir de la vista (navegar con el
@@ -219,12 +234,13 @@ export default function NotasView() {
   const leerLienzo = useCallback(
     async (mode: NoteTranscribeMode) => {
       const handle = handleRef.current;
-      if (!handle || !activeNoteId || accion) return;
+      if (!handle || !activeNoteId || enVuelo.current) return;
       setExportError(null);
       if (handle.estaVacio()) {
         setExportError("El lienzo está vacío: escribe algo antes de transcribir.");
         return;
       }
+      enVuelo.current = true;
       setAccion(mode === "final" ? "terminar" : "transcribir");
       try {
         await flush();
@@ -243,9 +259,10 @@ export default function NotasView() {
         setExportError(err instanceof Error ? err.message : "No se pudo exportar la imagen");
       } finally {
         setAccion(null);
+        enVuelo.current = false;
       }
     },
-    [accion, activeNoteId, captureNote, flush, transcribeNote],
+    [activeNoteId, captureNote, flush, transcribeNote],
   );
 
   // «Transcribir» sobre una nota ya terminada la rehace en modo final: no hay
@@ -253,6 +270,49 @@ export default function NotasView() {
   const modoTranscribir: NoteTranscribeMode = activeNote?.status === "draft" ? "interim" : "final";
   const transcribir = useCallback(() => leerLienzo(modoTranscribir), [leerLienzo, modoTranscribir]);
   const terminar = useCallback(() => leerLienzo("final"), [leerLienzo]);
+
+  /**
+   * «Foto»: reduce el archivo, lo pega en el lienzo y encadena EXACTAMENTE el
+   * camino de «Transcribir» (captura + lectura): nada de repetir esa lógica
+   * aquí. `enVuelo` se libera antes de llamar a `transcribir()` para que su
+   * propio guardia no la vea ocupada.
+   */
+  const procesarFoto = useCallback(
+    async (file: File) => {
+      const handle = handleRef.current;
+      if (!handle || !activeNoteId || enVuelo.current) return;
+      enVuelo.current = true;
+      setExportError(null);
+      setAccion("foto");
+      try {
+        const foto = await reducirFoto(file);
+        handle.insertarFoto(foto);
+        await flush();
+      } catch (err) {
+        setExportError(err instanceof Error ? err.message : "No se pudo procesar la foto");
+        return;
+      } finally {
+        setAccion(null);
+        enVuelo.current = false;
+      }
+      await transcribir();
+    },
+    [activeNoteId, flush, transcribir],
+  );
+
+  const elegirFoto = useCallback((origen: "camara" | "galeria") => {
+    setMenuFotoAbierto(false);
+    (origen === "camara" ? fotoCameraRef.current : fotoGaleriaRef.current)?.click();
+  }, []);
+
+  const onFotoElegida = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0] ?? null;
+      e.target.value = "";
+      if (file) void procesarFoto(file);
+    },
+    [procesarFoto],
+  );
 
   /** El texto corregido a mano se guarda al salir del campo, no en cada tecla. */
   const guardarTranscripcion = useCallback(async () => {
@@ -299,6 +359,76 @@ export default function NotasView() {
     </div>
   );
 
+  /**
+   * «Foto»: pizarra, tablero o cuaderno fotografiado con el celular. Abre un
+   * menú con «Tomar foto» (cámara trasera, `capture="environment"`) y «Subir
+   * imagen» (galería/archivos, sin `capture`); las mismas condiciones de
+   * deshabilitado que Transcribir. Igual que `botonesLectura`, se reutiliza
+   * tal cual en la cabecera normal y en la barra mínima.
+   */
+  const botonFoto = (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setMenuFotoAbierto((abierto) => !abierto)}
+        disabled={!activeNote || ocupado}
+        aria-haspopup="true"
+        aria-expanded={menuFotoAbierto}
+        aria-label="Añadir foto de una pizarra o un tablero"
+        className={`press inline-flex min-h-10 items-center gap-1.5 rounded-tight border border-line bg-surface px-3 text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+      >
+        <Camera size={15} strokeWidth={1.75} aria-hidden="true" />
+        {accion === "foto" ? "Procesando foto…" : "Foto"}
+      </button>
+      {menuFotoAbierto ? (
+        <div
+          role="menu"
+          aria-label="Añadir foto"
+          className="absolute right-0 top-full z-10 mt-1 flex w-44 flex-col gap-0.5 rounded-tight border border-line bg-surface p-1 shadow-lg"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => elegirFoto("camara")}
+            className={`press flex min-h-10 items-center rounded-tight px-2.5 text-small text-ink-2 hover:bg-surface-2 ${focoVisible}`}
+          >
+            Tomar foto
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => elegirFoto("galeria")}
+            className={`press flex min-h-10 items-center rounded-tight px-2.5 text-small text-ink-2 hover:bg-surface-2 ${focoVisible}`}
+          >
+            Subir imagen
+          </button>
+        </div>
+      ) : null}
+      {/* Cámara trasera en celular; nunca se muestran, sólo abren el selector nativo. */}
+      <input
+        ref={fotoCameraRef}
+        data-testid="foto-input-camara"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={onFotoElegida}
+      />
+      <input
+        ref={fotoGaleriaRef}
+        data-testid="foto-input-galeria"
+        type="file"
+        accept="image/*"
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={onFotoElegida}
+      />
+    </div>
+  );
+
   return (
     // `h-full` del <main> del shell + `overflow-hidden`: el lienzo recibe todo
     // el alto restante y la página nunca hace scroll vertical.
@@ -319,6 +449,7 @@ export default function NotasView() {
           >
             {savedLabel}
           </span>
+          {botonFoto}
           {botonesLectura}
           <button
             type="button"
@@ -367,6 +498,7 @@ export default function NotasView() {
 
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
+              {botonFoto}
               {botonesLectura}
               <button
                 type="button"
