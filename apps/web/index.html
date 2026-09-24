@@ -2,8 +2,20 @@
 <html lang="es" data-theme="light">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>AgentOS — Sixteam</title>
+    <!--
+      PWA "instalable" (ícono en la pantalla del celular, sin tienda): sólo
+      manifest + iconos, SIN service worker (evita caché vieja tras deploys).
+      Ver `views/notas/useEsCelular.ts` — la versión táctil de Notas es el
+      destino natural al abrir el ícono (`start_url` del manifest).
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#101317" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="AgentOS" />
   </head>
   <body>
     <div id="root"></div>
