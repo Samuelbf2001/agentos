@@ -22,3 +22,8 @@
 - Prueba real en producción con una foto del tablero.
 - Riesgo: la escena guarda las fotos en base64; muchas fotos grandes en una nota → filas pesadas y autoguardado lento (ya existía; el flujo de celular no lo cambia).
 - Riesgo menor documentado: si el celular cruza el breakpoint `lg` en caliente (girar una tableta) con una nota abierta, el lienzo de escritorio y el de celular son árboles JSX distintos → se remonta (no pierde lo guardado, pero sí el estado efímero de Excalidraw tipo zoom/scroll). No se resolvió: caso raro, se aceptó como simplificación.
+
+## EN PRODUCCIÓN (2026-09-23 19:40 COT)
+- master 45033e2 empujado (fast-forward desde 5eca011) y desplegado api + web por EasyPanel, uno tras otro. Health 200, manifest servido como `application/manifest+json`, bundle con la vista celular.
+- Arreglos tras la prueba en sandbox (45033e2): fotos que se perdían porque Excalidraw carga `initialData` después de entregar la API (ahora `onReady` espera `isLoading=false`), miniaturas rotas por revocar URLs en StrictMode, encuadre al abrir/volver a la pestaña Foto en celular.
+- Falta: prueba real con una foto del tablero en producción (lectura con Sonnet 5); icono provisional (una «A» sin margen) → reemplazar por el logo real.
