@@ -45,6 +45,13 @@ export interface LienzoHandle {
    * para que la vista pueda encadenar la transcripción sobre esa región.
    */
   insertarFoto(foto: FotoReducida): string;
+  /**
+   * Recalcula tamaño/offset del lienzo. Hace falta al volver a la pestaña
+   * «Foto» del celular: el lienzo sigue montado pero oculto (`hidden`)
+   * mientras se ven Texto/Tareas, y Excalidraw mide el contenedor al montar,
+   * no cuando reaparece.
+   */
+  refrescar(): void;
 }
 
 export interface LienzoProps {
@@ -156,6 +163,7 @@ export default function Lienzo({ initialScene, onSceneChange, onReady, theme = "
             quality: 1,
             exportPadding: EXPORT_PADDING,
           }),
+        refrescar: () => api.refresh(),
       };
       onReady(handle);
     },
