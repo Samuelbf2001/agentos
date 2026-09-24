@@ -28,42 +28,44 @@
  *   al shell (`useShell`), que deja de pintar menú y cabecera, y aquí se
  *   esconde el panel derecho. Queda el lienzo y una barra mínima con
  *   Transcribir / Terminar nota / Salir. El lienzo NO se remonta al entrar o
- *   salir: mantiene la misma posición en el árbol.
+ *   salir: mantiene la misma posición en el árbol. Sólo existe en escritorio.
  * - «Foto» (pizarra, tablero, cuaderno fotografiado con el celular): abre un
  *   menú con «Tomar foto» (cámara trasera) y «Subir imagen» (galería), reduce
  *   el archivo, lo pega en el lienzo a la derecha de lo que ya hay y encadena
  *   el MISMO camino que «Transcribir» — sin duplicar esa lógica.
+ * - **Celular** (`useEsCelular`, < 1024px): el aside no cabe y el lienzo es
+ *   incómodo con el dedo, así que la vista cambia a tres pantallas propias —
+ *   Inicio (fotografiar/subir/nota a mano + recientes), Revisar fotos (antes
+ *   de crear la nota) y la nota abierta con pestañas Foto/Texto/Tareas—. El
+ *   lienzo NUNCA se desmonta al cambiar de pestaña (perdería el handle de
+ *   Excalidraw): se oculta con `hidden` y se refresca (`refrescar()`) al
+ *   volver a verse. `TranscripcionSeccion` y `NotasRecientesLista` son los
+ *   mismos fragmentos que pinta el aside de escritorio, no una copia.
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Camera, Check, ChevronRight, FileImage, Maximize2, Minimize2, Plus, Wand2 } from "lucide-react";
+import { ArrowLeft, Camera, Check, FileImage, Maximize2, Minimize2, Plus, Wand2 } from "lucide-react";
 import { useStore } from "../state/store";
 import { useShell } from "../state/shell";
 import { EmptyState, ErrorBox, Spinner, fmtDate, timeAgo } from "../components/ui";
-import { api } from "../lib/api";
 import type { CanvasNote, CanvasScene, NoteTranscribeMode } from "../lib/types";
 import type { LienzoHandle } from "./notas/Lienzo";
-import { reducirFoto } from "./notas/foto";
+import { reducirFoto, type FotoReducida } from "./notas/foto";
 import { PropuestasPanel } from "./notas/PropuestasPanel";
+import { TranscripcionSeccion } from "./notas/TranscripcionSeccion";
+import { NotasRecientesLista } from "./notas/NotasRecientesLista";
+import { STATUS_CLASSES, STATUS_LABELS } from "./notas/estado-nota";
+import { useEsCelular } from "./notas/useEsCelular";
+import { tituloTablero } from "./notas/titulo-tablero";
 
 const Lienzo = lazy(() => import("./notas/Lienzo"));
 
 /** Espera antes de guardar: suficiente para no llamar por trazo, corto para no perder trabajo. */
 export const AUTOSAVE_MS = 2_000;
 
-const STATUS_LABELS: Record<CanvasNote["status"], string> = {
-  draft: "Borrador",
-  captured: "Terminada",
-  transcribed: "Transcrita",
-  converted: "Con tareas",
-};
-
-const STATUS_CLASSES: Record<CanvasNote["status"], string> = {
-  draft: "border-line bg-surface-2 text-muted",
-  captured: "border-done-line bg-done-bg text-done",
-  transcribed: "border-link bg-link-bg text-link",
-  converted: "border-done-line bg-done-bg text-done",
-};
+/** Botones e inputs comparten estas clases: focus visible consistente en toda la vista. */
+const focoVisible =
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link";
 
 /** Blob → base64 sin cadenas gigantes en memoria (FileReader lo hace en nativo). */
 function blobToBase64(blob: Blob): Promise<string> {
@@ -80,7 +82,148 @@ function prefersDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+/** A. Inicio del celular: fotografiar, subir, nota a mano y recientes. Nunca crea nada al montar. */
+function InicioMovil({
+  personName,
+  notes,
+  activeNoteId,
+  onSelectNote,
+  onFotografiar,
+  onSubirImagen,
+  onNotaAMano,
+  creandoNota,
+}: {
+  personName: string | null;
+  notes: CanvasNote[];
+  activeNoteId: string | null;
+  onSelectNote: (noteId: string) => void;
+  onFotografiar: () => void;
+  onSubirImagen: () => void;
+  onNotaAMano: () => void;
+  creandoNota: boolean;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-auto bg-canvas">
+      <header className="shrink-0 border-b border-line bg-surface px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        <h1 className="text-title text-ink">Notas</h1>
+        {personName ? <p className="text-small text-muted">Sesión de {personName}</p> : null}
+      </header>
+      <div className="flex flex-col gap-3 p-4">
+        <button
+          type="button"
+          onClick={onFotografiar}
+          className={`press flex min-h-[120px] w-full flex-col items-center justify-center gap-2 rounded-panel bg-ink text-surface hover:bg-ink-2 ${focoVisible}`}
+        >
+          <Camera size={30} strokeWidth={1.75} aria-hidden="true" />
+          <span className="text-body font-semibold">Fotografiar tablero</span>
+        </button>
+        <button
+          type="button"
+          onClick={onSubirImagen}
+          className={`press flex min-h-14 w-full items-center justify-center gap-2 rounded-tight border border-line bg-surface text-small font-semibold text-ink-2 hover:bg-surface-2 ${focoVisible}`}
+        >
+          <FileImage size={18} strokeWidth={1.75} aria-hidden="true" />
+          Subir imagen
+        </button>
+        <button
+          type="button"
+          onClick={onNotaAMano}
+          disabled={creandoNota}
+          className={`press flex min-h-12 w-full items-center justify-center gap-2 rounded-tight text-small font-semibold text-link hover:bg-link-bg disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+        >
+          <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
+          Nota a mano
+        </button>
+      </div>
+      <div className="px-4 pb-6">
+        <NotasRecientesLista notes={notes} activeNoteId={activeNoteId} onSelect={onSelectNote} titulo="Recientes" />
+      </div>
+    </div>
+  );
+}
+
+/** B. Revisar fotos: antes de crear la nota, ¿se leen bien? Se acumulan hasta pulsar «Usar». */
+function RevisarFotosMovil({
+  urls,
+  onUsar,
+  onRepetir,
+  onOtraParte,
+  onCancelar,
+  procesando,
+  error,
+}: {
+  urls: string[];
+  onUsar: () => void;
+  onRepetir: () => void;
+  onOtraParte: () => void;
+  onCancelar: () => void;
+  procesando: boolean;
+  error: string | null;
+}) {
+  const n = urls.length;
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-canvas">
+      <header className="shrink-0 border-b border-line bg-surface px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        <h1 className="text-title text-ink">¿Se lee bien?</h1>
+      </header>
+      {error ? (
+        <div className="mx-4 mt-3 shrink-0 rounded-tight border border-broken-line bg-broken-bg px-3 py-2 text-small text-broken">
+          {error}
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
+        {urls.map((url, i) => (
+          <img
+            key={url}
+            src={url}
+            alt={`Foto ${i + 1} del tablero`}
+            className="w-full rounded-panel border border-line object-contain"
+          />
+        ))}
+      </div>
+      <div className="flex shrink-0 flex-col gap-2 border-t border-line bg-surface p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+        <button
+          type="button"
+          onClick={onUsar}
+          disabled={procesando || n === 0}
+          className={`press flex min-h-12 w-full items-center justify-center gap-1.5 rounded-tight bg-ink text-small font-semibold text-surface hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+        >
+          <Check size={16} strokeWidth={2} aria-hidden="true" />
+          {procesando ? "Creando…" : n === 1 ? "Usar foto" : `Usar ${n} fotos`}
+        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onRepetir}
+            disabled={procesando}
+            className={`press min-h-11 flex-1 rounded-tight border border-line text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+          >
+            Repetir
+          </button>
+          <button
+            type="button"
+            onClick={onOtraParte}
+            disabled={procesando}
+            className={`press min-h-11 flex-1 rounded-tight border border-line text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+          >
+            + Otra parte
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={onCancelar}
+          disabled={procesando}
+          className={`press min-h-10 text-small font-semibold text-muted hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function NotasView() {
+  const person = useStore((s) => s.person);
   const notes = useStore((s) => s.notes);
   const notesLoading = useStore((s) => s.notesLoading);
   const notesError = useStore((s) => s.notesError);
@@ -97,6 +240,8 @@ export default function NotasView() {
   const noteTranscribing = useStore((s) => s.noteTranscribing);
   const noteTranscribeError = useStore((s) => s.noteTranscribeError);
   const noteDudas = useStore((s) => s.noteDudas);
+
+  const esCelular = useEsCelular();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const urlNote = searchParams.get("nota");
@@ -118,17 +263,58 @@ export default function NotasView() {
   const fotoGaleriaRef = useRef<HTMLInputElement | null>(null);
   const [menuFotoAbierto, setMenuFotoAbierto] = useState(false);
 
+  // Nota activa "de verdad" en este render: sirve para saber, DESDE `onReady`
+  // (que se dispara al montar el lienzo, fuera de un efecto), a qué nota
+  // corresponde el handle que acaba de llegar.
+  const activeNoteIdRef = useRef<string | null>(null);
+  activeNoteIdRef.current = activeNoteId;
+
+  // ── Celular: Inicio / Revisar fotos / nota abierta con pestañas ─────────
+  const [pestanaMovil, setPestanaMovil] = useState<"foto" | "texto" | "tareas">("foto");
+  // Una foto tomada desde el Inicio fuerza la pestaña "Texto" al abrir la
+  // nota nueva (se consume una sola vez, la siguiente nota vuelve a "Foto").
+  const pestanaForzadaRef = useRef<"texto" | null>(null);
+  useEffect(() => {
+    if (pestanaForzadaRef.current) {
+      setPestanaMovil(pestanaForzadaRef.current);
+      pestanaForzadaRef.current = null;
+    } else {
+      setPestanaMovil("foto");
+    }
+  }, [activeNoteId]);
+
+  const [fotosRevisar, setFotosRevisar] = useState<File[]>([]);
+  const [creandoTablero, setCreandoTablero] = useState(false);
+  const fotoInicioCameraRef = useRef<HTMLInputElement | null>(null);
+  const fotoInicioGaleriaRef = useRef<HTMLInputElement | null>(null);
+  /** Fotos ya reducidas esperando a que el lienzo de la nota NUEVA esté listo (`onReady`). */
+  const pendingFotosRef = useRef<{ noteId: string; fotos: FotoReducida[] } | null>(null);
+
+  const objectUrlsRef = useRef<string[]>([]);
+  const urlsRevisar = useMemo(() => {
+    for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+    const urls = fotosRevisar.map((f) => URL.createObjectURL(f));
+    objectUrlsRef.current = urls;
+    return urls;
+  }, [fotosRevisar]);
+  useEffect(
+    () => () => {
+      for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+    },
+    [],
+  );
+
   // Lienzo a pantalla completa: el shell deja de pintar menú y cabecera
   // mientras dure, y se apaga sin falta al salir de la vista (navegar con el
-  // modo puesto no puede dejar la app sin menú).
+  // modo puesto no puede dejar la app sin menú). Sólo existe en escritorio.
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
   const setInmersivo = useShell((s) => s.setInmersivo);
   useEffect(() => {
-    setInmersivo(pantallaCompleta);
-  }, [pantallaCompleta, setInmersivo]);
+    setInmersivo(pantallaCompleta && !esCelular);
+  }, [pantallaCompleta, esCelular, setInmersivo]);
   useEffect(() => () => setInmersivo(false), [setInmersivo]);
   useEffect(() => {
-    if (!pantallaCompleta) return;
+    if (!pantallaCompleta || esCelular) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       // Dentro de un texto del lienzo, Esc termina la edición: no debe además
@@ -140,7 +326,7 @@ export default function NotasView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pantallaCompleta]);
+  }, [pantallaCompleta, esCelular]);
 
   const activeNote = useMemo(
     () => notes.find((n) => n.id === activeNoteId) ?? null,
@@ -160,14 +346,17 @@ export default function NotasView() {
   }, [loadNotes]);
 
   // La URL manda al montar y al navegar; si no dice nada, se abre la más
-  // reciente (la lista ya viene ordenada por la API).
+  // reciente (la lista ya viene ordenada por la API) — EN ESCRITORIO. En
+  // celular manda el Inicio: no se abre ni se crea nada sin que el humano
+  // toque algo.
   useEffect(() => {
     if (urlNote && urlNote !== activeNoteId) {
       openNote(urlNote);
       return;
     }
+    if (esCelular) return;
     if (!urlNote && !activeNoteId && notes.length > 0) openNote(notes[0]!.id);
-  }, [urlNote, activeNoteId, notes, openNote]);
+  }, [urlNote, activeNoteId, notes, openNote, esCelular]);
 
   const selectNote = useCallback(
     (noteId: string) => {
@@ -180,6 +369,14 @@ export default function NotasView() {
     },
     [openNote, setSearchParams],
   );
+
+  const volverAInicio = useCallback(() => {
+    setSearchParams((params) => {
+      const next = new URLSearchParams(params);
+      next.delete("nota");
+      return next;
+    });
+  }, [setSearchParams]);
 
   /** Escribe lo que quede pendiente AHORA (al cambiar de nota, al terminar, al salir). */
   const flush = useCallback(async () => {
@@ -212,10 +409,6 @@ export default function NotasView() {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, []);
-
-  const onReady = useCallback((handle: LienzoHandle) => {
-    handleRef.current = handle;
   }, []);
 
   const nuevaNota = useCallback(async () => {
@@ -300,6 +493,53 @@ export default function NotasView() {
     [activeNoteId, flush, transcribir],
   );
 
+  /**
+   * Igual que `procesarFoto`, pero para N fotos YA reducidas (Inicio del
+   * celular, que las reduce todas antes de crear la nota): las pega una a
+   * una —`insertarFoto` las va poniendo a la derecha de lo anterior— y
+   * encadena el MISMO `transcribir()`, una sola vez para todas.
+   */
+  const insertarFotosYTranscribir = useCallback(
+    async (fotos: readonly FotoReducida[]) => {
+      const handle = handleRef.current;
+      if (!handle) return;
+      enVuelo.current = true;
+      setExportError(null);
+      setAccion("foto");
+      try {
+        for (const foto of fotos) handle.insertarFoto(foto);
+        await flush();
+      } catch (err) {
+        setExportError(err instanceof Error ? err.message : "No se pudo procesar la foto");
+        return;
+      } finally {
+        setAccion(null);
+        enVuelo.current = false;
+      }
+      await transcribir();
+    },
+    [flush, transcribir],
+  );
+
+  const onReady = useCallback(
+    (handle: LienzoHandle) => {
+      handleRef.current = handle;
+      const pending = pendingFotosRef.current;
+      if (pending && pending.noteId === activeNoteIdRef.current) {
+        pendingFotosRef.current = null;
+        void insertarFotosYTranscribir(pending.fotos);
+      }
+    },
+    [insertarFotosYTranscribir],
+  );
+
+  // Al volver a ver la pestaña «Foto» del celular, el lienzo llevaba oculto
+  // (`hidden`, nunca desmontado): Excalidraw midió el contenedor al montar,
+  // así que hay que decirle que se vuelva a medir.
+  useEffect(() => {
+    if (esCelular && pestanaMovil === "foto") handleRef.current?.refrescar();
+  }, [esCelular, pestanaMovil, activeNoteId]);
+
   const elegirFoto = useCallback((origen: "camara" | "galeria") => {
     setMenuFotoAbierto(false);
     (origen === "camara" ? fotoCameraRef.current : fotoGaleriaRef.current)?.click();
@@ -331,6 +571,66 @@ export default function NotasView() {
     };
   }, [menuFotoAbierto]);
 
+  // ── Inicio del celular: fotografiar/subir → Revisar fotos ───────────────
+
+  const fotografiarTablero = useCallback(() => fotoInicioCameraRef.current?.click(), []);
+  const subirImagenInicio = useCallback(() => fotoInicioGaleriaRef.current?.click(), []);
+
+  const onFotoInicioCamara = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (file) setFotosRevisar((prev) => [...prev, file]);
+  }, []);
+
+  const onFotoInicioGaleria = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length > 0) setFotosRevisar((prev) => [...prev, ...files]);
+  }, []);
+
+  const repetirFoto = useCallback(() => {
+    setFotosRevisar((prev) => prev.slice(0, -1));
+    fotoInicioCameraRef.current?.click();
+  }, []);
+
+  const otraParteFoto = useCallback(() => fotoInicioCameraRef.current?.click(), []);
+
+  const cancelarRevision = useCallback(() => {
+    setFotosRevisar([]);
+    setExportError(null);
+  }, []);
+
+  /**
+   * «Usar N fotos»: reduce todas, crea la nota (título `Tablero <fecha>`), la
+   * abre y deja las fotos ya reducidas en `pendingFotosRef` — `onReady` las
+   * inserta y transcribe en cuanto el lienzo de esa nota esté listo.
+   */
+  const usarFotos = useCallback(async () => {
+    if (fotosRevisar.length === 0 || creandoTablero) return;
+    setCreandoTablero(true);
+    setExportError(null);
+    try {
+      const reducciones = await Promise.all(fotosRevisar.map((f) => reducirFoto(f)));
+      await flush();
+      // Antes de crear la nota: `createNote` ya deja `activeNoteId` puesto
+      // (dispara el efecto que decide la pestaña) desde DENTRO de la propia
+      // llamada, así que la marca tiene que estar lista antes, no después.
+      pestanaForzadaRef.current = "texto";
+      const note = await createNote({ title: tituloTablero(new Date()) });
+      if (!note) {
+        pestanaForzadaRef.current = null;
+        return;
+      }
+      pendingFotosRef.current = { noteId: note.id, fotos: reducciones };
+      setFotosRevisar([]);
+      selectNote(note.id);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "No se pudo procesar la foto");
+    } finally {
+      setCreandoTablero(false);
+    }
+  }, [fotosRevisar, creandoTablero, flush, createNote, selectNote]);
+
   /** El texto corregido a mano se guarda al salir del campo, no en cada tecla. */
   const guardarTranscripcion = useCallback(async () => {
     if (!activeNote) return;
@@ -348,9 +648,6 @@ export default function NotasView() {
       : activeNote
         ? `Última edición ${timeAgo(activeNote.updatedAt)}`
         : "";
-
-  const focoVisible =
-    "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link";
 
   /** Los dos botones de lectura: los mismos en la cabecera normal y en la barra mínima. */
   const botonesLectura = (
@@ -381,7 +678,8 @@ export default function NotasView() {
    * menú con «Tomar foto» (cámara trasera, `capture="environment"`) y «Subir
    * imagen» (galería/archivos, sin `capture`); las mismas condiciones de
    * deshabilitado que Transcribir. Igual que `botonesLectura`, se reutiliza
-   * tal cual en la cabecera normal y en la barra mínima.
+   * tal cual en la cabecera normal, la barra mínima y la pestaña «Foto» del
+   * celular (añade fotos a la nota YA abierta).
    */
   const botonFoto = (
     <div className="relative" data-menu-foto>
@@ -445,6 +743,211 @@ export default function NotasView() {
       />
     </div>
   );
+
+  // El lienzo (o su spinner/estado vacío): el MISMO nodo se usa en el layout
+  // de escritorio y en la pestaña «Foto» del celular — nunca los dos a la
+  // vez, así que nunca hay dos instancias montadas.
+  const lienzoElemento =
+    notesLoading && notes.length === 0 ? (
+      <div className="flex h-full items-center justify-center">
+        <Spinner label="Cargando las notas…" />
+      </div>
+    ) : notesError ? (
+      <div className="p-6">
+        <ErrorBox message={notesError} onRetry={() => void loadNotes()} />
+      </div>
+    ) : !activeNote ? (
+      <div className="flex h-full items-center justify-center p-6">
+        <EmptyState title="Todavía no hay notas" hint="Crea una y empieza a escribir con la tableta." />
+      </div>
+    ) : (
+      <Suspense
+        fallback={
+          <div className="flex h-full items-center justify-center">
+            <Spinner label="Abriendo el lienzo…" />
+          </div>
+        }
+      >
+        <Lienzo
+          key={activeNote.id}
+          initialScene={activeNote.scene}
+          onSceneChange={onSceneChange}
+          onReady={onReady}
+          theme={prefersDark() ? "dark" : "light"}
+        />
+      </Suspense>
+    );
+
+  const bannerError = exportError ? (
+    <div className="border-b border-broken-line bg-broken-bg px-4 py-2 text-small text-broken">{exportError}</div>
+  ) : null;
+
+  // Inputs ocultos del Inicio del celular: separados de los de `botonFoto`
+  // porque disparan un flujo distinto (Revisar fotos, sin nota todavía) y la
+  // galería aquí admite varias fotos de una vez (tablero ancho).
+  const inputsInicioMovil = (
+    <>
+      <input
+        ref={fotoInicioCameraRef}
+        data-testid="foto-inicio-input-camara"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={onFotoInicioCamara}
+      />
+      <input
+        ref={fotoInicioGaleriaRef}
+        data-testid="foto-inicio-input-galeria"
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={onFotoInicioGaleria}
+      />
+    </>
+  );
+
+  if (esCelular) {
+    if (!urlNote) {
+      return (
+        <div className="flex h-full min-h-0 flex-col overflow-hidden" data-testid="notas-vista">
+          {inputsInicioMovil}
+          {fotosRevisar.length > 0 ? (
+            <RevisarFotosMovil
+              urls={urlsRevisar}
+              onUsar={() => void usarFotos()}
+              onRepetir={repetirFoto}
+              onOtraParte={otraParteFoto}
+              onCancelar={cancelarRevision}
+              procesando={creandoTablero}
+              error={exportError}
+            />
+          ) : (
+            <InicioMovil
+              personName={person?.full_name ?? null}
+              notes={notes}
+              activeNoteId={activeNoteId}
+              onSelectNote={selectNote}
+              onFotografiar={fotografiarTablero}
+              onSubirImagen={subirImagenInicio}
+              onNotaAMano={() => void nuevaNota()}
+              creandoNota={false}
+            />
+          )}
+        </div>
+      );
+    }
+
+    // D. Nota abierta: cabecera compacta + pestañas Foto/Texto/Tareas.
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden" data-testid="notas-vista">
+        {inputsInicioMovil}
+        <header className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-2 pb-2 pt-[calc(env(safe-area-inset-top)+0.5rem)]">
+          <button
+            type="button"
+            onClick={volverAInicio}
+            aria-label="Volver"
+            className={`press inline-flex min-h-11 min-w-11 items-center justify-center rounded-tight text-ink-2 hover:bg-surface-2 ${focoVisible}`}
+          >
+            <ArrowLeft size={20} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-small font-semibold text-ink">{activeNote?.title ?? "Notas a mano"}</h1>
+            <span
+              aria-live="polite"
+              data-testid="indicador-guardado"
+              className="block truncate text-label text-muted"
+            >
+              {savedLabel}
+            </span>
+          </div>
+          {activeNote ? (
+            <span
+              className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-label ${STATUS_CLASSES[activeNote.status]}`}
+            >
+              {STATUS_LABELS[activeNote.status]}
+            </span>
+          ) : null}
+        </header>
+
+        <div role="tablist" aria-label="Secciones de la nota" className="flex shrink-0 gap-1 border-b border-line bg-surface px-2 py-1.5">
+          {(
+            [
+              ["foto", "Foto"],
+              ["texto", "Texto"],
+              ["tareas", "Tareas"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={pestanaMovil === id}
+              onClick={() => setPestanaMovil(id)}
+              className={`press min-h-11 flex-1 rounded-tight text-small font-semibold ${focoVisible} ${
+                pestanaMovil === id
+                  ? "bg-ink text-surface"
+                  : "border border-line text-ink-2 hover:bg-surface-2"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {bannerError}
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {/* El lienzo NO se desmonta al cambiar de pestaña: sólo se oculta. */}
+          <div className={`flex h-full min-h-0 flex-col ${pestanaMovil === "foto" ? "" : "hidden"}`}>
+            <div className="min-h-0 flex-1 overflow-hidden bg-surface">{lienzoElemento}</div>
+            <div className="flex shrink-0 items-center gap-2 border-t border-line bg-surface px-3 py-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+              {botonFoto}
+              <button
+                type="button"
+                onClick={() => void transcribir()}
+                disabled={!activeNote || ocupado}
+                className={`press inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-tight border border-line bg-surface text-small font-semibold text-ink-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 ${focoVisible}`}
+              >
+                <Wand2 size={15} strokeWidth={1.75} aria-hidden="true" />
+                {accion === "transcribir" ? "Transcribiendo…" : "Transcribir"}
+              </button>
+            </div>
+          </div>
+
+          {pestanaMovil === "texto" ? (
+            <div className="h-full overflow-auto p-3">
+              <TranscripcionSeccion
+                activeNote={activeNote}
+                borrador={borrador}
+                onBorradorChange={setBorrador}
+                onGuardar={() => void guardarTranscripcion()}
+                noteTranscribing={noteTranscribing}
+                noteTranscribeError={noteTranscribeError}
+                noteDudas={noteDudas}
+                terminar={{
+                  onClick: () => void terminar(),
+                  disabled: !activeNote || ocupado,
+                  label: accion === "terminar" ? "Terminando…" : "Terminar nota",
+                }}
+              />
+            </div>
+          ) : null}
+
+          {pestanaMovil === "tareas" ? (
+            <div className="h-full overflow-auto p-3">
+              {activeNote ? <PropuestasPanel key={activeNote.id} note={activeNote} /> : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     // `h-full` del <main> del shell + `overflow-hidden`: el lienzo recibe todo
@@ -538,49 +1041,14 @@ export default function NotasView() {
         </header>
       )}
 
-      {exportError ? (
-        <div className="border-b border-broken-line bg-broken-bg px-4 py-2 text-small text-broken">
-          {exportError}
-        </div>
-      ) : null}
+      {bannerError}
 
       <div className="flex min-h-0 flex-1">
         {/* El lienzo nunca baja del 60 % del ancho en escritorio: el panel
             (w-80, max 40 %) cede antes. `min-h-0` + `overflow-hidden` para que
             Excalidraw reciba una altura definida y no empuje la página. */}
         <section className="min-h-0 min-w-0 flex-1 overflow-hidden bg-surface lg:min-w-[60%]">
-          {notesLoading && notes.length === 0 ? (
-            <div className="flex h-full items-center justify-center">
-              <Spinner label="Cargando las notas…" />
-            </div>
-          ) : notesError ? (
-            <div className="p-6">
-              <ErrorBox message={notesError} onRetry={() => void loadNotes()} />
-            </div>
-          ) : !activeNote ? (
-            <div className="flex h-full items-center justify-center p-6">
-              <EmptyState
-                title="Todavía no hay notas"
-                hint="Crea una y empieza a escribir con la tableta."
-              />
-            </div>
-          ) : (
-            <Suspense
-              fallback={
-                <div className="flex h-full items-center justify-center">
-                  <Spinner label="Abriendo el lienzo…" />
-                </div>
-              }
-            >
-              <Lienzo
-                key={activeNote.id}
-                initialScene={activeNote.scene}
-                onSceneChange={onSceneChange}
-                onReady={onReady}
-                theme={prefersDark() ? "dark" : "light"}
-              />
-            </Suspense>
-          )}
+          {lienzoElemento}
         </section>
 
         {pantallaCompleta ? null : (
@@ -588,105 +1056,19 @@ export default function NotasView() {
           data-testid="panel-lateral-notas"
           className="hidden w-80 max-w-[40%] shrink-0 flex-col gap-3 overflow-auto border-l border-line bg-canvas p-3 lg:flex"
         >
-          <section className="rounded-panel border border-line bg-surface p-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-label uppercase tracking-wide text-muted">Transcripción</h2>
-            </div>
-
-            {noteTranscribing ? (
-              <p className="mt-2 text-small text-muted" role="status">
-                Leyendo la letra… el modelo tarda unos segundos.
-              </p>
-            ) : null}
-
-            {noteTranscribeError ? (
-              <p
-                data-testid="error-transcripcion"
-                className="mt-2 rounded-tight border border-broken-line bg-broken-bg px-2.5 py-2 text-small text-broken"
-              >
-                {noteTranscribeError}
-              </p>
-            ) : null}
-
-            {activeNote && (activeNote.transcription !== null || borrador !== "") ? (
-              <textarea
-                key={activeNote.id}
-                aria-label="Transcripción de la nota"
-                value={borrador}
-                onChange={(e) => setBorrador(e.target.value)}
-                onBlur={() => void guardarTranscripcion()}
-                rows={12}
-                className="mt-2 w-full resize-y rounded-tight border border-line bg-canvas p-2 text-body text-ink-2 focus:border-link focus:outline-none"
-              />
-            ) : (
-              <p className="mt-2 text-small text-muted">
-                {activeNote?.status === "draft"
-                  ? "Transcripción pendiente: pulsa «Transcribir» para leer lo que hay en el lienzo."
-                  : "Todavía sin transcribir: pulsa «Transcribir» para leer la imagen."}
-              </p>
-            )}
-            {/*
-              Lo que el modelo no leyó con seguridad. El texto llega ya sin
-              marcadores `[?]` (la lectura elegida basta); la lista vive solo en
-              memoria, de la última transcripción: al recargar no se enseña.
-            */}
-            {activeNote && noteDudas.length > 0 ? (
-              <details className="mt-2" data-testid="dudas-transcripcion">
-                <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 rounded-tight px-1 text-small text-muted hover:text-ink-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link [&::-webkit-details-marker]:hidden">
-                  <ChevronRight
-                    size={14}
-                    strokeWidth={1.75}
-                    aria-hidden="true"
-                    className="transition-transform [details[open]_&]:rotate-90"
-                  />
-                  {noteDudas.length === 1
-                    ? "1 lectura con duda"
-                    : `${noteDudas.length} lecturas con duda`}
-                </summary>
-                <ul className="mb-1 ml-5 list-disc text-small text-ink-2">
-                  {noteDudas.map((duda, i) => (
-                    <li key={`${i}-${duda}`}>{duda}</li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
-            {activeNote?.imagePath ? (
-              <a
-                href={api.noteImageUrl(activeNote.id)}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-tight border border-line px-3 text-small font-semibold text-link hover:bg-link-bg"
-              >
-                <FileImage size={15} strokeWidth={1.75} aria-hidden="true" />
-                Ver la imagen guardada
-              </a>
-            ) : null}
-          </section>
+          <TranscripcionSeccion
+            activeNote={activeNote}
+            borrador={borrador}
+            onBorradorChange={setBorrador}
+            onGuardar={() => void guardarTranscripcion()}
+            noteTranscribing={noteTranscribing}
+            noteTranscribeError={noteTranscribeError}
+            noteDudas={noteDudas}
+          />
 
           {activeNote ? <PropuestasPanel key={activeNote.id} note={activeNote} /> : null}
 
-          <section className="rounded-panel border border-line bg-surface p-3">
-            <h2 className="text-label uppercase tracking-wide text-muted">Notas recientes</h2>
-            <ul className="mt-2 flex flex-col gap-1">
-              {notes.map((note) => (
-                <li key={note.id}>
-                  <button
-                    type="button"
-                    onClick={() => void selectNote(note.id)}
-                    aria-current={note.id === activeNoteId ? "true" : undefined}
-                    className={`press flex min-h-10 w-full flex-col items-start rounded-tight px-2.5 py-1.5 text-left hover:bg-surface-2 ${
-                      note.id === activeNoteId ? "bg-link-bg text-link" : "text-ink-2"
-                    }`}
-                  >
-                    <span className="w-full truncate text-small font-semibold">{note.title}</span>
-                    <span className="text-label text-muted">
-                      {STATUS_LABELS[note.status]} · {timeAgo(note.updatedAt)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <NotasRecientesLista notes={notes} activeNoteId={activeNoteId} onSelect={selectNote} />
         </aside>
         )}
       </div>

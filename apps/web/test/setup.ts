@@ -48,6 +48,17 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// jsdom no implementa URL.createObjectURL (Revisar fotos del celular en
+// Notas la usa para las miniaturas). El valor no importa: nada del código
+// bajo prueba lee el blob real, sólo lo pasa a un <img src>.
+if (typeof URL !== "undefined" && typeof URL.createObjectURL !== "function") {
+  let contador = 0;
+  URL.createObjectURL = () => `blob:mock-${++contador}`;
+}
+if (typeof URL !== "undefined" && typeof URL.revokeObjectURL !== "function") {
+  URL.revokeObjectURL = () => {};
+}
+
 afterEach(() => {
   cleanup();
 });
