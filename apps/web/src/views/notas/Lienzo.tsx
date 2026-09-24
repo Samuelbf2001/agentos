@@ -163,9 +163,29 @@ export default function Lienzo({ initialScene, onSceneChange, onReady, theme = "
             quality: 1,
             exportPadding: EXPORT_PADDING,
           }),
-        refrescar: () => api.refresh(),
+        // Tras estar oculto (pestañas del celular) el lienzo midió 0×0 y el
+        // encuadre quedó fuera: se vuelve a medir y, un cuadro después, encuadra todo.
+        refrescar: () => {
+          api.refresh();
+          requestAnimationFrame(() => {
+            if (api.getSceneElements().length > 0) api.scrollToContent(undefined, { fitToViewport: true });
+          });
+        },
       };
-      onReady(handle);
+      // Excalidraw entrega la API ANTES de cargar `initialData` (lo hace async
+      // y luego reemplaza la escena): lo que se insertara antes se perdía (las
+      // fotos del celular caían en un lienzo que la carga vaciaba). Sólo se
+      // avisa cuando `isLoading` baja; tope de 10 s para no quedarse colgado.
+      const inicio = Date.now();
+      const avisarCuandoCargue = () => {
+        const cargando = (api.getAppState() as { isLoading?: boolean }).isLoading === true;
+        if (cargando && Date.now() - inicio < 10_000) {
+          setTimeout(avisarCuandoCargue, 16);
+          return;
+        }
+        onReady(handle);
+      };
+      avisarCuandoCargue();
     },
     [onReady],
   );

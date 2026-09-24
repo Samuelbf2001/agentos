@@ -242,6 +242,9 @@ export default function NotasView() {
   const noteDudas = useStore((s) => s.noteDudas);
 
   const esCelular = useEsCelular();
+  // `onReady` llega tarde (cuando el lienzo terminó de cargar): lee el valor vigente, no el de su cierre.
+  const esCelularRef = useRef(esCelular);
+  esCelularRef.current = esCelular;
 
   const [searchParams, setSearchParams] = useSearchParams();
   const urlNote = searchParams.get("nota");
@@ -290,19 +293,17 @@ export default function NotasView() {
   /** Fotos ya reducidas esperando a que el lienzo de la nota NUEVA esté listo (`onReady`). */
   const pendingFotosRef = useRef<{ noteId: string; fotos: FotoReducida[] } | null>(null);
 
-  const objectUrlsRef = useRef<string[]>([]);
-  const urlsRevisar = useMemo(() => {
-    for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+  // Las URLs de las miniaturas nacen y mueren en el mismo efecto: crearlas en un
+  // useMemo y revocarlas en otro efecto las dejaba rotas (StrictMode desmonta y
+  // remonta, y la limpieza revocaba las URLs que la vista seguía mostrando).
+  const [urlsRevisar, setUrlsRevisar] = useState<string[]>([]);
+  useEffect(() => {
     const urls = fotosRevisar.map((f) => URL.createObjectURL(f));
-    objectUrlsRef.current = urls;
-    return urls;
+    setUrlsRevisar(urls);
+    return () => {
+      for (const url of urls) URL.revokeObjectURL(url);
+    };
   }, [fotosRevisar]);
-  useEffect(
-    () => () => {
-      for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
-    },
-    [],
-  );
 
   // Lienzo a pantalla completa: el shell deja de pintar menú y cabecera
   // mientras dure, y se apaga sin falta al salir de la vista (navegar con el
@@ -524,6 +525,8 @@ export default function NotasView() {
   const onReady = useCallback(
     (handle: LienzoHandle) => {
       handleRef.current = handle;
+      // En el celular el zoom guardado suele venir del computador: al abrir, encuadrar todo.
+      if (esCelularRef.current) handle.refrescar();
       const pending = pendingFotosRef.current;
       if (pending && pending.noteId === activeNoteIdRef.current) {
         pendingFotosRef.current = null;
